@@ -1,0 +1,66 @@
+# The on-box toolchain (M11, ADR-009; a melange package since M16, ADR-041):
+# Zig, whose `cc`/`c++` are how a NIF gets built *on the box*. The factory is
+# the OS, the toolchain is a tool, so it ships on the persistent disk
+# (/priv/toolchain) rather than in the root filesystem; scripts/mkdisk.sh
+# unpacks this package there.
+#
+# Zig carries its own libc for `zig cc` (musl), so the compiler, its library
+# and the cc bridge *are* the toolchain - no headers, no sysroot, no external
+# linker. Same pinned tarballs as the shim package; the dev key signs it like
+# every other in-house package.
+package:
+  name: elixos-toolchain
+  version: 0.0.0
+  epoch: 0
+  description: "On-box Zig toolchain: zig cc as the system compiler (M11)"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime: []
+
+vars:
+  zig-sha256-x86_64: cdecd965d8b8795afbb9f1a780904cba190d257ee7cd1d33347c4026dab5f64c
+  zig-sha256-aarch64: ace7690851068ab61e0c377afe7426565b318b6b22b70f145b30bd30910ad405
+
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    packages:
+      - busybox
+      - curl
+      - tar
+      - xz
+
+pipeline:
+  - runs: |
+      zig_version="$(head -n1 /home/build/.zig-version)"
+
+      case "${{build.arch}}" in
+        x86_64) zig_arch=x86_64; zig_sha="${{vars.zig-sha256-x86_64}}" ;;
+        aarch64) zig_arch=aarch64; zig_sha="${{vars.zig-sha256-aarch64}}" ;;
+        *) echo "elixos-toolchain: unsupported arch ${{build.arch}}" >&2; exit 1 ;;
+      esac
+
+      curl -fsSL -o /tmp/zig.tar.xz \
+        "https://ziglang.org/builds/zig-${zig_arch}-linux-${zig_version}.tar.xz"
+      echo "${zig_sha}  /tmp/zig.tar.xz" | sha256sum -c -
+      mkdir -p /tmp/zig
+      tar -xJf /tmp/zig.tar.xz -C /tmp/zig --strip-components=1
+
+      dest="${{targets.destdir}}/toolchain"
+      install -d "$dest"
+      cp -a /tmp/zig/zig /tmp/zig/lib "$dest/"
+      chmod 0755 "$dest/zig"
+
+      # zig is a C compiler only under the `cc` subcommand, so `cc` and `c++`
+      # are a bridge (toolchain/cc.zig) built here by the compiler itself.
+      cd "$dest"
+      /tmp/zig/zig build-exe -O ReleaseSafe -target "${{build.arch}}-linux-musl" \
+        --name cc \
+        --cache-dir /tmp/cc-cache --global-cache-dir /tmp/cc-cache-global \
+        /home/build/toolchain/cc.zig
+      rm -rf /tmp/cc-cache /tmp/cc-cache-global cc.o
+      ln -sfn cc "$dest/c++"
+
+      test -x "$dest/zig" && test -x "$dest/cc" && test -L "$dest/c++"

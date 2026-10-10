@@ -51,8 +51,9 @@ demo: ## Record and check one demo: make demo M=4 (demos/README.md)
 demos: ## Record and check every demo up to MILESTONE
 	demos/demo.sh --all
 
-image: disk ## The images QEMU boots, both architectures (M16: melange + apko, ADR-041)
+image: ## The images QEMU boots, both architectures (M16: melange + apko, ADR-041)
 	scripts/build-image.sh
+	scripts/mkdisk.sh
 
 reproducible: ## Assemble the x86_64 rootfs twice from the lockfile; print the one digest
 	scripts/build-image.sh x86_64
@@ -60,9 +61,7 @@ reproducible: ## Assemble the x86_64 rootfs twice from the lockfile; print the o
 uefi-image: image ## ESP with the EFI-stub kernel (M13)
 	scripts/build-uefi-image.sh
 
-disk: $(BUILD)/disk.img ## Pristine persistent disk (tests boot copies of it)
-
-$(BUILD)/disk.img:
+disk: ## Pristine persistent disk (tests boot copies of it); unpacks the toolchain package
 	scripts/mkdisk.sh
 
 qemu: image ## Boot interactively (Ctrl-A X quits). ARGS="elixos.safe" appends to the cmdline

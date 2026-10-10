@@ -57,15 +57,17 @@ stage() {
   rm -rf "$SRC"
   mkdir -p "$SRC/os"
   cp -r "$ROOT/build.zig" "$ROOT/build.zig.zon" "$ROOT/.zig-version" "$ROOT/.tool-versions" \
-        "$ROOT/shim" "$ROOT/spec" "$ROOT/kernel" "$ROOT/scripts" "$ROOT/hex" "$SRC/"
+        "$ROOT/shim" "$ROOT/spec" "$ROOT/kernel" "$ROOT/scripts" "$ROOT/hex" "$ROOT/toolchain" \
+        "$SRC/"
   cp -r "$ROOT/os/mix.exs" "$ROOT/os/mix.lock" "$ROOT/os/lib" "$ROOT/os/config" "$ROOT/os/priv" "$SRC/os/"
 }
 
 build_packages() { # build_packages <arch>
   local arch="$1" repo="$BUILD/apk/$arch" pkg pname file
   # Dependency order, not glob order: OTP before Elixir and the factory (they
-  # build against it), the kernel and the shim independent.
-  for pkg in kernel otp elixir factory shim; do
+  # build against it), the kernel and the shim independent, the toolchain last
+  # (it needs only a compiler).
+  for pkg in kernel otp elixir factory shim toolchain; do
     file="$ROOT/melange/$pkg.yaml"
     [ -f "$file" ] || continue
     pname="elixos-$pkg"
