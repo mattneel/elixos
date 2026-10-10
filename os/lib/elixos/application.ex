@@ -86,6 +86,10 @@ defmodule Elixos.Application do
             # it; a failure here stops the tree on purpose (ADR-007).
             {Elixos.Boot.Restore, {image, env}},
             {Elixos.Boot.Recorder, image},
+            # Agents: modules the image keeps, started under their own
+            # supervisor and restored with what they remembered (M15).
+            {DynamicSupervisor, name: Elixos.Agents.Supervisor, strategy: :one_for_one},
+            {Elixos.Agents, image},
             # Key-only SSH into the user's REPL (M12). Not boot-critical: with
             # no network, or in rescue, it logs and steps aside (the prompt
             # still comes up).

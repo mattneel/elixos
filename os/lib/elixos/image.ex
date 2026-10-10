@@ -33,7 +33,8 @@ defmodule Elixos.Image do
             store: store,
             journal: journal,
             modules: working_set(entries),
-            apps: apps_of(entries)
+            apps: apps_of(entries),
+            agents: agents_of(entries)
           }
 
           GenServer.start_link(__MODULE__, state)
@@ -130,6 +131,30 @@ defmodule Elixos.Image do
        %{state | apps: Map.put(state.apps, app, %{version: version, services: services})}}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call(:agents, _from, state), do: {:reply, state.agents, state}
+
+  def handle_call({:record_agent, id, module, opts}, _from, state) do
+    with {:ok, _seq} <- Journal.append(state.journal, {:agent, id, module, opts}) do
+      {:reply, :ok, %{state | agents: Map.put(state.agents, id, %{module: module, opts: opts})}}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:forget_agent, id}, _from, state) do
+    case Map.fetch(state.agents, id) do
+      {:ok, _agent} ->
+        with {:ok, _seq} <- Journal.append(state.journal, {:agent_removed, id}) do
+          {:reply, :ok, %{state | agents: Map.delete(state.agents, id)}}
+        else
+          {:error, reason} -> {:reply, {:error, reason}, state}
+        end
+
+      :error ->
+        {:reply, {:error, :unknown_agent}, state}
     end
   end
 
@@ -259,6 +284,27 @@ defmodule Elixos.Image do
     GenServer.call(image, {:forget_app, app}, :infinity)
   end
 
+  @doc """
+  Agents the journal knows: `id => %{module: module, opts: opts}`. (M15)
+
+  An agent is a module the image already keeps plus the fact that it should
+  be *running*; the record is what `Elixos.Agents` replays at boot.
+  """
+  @spec agents(t()) :: %{String.t() => %{module: module(), opts: keyword()}}
+  def agents(image), do: GenServer.call(image, :agents)
+
+  @doc "Records that agent `id` (of `module`, started with `opts`) is wanted. (M15)"
+  @spec record_agent(t(), String.t(), module(), keyword()) :: :ok | {:error, term()}
+  def record_agent(image, id, module, opts) do
+    GenServer.call(image, {:record_agent, id, module, opts}, :infinity)
+  end
+
+  @doc "Forgets agent `id`: the next boot does not start it. (M15)"
+  @spec forget_agent(t(), String.t()) :: :ok | {:error, term()}
+  def forget_agent(image, id) do
+    GenServer.call(image, {:forget_agent, id}, :infinity)
+  end
+
   # What an install did, replayed: the newest entry for each app wins, and it
   # carries the services that app's elixos: key asked for.
   defp apps_of(entries) do
@@ -272,6 +318,17 @@ defmodule Elixos.Image do
 
         _other ->
           apps
+      end
+    end)
+  end
+
+  # The agents a boot should start: recorded, less any that were forgotten.
+  defp agents_of(entries) do
+    Enum.reduce(entries, %{}, fn {_seq, entry}, agents ->
+      case entry do
+        {:agent, id, module, opts} -> Map.put(agents, id, %{module: module, opts: opts})
+        {:agent_removed, id} -> Map.delete(agents, id)
+        _other -> agents
       end
     end)
   end
