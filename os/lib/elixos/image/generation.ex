@@ -22,25 +22,59 @@ defmodule Elixos.Image.Generation do
         }
 
   @spec write(Path.t(), t()) :: :ok | {:error, :reserved | :exists | term()}
+  def write(_dir, %__MODULE__{number: 0}), do: {:error, :reserved}
+
   def write(dir, %__MODULE__{} = generation) do
-    _ = {dir, generation}
-    Elixos.NotImplemented.raise!(6, "Elixos.Image.Generation.write/2")
+    path = path(dir, generation.number)
+
+    # Immutable once saved: a generation number is never reused, so recovery
+    # can trust that what it reads is what booted.
+    if File.exists?(path) do
+      {:error, :exists}
+    else
+      with :ok <- File.mkdir_p(dir),
+           :ok <- write_atomic(dir, path, generation) do
+        :ok
+      end
+    end
   end
 
   @spec read(Path.t(), non_neg_integer()) :: {:ok, t()} | {:error, :not_found | :corrupt}
   def read(dir, number) do
-    _ = {dir, number}
-    Elixos.NotImplemented.raise!(6, "Elixos.Image.Generation.read/2")
+    case File.read(path(dir, number)) do
+      {:ok, bytes} -> decode(bytes)
+      {:error, :enoent} -> {:error, :not_found}
+      {:error, _reason} -> {:error, :corrupt}
+    end
   end
 
   @doc "Saved generation numbers, ascending. The factory (0) is not listed."
   @spec list(Path.t()) :: [pos_integer()]
-  def list(dir), do: Elixos.NotImplemented.raise!(6, "Elixos.Image.Generation.list/1 #{dir}")
+  def list(dir) do
+    case File.ls(dir) do
+      {:ok, entries} ->
+        entries
+        |> Enum.flat_map(fn entry ->
+          case Integer.parse(entry) do
+            {number, ".gen"} when number > 0 -> [number]
+            _ -> []
+          end
+        end)
+        |> Enum.sort()
+
+      {:error, _reason} ->
+        []
+    end
+  end
 
   @doc "One more than the highest saved generation, or 1."
   @spec next_number(Path.t()) :: pos_integer()
-  def next_number(dir),
-    do: Elixos.NotImplemented.raise!(6, "Elixos.Image.Generation.next_number/1 #{dir}")
+  def next_number(dir) do
+    case list(dir) do
+      [] -> 1
+      numbers -> Enum.max(numbers) + 1
+    end
+  end
 
   @spec path(Path.t(), non_neg_integer()) :: Path.t()
   def path(dir, number), do: Path.join(dir, "#{number}.gen")
@@ -48,7 +82,55 @@ defmodule Elixos.Image.Generation do
   @doc "Module-level differences between two generations, each list sorted."
   @spec diff(t(), t()) :: %{added: [module()], removed: [module()], changed: [module()]}
   def diff(%__MODULE__{} = old, %__MODULE__{} = new) do
-    _ = {old, new}
-    Elixos.NotImplemented.raise!(6, "Elixos.Image.Generation.diff/2")
+    old_modules = Map.keys(old.modules)
+    new_modules = Map.keys(new.modules)
+
+    added = Enum.sort(new_modules -- old_modules)
+    removed = Enum.sort(old_modules -- new_modules)
+
+    changed =
+      old_modules
+      |> Enum.reject(&(&1 in removed))
+      |> Enum.filter(&(old.modules[&1] != new.modules[&1]))
+      |> Enum.sort()
+
+    %{added: added, removed: removed, changed: changed}
+  end
+
+  defp decode(bytes) do
+    case safe_binary_to_term(bytes) do
+      {:ok, {:elixos_generation, 1, map}} when is_map(map) -> {:ok, struct(__MODULE__, map)}
+      _ -> {:error, :corrupt}
+    end
+  end
+
+  defp safe_binary_to_term(bytes) do
+    {:ok, :erlang.binary_to_term(bytes, [:safe])}
+  rescue
+    ArgumentError -> :error
+  end
+
+  # Temporary file, fsync, rename, fsync of the directory: a reader either sees
+  # the whole manifest or no manifest at all, and nothing is left behind.
+  defp write_atomic(dir, path, generation) do
+    bytes = :erlang.term_to_binary({:elixos_generation, 1, Map.from_struct(generation)})
+    tmp = "#{path}.#{:erlang.unique_integer([:positive])}.tmp"
+
+    with {:ok, file} <- :file.open(tmp, [:write, :raw, :binary]),
+         :ok <- :file.write(file, bytes),
+         :ok <- :file.sync(file),
+         :ok <- :file.close(file),
+         :ok <- File.rename(tmp, path),
+         # The rename itself has to reach the disk, so the directory is
+         # fsynced too: :file needs the :directory flag to open one at all.
+         {:ok, dir_file} <- :file.open(dir, [:read, :directory]),
+         :ok <- :file.sync(dir_file),
+         :ok <- :file.close(dir_file) do
+      :ok
+    else
+      error ->
+        File.rm(tmp)
+        error
+    end
   end
 end

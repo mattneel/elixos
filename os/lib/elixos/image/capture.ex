@@ -32,7 +32,45 @@ defmodule Elixos.Image.Capture do
   """
   @spec eval(String.t(), keyword(), keyword()) :: {term(), keyword(), [{module(), binary()}]}
   def eval(code, binding \\ [], opts \\ []) when is_binary(code) do
-    _ = {binding, opts}
-    Elixos.NotImplemented.raise!(6, "Elixos.Image.Capture.eval/3")
+    quoted = Code.string_to_quoted!(code, Keyword.take(opts, [:file, :line, :column, :existing_atoms_only]))
+    # The tracer has to be in the env the evaluation uses: eval_string/3 and
+    # the global :tracers option see nothing (verified on Elixir 1.20.4).
+    env = %{Code.env_for_eval(opts) | tracers: [__MODULE__]}
+    key = capture_key()
+
+    Process.put(key, [])
+
+    try do
+      {value, new_binding} = Code.eval_quoted_with_env(quoted, binding, env, opts)
+      {value, new_binding, Process.get(key) |> Enum.reverse()}
+    after
+      Process.delete(key)
+    end
+  end
+
+  @doc false
+  # A compilation tracer (Elixir calls back into this module). The event
+  # carries the bytecode but not the module it defines, so the name comes from
+  # the bytecode's attributes.
+  def trace({:on_module, bytecode, _ignore}, _env) do
+    case module_of(bytecode) do
+      {:ok, module} -> Process.put(capture_key(), [{module, bytecode} | Process.get(capture_key(), [])])
+      :error -> :ok
+    end
+
+    :ok
+  end
+
+  def trace(_event, _env), do: :ok
+
+  # Modules defined in other processes are not captured (see the moduledoc):
+  # the accumulator lives in the evaluating process.
+  defp capture_key, do: {__MODULE__, :captured}
+
+  defp module_of(bytecode) do
+    case :beam_lib.chunks(bytecode, [:attributes]) do
+      {:ok, {module, _chunks}} when is_atom(module) -> {:ok, module}
+      _ -> :error
+    end
   end
 end
