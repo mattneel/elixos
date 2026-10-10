@@ -110,5 +110,14 @@ defmodule Zig do
   # build in any session reuses what another already compiled.
   defp cache, do: Application.get_env(:elixos, :zig_cache_dir, "/priv/cache/zig")
 
-  defp zig(path), do: Path.join(path, "zig")
+  # The disk's copy (M11) has zig at the toolchain root; a package payload has
+  # it in bin/. Either layout is the toolchain.
+  defp zig(path) do
+    candidates = [Path.join(path, "zig"), Path.join([path, "bin", "zig"])]
+
+    case Enum.find(candidates, &File.regular?/1) do
+      nil -> Path.join(path, "zig")
+      found -> found
+    end
+  end
 end

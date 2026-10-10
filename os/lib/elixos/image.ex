@@ -133,6 +133,20 @@ defmodule Elixos.Image do
     end
   end
 
+  def handle_call({:forget_app, app}, _from, state) do
+    case Map.fetch(state.apps, app) do
+      {:ok, %{services: services}} ->
+        with {:ok, _seq} <- Journal.append(state.journal, {:uninstall, app}) do
+          {:reply, {:ok, services}, %{state | apps: Map.delete(state.apps, app)}}
+        else
+          {:error, reason} -> {:reply, {:error, reason}, state}
+        end
+
+      :error ->
+        {:reply, {:error, :not_installed}, state}
+    end
+  end
+
   def handle_call({:record, module, bytecode}, _from, state) do
     # A full or read-only disk is an error to report, not a reason to take the
     # image service down (the caller would lose every queued capture with it).
@@ -236,6 +250,15 @@ defmodule Elixos.Image do
     GenServer.call(image, {:record_app, app, version, services}, :infinity)
   end
 
+  @doc """
+  Forgets `app`: it is no longer installed. The services its `elixos:` key
+  asked for come back, so the caller stops exactly what it started. (M14)
+  """
+  @spec forget_app(t(), atom()) :: {:ok, [term()]} | {:error, term()}
+  def forget_app(image, app) do
+    GenServer.call(image, {:forget_app, app}, :infinity)
+  end
+
   # What an install did, replayed: the newest entry for each app wins, and it
   # carries the services that app's elixos: key asked for.
   defp apps_of(entries) do
@@ -243,6 +266,9 @@ defmodule Elixos.Image do
       case entry do
         {:app, app, version, services} ->
           Map.put(apps, app, %{version: version, services: services})
+
+        {:uninstall, app} ->
+          Map.delete(apps, app)
 
         _other ->
           apps

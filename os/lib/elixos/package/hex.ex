@@ -16,20 +16,55 @@ defmodule Elixos.Package.Hex do
   the names index.
 
   The tarball is Hex's own layout (`VERSION`, `CHECKSUM`, `metadata.config`,
-  `contents.tar.gz`); `unpack/2` writes the contents into a directory and
-  verifies the checksum, because from there the directory is just a Mix project
-  for the M11 install path.
+  `contents.tar.gz`); `unpack/4` writes the contents into a directory after
+  checking the tarball against the *signed* release: its SHA-256 must be the
+  release's `outer_checksum`, and the `CHECKSUM` it carries must be the
+  release's `inner_checksum`. The signature binds those values to the
+  repository's key, so a tarball that is not the one the repository published
+  cannot get in — and hex's inner checksum is over the tar as hex's own writer
+  produced it, which is why it is taken from the signed registry rather than
+  recomputed here.
   """
 
-  @doc "Names known to a repository, optionally matching `~r/pattern/`."
-  @spec names(Elixos.Package.Repo.t(), Regex.t() | nil) :: {:ok, [String.t()]} | {:error, term()}
-  def names(%Elixos.Package.Repo{} = repo, pattern \\ nil),
-    do: Elixos.NotImplemented.raise!(14, "Elixos.Package.Hex.names/2 #{inspect({repo.name, pattern})}")
+  alias Elixos.Package.{Proto, Repo}
+
+  @doc "Names known to a repository, optionally matching `pattern`."
+  @spec names(Repo.t(), String.t() | Regex.t() | nil) :: {:ok, [String.t()]} | {:error, term()}
+  def names(%Repo{} = repo, pattern \\ nil) do
+    with {:ok, payload} <- resource(repo, "names"),
+         {:ok, message} <- Proto.decode(payload) do
+      regex = pattern_regex(pattern)
+
+      names =
+        for entry <- Proto.all(message, 1),
+            {:ok, package} <- [Proto.decode(entry)],
+            name <- [Proto.one(package, 1)],
+            is_binary(name),
+            regex == nil or Regex.match?(regex, name),
+            do: name
+
+      {:ok, names}
+    end
+  end
 
   @doc "Every release of `name` in `repo`, newest first."
-  @spec releases(Elixos.Package.Repo.t(), String.t()) :: {:ok, [String.t()]} | {:error, term()}
-  def releases(%Elixos.Package.Repo{} = repo, name),
-    do: Elixos.NotImplemented.raise!(14, "Elixos.Package.Hex.releases/2 #{inspect({repo.name, name})}")
+  @spec releases(Repo.t(), String.t()) :: {:ok, [String.t()]} | {:error, term()}
+  def releases(%Repo{} = repo, name) do
+    with {:ok, payload} <- resource(repo, "versions"),
+         {:ok, message} <- Proto.decode(payload) do
+      versions =
+        for entry <- Proto.all(message, 1),
+            {:ok, package} <- [Proto.decode(entry)],
+            Proto.one(package, 1) == name,
+            version when is_binary(version) <- Proto.all(package, 2),
+            do: version
+
+      case versions do
+        [] -> {:error, :no_such_package}
+        list -> {:ok, Enum.sort(list, &(Version.compare(&1, &2) == :gt))}
+      end
+    end
+  end
 
   @doc """
   Resolves `name` (with an optional `requirement`, `~> 1.0` style) among the
@@ -37,10 +72,28 @@ defmodule Elixos.Package.Hex do
   `{:error, {:name_in_multiple_repos, name, repo_a, repo_b}}`.
   """
   @spec resolve(String.t(), String.t() | nil) ::
-          {:ok, %{repo: Elixos.Package.Repo.t(), name: String.t(), version: String.t()}}
-          | {:error, term()}
-  def resolve(name, requirement \\ nil),
-    do: Elixos.NotImplemented.raise!(14, "Elixos.Package.Hex.resolve/2 #{inspect({name, requirement})}")
+          {:ok, %{repo: Repo.t(), name: String.t(), version: String.t()}} | {:error, term()}
+  def resolve(name, requirement \\ nil) do
+    offering =
+      for repo <- Repo.list(), {:ok, names} <- [names(repo, nil)], name in names, do: repo
+
+    case offering do
+      [] ->
+        {:error, :no_such_package}
+
+      [repo] ->
+        with {:ok, versions} <- releases(repo, name),
+             [version | _] <- matching(versions, requirement) do
+          {:ok, %{repo: repo, name: name, version: version}}
+        else
+          [] -> {:error, {:no_matching_version, name, requirement}}
+          {:error, reason} -> {:error, reason}
+        end
+
+      [repo_a, repo_b | _rest] ->
+        {:error, {:name_in_multiple_repos, name, repo_a.name, repo_b.name}}
+    end
+  end
 
   @doc """
   Fetches and unpacks `name` `version` from `repo` into `dir`.
@@ -48,7 +101,153 @@ defmodule Elixos.Package.Hex do
   `dir` is left holding the package's own files (no tarball wrapper): a Mix
   project, ready for `Elixos.Package.install/1`.
   """
-  @spec unpack(Elixos.Package.Repo.t(), String.t(), String.t(), Path.t()) :: {:ok, Path.t()} | {:error, term()}
-  def unpack(%Elixos.Package.Repo{} = repo, name, version, dir),
-    do: Elixos.NotImplemented.raise!(14, "Elixos.Package.Hex.unpack/4 #{inspect({repo.name, name, version, dir})}")
+  @spec unpack(Repo.t(), String.t(), String.t(), Path.t()) :: {:ok, Path.t()} | {:error, term()}
+  def unpack(%Repo{} = repo, name, version, dir) do
+    with {:ok, release} <- release(repo, name, version),
+         # The tarball is not a signed resource of its own: the signed release
+         # pins it by checksum, which is what `check_outer/2` verifies.
+         {:ok, tarball} <- fetch(repo, "tarballs/#{name}-#{version}.tar"),
+         :ok <- check_outer(tarball, release.outer_checksum),
+         {:ok, files} <- read_tarball(tarball, release.inner_checksum),
+         :ok <- write_files(dir, files) do
+      {:ok, dir}
+    end
+  end
+
+  ## Reading a repository
+
+  # A resource as served: bytes, verified against the repository's key, and
+  # the payload behind the signature.
+  defp resource(%Repo{} = repo, path) do
+    with {:ok, bytes} <- fetch(repo, path) do
+      Repo.verify(repo, bytes)
+    end
+  end
+
+  defp fetch(%Repo{url: "http" <> _ = url}, path), do: http_get(url <> "/" <> path)
+
+  defp fetch(%Repo{url: root}, path), do: File.read(Path.join(root, path))
+
+  # The image has no HTTP client (no :inets in the release, M14 scope); a
+  # mirror on the disk is what an offline box installs from. Where :inets
+  # exists - the dev host, tests - an http(s) repository works.
+  defp http_get(url) do
+    with {:ok, _apps} <- Application.ensure_all_started(:inets) do
+      # Through apply/3: the compiler is happy without :inets on its path, and
+      # the call is the same one.
+      case apply(:httpc, :request, [
+             :get,
+             {String.to_charlist(url), []},
+             [],
+             [body_format: :binary]
+           ]) do
+        {:ok, {{_version, 200, _reason}, _headers, body}} -> {:ok, body}
+        other -> {:error, {:fetch_failed, other}}
+      end
+    else
+      {:error, reason} -> {:error, {:fetch_failed, reason}}
+    end
+  end
+
+  defp release(repo, name, version) do
+    with {:ok, payload} <- resource(repo, "packages/#{name}"),
+         {:ok, message} <- Proto.decode(payload) do
+      releases =
+        for entry <- Proto.all(message, 1),
+            {:ok, release} <- [Proto.decode(entry)],
+            Proto.one(release, 1) == version,
+            do: release
+
+      case releases do
+        [release] ->
+          {:ok,
+           %{
+             version: version,
+             inner_checksum: Proto.one(release, 2),
+             outer_checksum: Proto.one(release, 5)
+           }}
+
+        [] ->
+          {:error, :no_such_release}
+      end
+    end
+  end
+
+  ## The tarball
+
+  defp check_outer(tarball, expected) when is_binary(expected) do
+    if :crypto.hash(:sha256, tarball) == expected do
+      :ok
+    else
+      {:error, :bad_checksum}
+    end
+  end
+
+  defp check_outer(_tarball, _expected), do: {:error, :bad_checksum}
+
+  defp read_tarball(tarball, inner_checksum) do
+    with {:ok, members} <- :erl_tar.extract({:binary, tarball}, [:memory]),
+         members = Map.new(members, fn {name, bits} -> {to_string(name), bits} end),
+         "3" <- members["VERSION"],
+         checksum when is_binary(checksum) <- members["CHECKSUM"],
+         contents when is_binary(contents) <- members["contents.tar.gz"],
+         true <- decode_base16(checksum) == inner_checksum,
+         {:ok, entries} <- :erl_tar.extract({:binary, :zlib.gunzip(contents)}, [:memory]) do
+      {:ok, plain_files(entries)}
+    else
+      _other -> {:error, :bad_tarball}
+    end
+  end
+
+  # The contents tar, as a list of files (its directory entries carry no
+  # bytes of their own; `write_files/2` creates the directories).
+  defp plain_files(entries) do
+    for {name, bits} <- entries,
+        not String.ends_with?(to_string(name), "/"),
+        do: {to_string(name), bits}
+  end
+
+  # The package's own files, and nothing that could escape `dir`.
+  defp write_files(dir, files) do
+    for {name, bits} <- files do
+      case Path.safe_relative(name) do
+        {:ok, relative} ->
+          path = Path.join(dir, relative)
+
+          with :ok <- File.mkdir_p(Path.dirname(path)),
+               :ok <- File.write(path, bits) do
+            :ok
+          else
+            {:error, reason} -> throw({:error, {:write_failed, name, reason}})
+          end
+
+        :error ->
+          throw({:error, {:unsafe_path, name}})
+      end
+    end
+
+    :ok
+  catch
+    {:error, reason} -> {:error, reason}
+  end
+
+  defp matching(versions, nil), do: versions
+
+  defp matching(versions, requirement) do
+    case Version.parse_requirement(requirement) do
+      {:ok, parsed} -> Enum.filter(versions, &Version.match?(&1, parsed, allow_pre: false))
+      :error -> []
+    end
+  end
+
+  defp pattern_regex(nil), do: nil
+  defp pattern_regex(%Regex{} = regex), do: regex
+  defp pattern_regex(pattern) when is_binary(pattern), do: Regex.compile!(Regex.escape(pattern))
+
+  defp decode_base16(hex) do
+    case Base.decode16(String.upcase(hex)) do
+      {:ok, bytes} -> bytes
+      :error -> nil
+    end
+  end
 end

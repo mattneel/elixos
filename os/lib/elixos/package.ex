@@ -36,6 +36,24 @@ defmodule Elixos.Package do
   def install(dir) when is_binary(dir) do
     root = Path.expand(dir)
 
+    if File.regular?(Path.join(root, "mix.exs")) do
+      install_project(root)
+    else
+      install_payload(root)
+    end
+  end
+
+  def install(name) when is_atom(name) do
+    name = Atom.to_string(name)
+
+    with {:ok, %{repo: repo, version: version}} <- Elixos.Package.Hex.resolve(name),
+         dir = Path.join([os_priv(), "apps", "#{name}-#{version}"]),
+         {:ok, ^dir} <- Elixos.Package.Hex.unpack(repo, name, version, dir) do
+      install(dir)
+    end
+  end
+
+  defp install_project(root) do
     with {:ok, spec} <- spec(root),
          {:ok, app, version, ebin} <- build(root),
          :ok <- apply_config(root),
@@ -47,8 +65,24 @@ defmodule Elixos.Package do
     end
   end
 
-  def install(name) when is_atom(name),
-    do: Elixos.NotImplemented.raise!(14, "Elixos.Package.install/1 #{inspect(name)}")
+  # A package without a Mix project is a *payload*: programs and libraries its
+  # API (ADR-019) runs - the toolchain (ADR-009) is the first one. It is
+  # adopted where it lies (the disk's /priv/toolchain is 421M; copying it
+  # would be waste) and recorded, so it is part of the image like any package.
+  defp install_payload(root) do
+    name = root |> Path.basename() |> String.to_atom()
+
+    with :ok <- record(name, payload_version(root), %Elixos.Package.Spec{}) do
+      {:ok, name}
+    end
+  end
+
+  defp payload_version(root) do
+    case File.read(Path.join(root, "VERSION")) do
+      {:ok, version} -> String.trim(version)
+      _other -> "0.0.0"
+    end
+  end
 
   @doc "Installed apps and versions."
   @spec installed() :: %{atom() => String.t()}
@@ -255,18 +289,15 @@ defmodule Elixos.Package do
   it the consent step (ADR-019).
   """
   @spec add_repo(atom(), String.t(), keyword()) :: :ok | {:error, term()}
-  def add_repo(name, url, opts \\ []),
-    do:
-      Elixos.NotImplemented.raise!(14, "Elixos.Package.add_repo/3 #{inspect({name, url, opts})}")
+  def add_repo(name, url, opts \\ []), do: Elixos.Package.Repo.add(name, url, opts)
 
   @doc "Removes a repository and its key. Installed packages stay installed."
   @spec remove_repo(atom()) :: :ok | {:error, term()}
-  def remove_repo(name),
-    do: Elixos.NotImplemented.raise!(14, "Elixos.Package.remove_repo/1 #{inspect(name)}")
+  def remove_repo(name), do: Elixos.Package.Repo.remove(name)
 
   @doc "The trusted repositories, in configuration order."
   @spec repos() :: [Elixos.Package.Repo.t()]
-  def repos, do: Elixos.NotImplemented.raise!(14, "Elixos.Package.repos/0")
+  def repos, do: Elixos.Package.Repo.list()
 
   @doc """
   Packages whose name matches `query` (a string prefix or a `Regex`), across
@@ -276,26 +307,110 @@ defmodule Elixos.Package do
   @spec search(String.t() | Regex.t()) :: [
           %{name: String.t(), repo: atom(), versions: [String.t()]}
         ]
-  def search(query),
-    do: Elixos.NotImplemented.raise!(14, "Elixos.Package.search/1 #{inspect(query)}")
+  def search(query) do
+    for repo <- repos(),
+        {:ok, names} <- [Elixos.Package.Hex.names(repo, query)],
+        name <- names,
+        {:ok, versions} <- [Elixos.Package.Hex.releases(repo, name)] do
+      %{name: name, repo: repo.name, versions: versions}
+    end
+  end
 
   @doc """
   What is known about a package: its name, the repository it comes from, the
   versions available, and whether it is installed.
   """
   @spec info(String.t() | atom()) :: {:ok, map()} | {:error, term()}
-  def info(name), do: Elixos.NotImplemented.raise!(14, "Elixos.Package.info/1 #{inspect(name)}")
+  def info(name) do
+    name = to_string(name)
+
+    with {:ok, %{repo: repo, version: version}} <- Elixos.Package.Hex.resolve(name),
+         {:ok, versions} <- Elixos.Package.Hex.releases(repo, name) do
+      {:ok,
+       %{
+         name: name,
+         repo: repo.name,
+         version: version,
+         versions: versions,
+         installed: Map.has_key?(installed(), String.to_atom(name))
+       }}
+    end
+  end
 
   @doc "Upgrades every installed package, or just `name`, to the newest release."
   @spec upgrade() :: %{atom() => {:ok, String.t()} | {:error, term()}}
-  def upgrade, do: Elixos.NotImplemented.raise!(14, "Elixos.Package.upgrade/0")
+  def upgrade do
+    for {app, _version} <- installed(), into: %{} do
+      {app, upgrade(app)}
+    end
+  end
 
   @spec upgrade(atom()) :: {:ok, String.t()} | {:error, term()}
-  def upgrade(name),
-    do: Elixos.NotImplemented.raise!(14, "Elixos.Package.upgrade/1 #{inspect(name)}")
+  def upgrade(name) do
+    string = to_string(name)
+
+    with {:ok, %{version: version}} <- Elixos.Package.Hex.resolve(string) do
+      if installed()[String.to_atom(string)] == version do
+        {:ok, version}
+      else
+        with {:ok, _app} <- install(String.to_atom(string)), do: {:ok, version}
+      end
+    end
+  end
 
   @doc "Uninstalls `name`: its services stop, its modules unload, its files go."
   @spec remove(atom()) :: :ok | {:error, term()}
-  def remove(name),
-    do: Elixos.NotImplemented.raise!(14, "Elixos.Package.remove/1 #{inspect(name)}")
+  def remove(name) do
+    case Process.whereis(Elixos.Image) do
+      nil ->
+        {:error, :no_image}
+
+      image ->
+        with {:ok, services} <- Elixos.Image.forget_app(image, name) do
+          stop_services(services)
+          unload(name)
+          _ = File.rm_rf(installed_dir(name))
+          :ok
+        end
+    end
+  end
+
+  # The services this app started under the system tree, and only those: the
+  # supervisor knows each child's modules, so the match is on the module.
+  defp stop_services(services) do
+    for service <- services, service_child(service) do
+      module =
+        case service do
+          {module, _arg} when is_atom(module) -> module
+          module when is_atom(module) -> module
+          _other -> nil
+        end
+
+      for {_id, pid, _type, modules} <- Supervisor.which_children(Elixos.Package.Services),
+          pid != :undefined,
+          module != nil,
+          module in modules do
+        _ = DynamicSupervisor.terminate_child(Elixos.Package.Services, pid)
+      end
+    end
+
+    :ok
+  end
+
+  # The app's files leave; so does the code they loaded: its directory comes
+  # off the path and its modules are purged, so nothing half-installed stays
+  # callable.
+  defp unload(app) do
+    ebin = installed_ebin(app)
+    _ = :code.del_path(String.to_charlist(ebin))
+    _ = Application.unload(app)
+    prefix = String.to_charlist(ebin)
+
+    for {module, path} <- :code.all_loaded(), is_list(path), List.starts_with?(path, prefix) do
+      _ = :code.purge(module)
+      _ = :code.delete(module)
+    end
+
+    :ok
+  end
 end

@@ -1,0 +1,62 @@
+#!/usr/bin/expect -f
+# M14: packages by name (ADR-019). The box trusts the official repository out
+# of the box; a second repository - the test fixture, an offline mirror on the
+# disk - is added with its key (the consent step), searched, and a package is
+# installed by name: fetched, verified, unpacked and built on the box.
+
+set timeout 600
+set send_human {.1 .3 10 .05 2}
+
+# Put the repository on the demo disk before boot, the way an offline mirror
+# would arrive: the disk mounts at /priv, so it lands at /priv/hex-repo.
+set disk $env(ELIXOS_DEMO_DISK)
+set repo "[pwd]/os/test/fixtures/hex_repo/public"
+foreach dir {hex-repo hex-repo/packages hex-repo/tarballs} {
+    catch {exec debugfs -w -R "mkdir $dir" $disk}
+}
+foreach file {names versions public_key packages/hello_pkg tarballs/hello_pkg-0.1.0.tar} {
+    exec debugfs -w -R "write $repo/$file hex-repo/$file" $disk
+}
+
+spawn -noecho qemu-system-x86_64 \
+    -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+set qemu $spawn_id
+
+expect "iex(1)> "
+sleep 1
+
+# Trusted without anyone adding anything: the factory preset.
+send -h "Enum.map(Elixos.Package.repos(), & &1.name)\r"
+expect "iex(2)> "
+sleep 1
+
+# The consent step: a repository, and its key.
+send "Elixos.Package.add_repo(:fixture, \"/priv/hex-repo\", key: File.read!(\"/priv/hex-repo/public_key\"))\r"
+expect "iex(3)> "
+sleep 1
+
+send -h "Elixos.Package.search(\"hello\")\r"
+expect "iex(4)> "
+sleep 1
+send -h "Elixos.Package.info(\"hello_pkg\") |> elem(1) |> Map.take([:version, :installed])\r"
+expect "iex(5)> "
+sleep 1
+
+# By name: fetched, verified against the repository's key, unpacked and built.
+send -h "Elixos.Package.install(:hello_pkg)\r"
+expect "{:ok, :hello_pkg}"
+sleep 2
+send -h "HelloPkg.greet()\r"
+expect ":hello_from_hex"
+sleep 2
+
+send "Elixos.poweroff()\r"
+expect "elixos-shim: shutdown poweroff"
+expect "reboot: Power down"
+expect eof
+sleep 1

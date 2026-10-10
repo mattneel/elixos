@@ -53,6 +53,11 @@ defmodule Elixos.Application do
   def start(_type, _args) do
     add_mix_to_path()
 
+    # The factory's Hex trust - the official repository's key and its entry -
+    # is where a machine starts (PROTOCOL.md §8); after that /priv/hex/ is the
+    # owner's. Never a reason not to boot.
+    _ = Elixos.Package.Repo.ensure_seeded()
+
     # Installed apps' code lives on the disk; put it back before anything
     # (the restore, the services) can try to load a module.
     for dir <- Path.wildcard(Path.join(os_priv(), "apps/*/ebin")), do: Code.append_path(dir)

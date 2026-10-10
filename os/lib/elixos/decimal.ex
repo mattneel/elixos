@@ -21,7 +21,9 @@ defmodule Elixos.Decimal do
   def parse_u32(_text), do: :error
 
   # Folds the remaining bytes in, so no non-digit ever reaches an integer parse.
-  defp value(<<byte, rest::binary>>, acc) when byte in ?0..?9, do: value(rest, acc * 10 + (byte - ?0))
+  defp value(<<byte, rest::binary>>, acc) when byte in ?0..?9,
+    do: value(rest, acc * 10 + (byte - ?0))
+
   defp value(<<>>, acc) when acc <= 4_294_967_295, do: {:ok, acc}
   defp value(_rest, _acc), do: :error
 end
