@@ -398,11 +398,15 @@ a pinned version + sha256, mounted at `/system` in normal mode only; versions
 and hashes are pins like the kernel's (ADR-001), and nothing is ever fetched
 on the box (ADR-009, M14's verification). Licensing: pgvector is
 PostgreSQL-licensed; TimescaleDB's Apache-only build gives hypertables and
-`time_bucket` without a question. Compression and continuous aggregates are
-under the Timescale License and get their own ADR - read the license before
-publishing images. `Elixos.Postgres` starts the server once the prompt's
-machinery is up and *not* in rescue; a failure is logged and the prompt still
-comes up. `Elixos.poweroff` and `halt` stop it (a `fast` shutdown, the
+`time_bucket` without a question. TimescaleDB is a *preload library*: the
+cluster's `shared_preload_libraries` must name `timescaledb` before the
+postmaster starts, or `CREATE EXTENSION timescaledb` fails ("could not access
+file \"timescaledb\"") - the acceptance does exactly that `CREATE EXTENSION`,
+so the setting is part of this milestone, not tuning. Compression and
+continuous aggregates are under the Timescale License and get their own ADR -
+read the license before publishing images. `Elixos.Postgres` starts the server
+once the prompt's machinery is up and *not* in rescue; a failure is logged and
+the prompt still comes up. `Elixos.poweroff` and `halt` stop it (a `fast` shutdown, the
 `pg_ctl` meaning, exec'd directly) before the VM stops, so every power-off is
 clean. Generations vs migrations: a generation may only ship migrations the
 *previous* generation can ignore; drops and renames run after the commit.
@@ -484,6 +488,37 @@ and the ADR records the loader decision - or M18 is explicitly abandoned in
 the roadmap with the reason.
 
 - [ ] Demo recorded: `demos/m18-browser.mp4` (`make demo M=18`).
+
+---
+
+## M19: Installed packages are Mix dependencies
+
+**Goal.** A project built on the box sees the system's installed packages as
+its dependencies: after `Elixos.Package.install(:hello_app)` - whose closure
+installs `hello_dep` first (M15) - the build resolves `hello_dep` from
+`/priv/apps` instead of reaching for a repository, so M10's one version per
+package holds for anything built on the box.
+
+**Acceptance.** `test/integration/m19_system_deps_test.exs`: `hello_app`
+installs by name on a box with no network, its dependency's code is the
+*installed* copy (the loaded `HelloDep` lives under `/priv/apps/hello_dep/`),
+and `HelloApp.greet()` answers with the value that dependency provides.
+
+**Notes. The gap (M15's review).** Installing a package `-pa`s its ebin onto
+the code path (`os/lib/elixos/package.ex`), which makes the modules
+*loadable* but leaves Mix's dependency loading unaware of them: building
+`hello_app` then asks Mix's SCM for `hello_dep`, which this factory has no
+Hex SCM for - on a pristine box that is a failure, and anywhere else it could
+be a second copy of a package that is already installed. `hello_pkg` installs
+today only because it has no dependencies. The fix makes the installed tree
+part of Mix's resolution - an SCM/path that points a dependency at its
+installed directory, or a deps rewrite before the build; which one is an ADR
+when this starts, and the test is the contract.
+
+**Done when.** `make ci` is green with `MILESTONE=19`, the QEMU test passes,
+and the ADR records the mechanism.
+
+- [ ] Demo recorded: `demos/m19-system-deps.mp4` (`make demo M=19`).
 
 ---
 
