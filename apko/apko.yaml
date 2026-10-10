@@ -1,0 +1,21 @@
+# The Elixos root filesystem (M16, ADR-041).
+#
+# apko assembles it from a pinned stable Alpine release plus our own APKs
+# (melange's output, added by scripts/build-image.sh as a build repository).
+# apko runs no package install scripts, so anything a script would have
+# created - users an image needs, directories outside a package - is declared
+# here instead.
+contents:
+  keyring:
+    - apko/keys/alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub
+  repositories:
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+  packages:
+    - alpine-baselayout
+    - busybox
+    - alpine-release
+
+archs:
+  - x86_64
+  - aarch64
