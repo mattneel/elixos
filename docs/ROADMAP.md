@@ -287,7 +287,7 @@ that path.
 - [ ] Keyboard, including Ctrl-G job control.
 - [ ] `Elixos.poweroff()` really powers the machine off.
 
-- [ ] Demo recorded: `demos/m13-uefi.mp4` (`make demo M=13`).
+- [x] Demo recorded: `demos/m13-uefi.mp4` (`make demo M=13`).
 
 ---
 
