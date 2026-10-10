@@ -301,16 +301,15 @@ defmodule Elixos.Test.QEMU do
     vm = send_line(vm, expr)
     deadline = System.monotonic_time(:millisecond) + scale(timeout)
 
-    # Anchor on the echo of the line just sent, then wait for the next prompt.
-    # IEx redraws the prompt while it evaluates, and that redraw can carry a
-    # *higher* prompt number before the result is printed (verified on OTP 29
-    # / Elixir 1.20 under the QEMU console), so waiting for a number alone can
-    # return the *previous* expression's output, one call late - the m14 flake.
-    # The echo - the bytes just sent, whitespace made flexible because a long
-    # line wraps - belongs to this expression alone; anything before it is
-    # stale and is dropped.
-    {_, _, vm} = do_expect(vm, echo_pattern(expr), deadline)
-    next_prompt(vm, current, "", deadline)
+    # The echo arrives as soon as the console reads the line, so it gets a
+    # short window: a multi-line expression's redraws can split the echoed
+    # text, and then the prompt-number wait below is the best there is.
+    echo_deadline = min(deadline, System.monotonic_time(:millisecond) + scale(5_000))
+
+    case soft_expect(vm, echo_pattern(expr), echo_deadline) do
+      {:ok, vm} -> next_prompt(vm, current, "", deadline)
+      {:timeout, vm} -> next_prompt(vm, current, "", deadline)
+    end
   end
 
   # The console echoes what was typed, so the line comes back as `send_line/2`
@@ -323,14 +322,54 @@ defmodule Elixos.Test.QEMU do
     |> then(&Regex.compile!(&1))
   end
 
+  # Like `expect_with_before/3`, but a timeout is a value, not a failure: for
+  # waits whose answer may legitimately never come.
+  defp soft_expect(vm, pattern, deadline) do
+    clean = strip(vm.buffer)
+
+    case Regex.run(pattern, clean, return: :index) do
+      [{start, length} | _] ->
+        rest = binary_part(clean, start + length, byte_size(clean) - start - length)
+        {:ok, %{vm | buffer: rest}}
+
+      nil ->
+        port = vm.port
+        remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+
+        receive do
+          {^port, {:data, data}} ->
+            soft_expect(
+              %{vm | buffer: vm.buffer <> data, transcript: vm.transcript <> data},
+              pattern,
+              deadline
+            )
+
+          {^port, {:exit_status, status}} ->
+            flunk(
+              "QEMU exited (status #{status}) while waiting for #{inspect(pattern)}\n" <> tail(vm)
+            )
+        after
+          remaining -> {:timeout, vm}
+        end
+    end
+  end
+
   defp next_prompt(vm, current, acc, deadline) do
     {matched, before, vm} = do_expect(vm, @iex_prompt, deadline)
 
-    if current == nil or vm.iex_prompt > current do
+    # The number of the prompt just matched - not the highest number ever
+    # seen: a redrawn prompt can carry a number ahead of the result that is
+    # still to be printed.
+    if current == nil or prompt_number(matched) > current do
       {acc <> before, vm}
     else
       next_prompt(vm, current, acc <> before <> matched, deadline)
     end
+  end
+
+  defp prompt_number(matched) do
+    [_, n] = Regex.run(~r/iex\((\d+)\)> /, matched)
+    String.to_integer(n)
   end
 
   defp last_prompt(text, previous) do
