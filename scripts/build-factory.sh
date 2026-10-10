@@ -232,6 +232,12 @@ rm -rf "$ROOTFS/factory/bin"
 # the toolchain package's programs, (M14) - run directly.
 ln -sfn erlexec "$ROOTFS/factory/erts/bin/erl"
 
+# ...and escript passes `-boot no_dot_erlang`, which ERTS looks up under
+# $ROOTDIR/bin: a compiled boot script (not a shell script), the one file an
+# escript needs from the removed bin/.
+mkdir -p "$ROOTFS/factory/bin"
+cp "$OTP_ROOT/bin/no_dot_erlang.boot" "$ROOTFS/factory/bin/no_dot_erlang.boot"
+
 # The official Hex repository: the factory ships its public key and the
 # preconfigured entry, so a box trusts it without anyone adding a repository
 # first (ADR-019). `/priv/hex/` is the box's own copy and wins once it exists.
