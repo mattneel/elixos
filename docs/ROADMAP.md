@@ -65,6 +65,8 @@ number is parsed. Saturating `+|` for attempts.
 **Notes.** `Elixos.Shim.Control` writes through a sink behaviour; tests use
 `Elixos.Test.ProcessSink`. Validate generations in the caller.
 
+- [x] Done (2026-10-09): `make ci` green; 76 ExUnit tests pass (71 shipped + 5 added). Reviewer subagent found two real defects (`ELIXOS_CTL_FD` accepted below 3; an expired heartbeat timer could start a second loop), both fixed with red-then-green regression tests.
+
 ---
 
 ## M3: First boot (QEMU, shim only)
