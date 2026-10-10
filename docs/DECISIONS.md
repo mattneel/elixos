@@ -555,6 +555,30 @@ desynchronizes.
 test a contract the console does not promise; the M11, M12 and M13 tests all
 send single expressions.
 
+## ADR-031: The M14 toolchain test asserts the escript's output, not its inspect
+
+**Status:** accepted (M14)
+
+**Context.** The same test's `Zig.build/2` assertion reads
+`assert out =~ ~s("/priv/home")` - the quoted form. The stand-in escript it
+just wrote prints its directory with `io:format("~s~n", [Dir])`, and
+`Zig.build/2` returns the child's output verbatim
+(`{:ok, %{output: "/priv/home\n", status: 0}}`), so the closing quote never
+follows `home` directly and the assertion failed on the first real run. The
+pattern was carried over from the `cd/1` assertion above it, where the quoted
+form is right: `cd/1` *returns* the path, and the prompt inspects it.
+
+**Decision.** Assert the directory itself: `assert out =~ ~s(/priv/home)`.
+The escript and `Zig.build/2` are unchanged - `Zig.version/0` trims what it
+reports precisely because `run/2` does not.
+
+**Consequences.** The test still proves what it means to: the tool runs with
+`cd:` set to the session's directory, and its output reaches the caller.
+
+**Alternatives.** Trimming the output inside `Zig.run/2` would make the
+quoted assertion pass, but it would change an M11 API to fit a test that was
+never run, and `Zig.version/0` already trims where trimming is wanted.
+
 ## Open questions
 
 ## ADR-024: Ctrl+C rides with a newline on the console

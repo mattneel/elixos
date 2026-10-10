@@ -136,7 +136,9 @@ defmodule Elixos.Integration.M14PackagesTest do
     # A relative path resolves against the session's directory: `zig build`
     # runs with cd: set to it, so it finds the project the session is in.
     {out, vm} = QEMU.iex(vm, "Zig.build([\"run\"])", 600_000)
-    assert out =~ ~s("/priv/home")
+    # The escript prints the directory and a newline, and Zig.build/2 returns
+    # the output verbatim; the assertion is the directory, not its inspect.
+    assert out =~ ~s(/priv/home)
 
     # The instruction was not to move the VM's working directory (ADR-016).
     {out, vm} = QEMU.iex(vm, "File.cwd!()")
