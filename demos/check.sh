@@ -33,17 +33,27 @@ TEXT="$BUILD/$NAME.txt"
 SCREEN="$BUILD/$NAME.screen.txt"
 
 # asciinema 3 writes one JSON line per event: [time, kind, data]. The output
-# events (kind "o") are the console, byte for byte.
+# events (kind "o") are the console; the assertions read it with the same
+# treatment the QEMU tests give the console - ANSI escapes and carriage returns
+# removed - because a coloured line (IEx printing a map) has escape sequences
+# inside it.
 python3 - "$DEMO.cast" "$TEXT" <<'PY'
-import json, sys
+import json, re, sys
+
+CSI = re.compile("\x1b\\[[0-?]*[ -/]*[@-~]")
+CHARSET = re.compile("\x1b[()][A-Za-z0-9]")
 
 with open(sys.argv[1]) as cast, open(sys.argv[2], "w") as out:
     json.loads(cast.readline())  # the header
     for line in cast:
-        if line.strip():
-            event = json.loads(line)
-            if event[1] == "o":
-                out.write(event[2])
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        if event[1] != "o":
+            continue
+        text = CSI.sub("", event[2])
+        text = CHARSET.sub("", text)
+        out.write(text.replace("\r", ""))
 PY
 
 rm -f "$SCREEN"

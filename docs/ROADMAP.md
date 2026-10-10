@@ -118,7 +118,12 @@ persist, log, and a clean power off, all without ERTS yet.
   `:init.stop/0`. The shim performs the shutdown after reaping the VM.
 - If the cross-build blocks you, ADR-008 allows a temporary stand-in; keep going.
 
-- [ ] Demo recorded: `demos/m04-boot-to-iex.mp4` (`make demo M=4`).
+- [x] Demo recorded: `demos/m04-boot-to-iex.mp4` (`make demo M=4`).
+
+- [x] Done (2026-10-09): `make ci` green at MILESTONE=4 (37/37 Zig, 79 ExUnit,
+  11 QEMU: the M3 and M4 files). The factory is built by
+  `scripts/build-factory.sh` — musl cross gcc with pinned downloads
+  (ADR-022, docs/notes/factory-build.md) — and the console lands at `iex(1)>`.
 
 ---
 

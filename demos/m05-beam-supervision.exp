@@ -1,0 +1,39 @@
+#!/usr/bin/expect -f
+# M5: the shim supervises the BEAM. Killing the VM makes the shim count the
+# attempt, plan the next launch and bring the console back — to the shim a
+# crash and a hang are the same event (docs/ROADMAP.md M5).
+#
+# Auto-commit is pushed out of the way so the attempt counting is visible; a
+# crash loop is what the M5 tests drive in detail.
+
+set timeout 180
+set send_human {.1 .3 10 .05 2}
+
+spawn -noecho qemu-system-x86_64 \
+    -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600 elixos.max_attempts=5" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+
+expect "iex(1)> "
+sleep 1
+
+# Kill the VM from the inside: the shim sees an exit nobody asked for.
+send -h ":erlang.halt(3)\r"
+expect "elixos-shim: beam exited status=3"
+expect "elixos-shim: plan generation=0 mode=normal attempt=2"
+
+# The relaunched BEAM comes back at a fresh prompt.
+expect "iex(1)> "
+sleep 1
+
+send -h "Elixos.info()\r"
+expect "iex(2)> "
+sleep 2
+
+send -h "Elixos.poweroff()\r"
+expect "elixos-shim: shutdown poweroff"
+expect "reboot: Power down"
+expect eof
