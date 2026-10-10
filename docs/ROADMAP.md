@@ -387,7 +387,7 @@ download are gone, no dual pipeline, and the make targets keep their names.
 - The SBOM next to each image lists at least the kernel, OTP and Elixir
   versions; `make image` runs that check.
 - The kernel config is per architecture: `kernel/elixos.config` (common) plus
-  `kernel/config.x86_64` and `kernel/config.arm64`, each applied over its
+  `kernel/config.x86_64` and `kernel/config.aarch64`, each applied over its
   defconfig and guarded by `scripts/check-kernel-config.sh`.
 
 **Notes.** melange's default runner needs bubblewrap, and aarch64 packages

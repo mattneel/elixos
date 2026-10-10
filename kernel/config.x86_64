@@ -7,3 +7,10 @@
 # --- guest niceties, x86 only: the KVM guest bits are x86 symbols ---
 CONFIG_HYPERVISOR_GUEST=y
 CONFIG_KVM_GUEST=y
+
+# --- the serial console: x86 QEMU's 8250 UART on ttyS0 ---
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+
+# --- QEMU's -watchdog device is the i6300esb, an x86 PCI part ---
+CONFIG_I6300ESB_WDT=y
