@@ -1,0 +1,23 @@
+# What the M9 demo must show, in order: a session's directory moves, the VM's
+# never does, and a second shell on the same VM sees the same running world.
+elixos-shim: pid 1, version
+iex(1)> pwd()
+"/priv/home"
+iex(2)> cd("/tmp")
+"/tmp"
+iex(3)> pwd()
+"/tmp"
+iex(4)> File.cwd!()
+"/"
+iex(5)> Agent.start(fn -> 42 end, name: :shared)
+iex(6)> Elixos.REPL.available()
+[:erl, :iex]
+iex(7)> User switch command (enter 'h' for help)
+Eshell V
+1> pwd().
+"/priv/home"
+2> file:get_cwd().
+{ok,"/"}
+3> 'Elixir.Agent':get(shared, fun(X) -> X end).
+42
+elixos-shim: shutdown poweroff

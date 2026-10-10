@@ -9,6 +9,8 @@ defmodule Elixos.REPL do
   whose call starts the shell and returns its pid.
 
     * `:erl` - `{:shell, :start, []}`
+    * `:lfe` - LFE's shell, `{:lfe_shell, :start, []}`, when its package is in
+    * `:clojerl` - Clojerl's shell, when its package is in
     * `:iex` - an Elixos-owned MFA that spawns `IEx.Server.run/1` and returns
       the pid. `IEx.Server.run/1` takes an `:env` option; Elixos passes an env
       whose `tracers` include the capture tracer, so every module typed at the
@@ -20,14 +22,37 @@ defmodule Elixos.REPL do
   that are not REPLs and `{:error, :unavailable}` for known ones not installed.
   """
 
-  @type name :: :iex | :erl | :gsh
+  @type name :: :iex | :erl | :lfe | :clojerl | :gsh
+
+  # Every language's shell entry point, as OTP's contract wants it: an MFA
+  # whose call starts the shell and returns its pid.
+  @repls [
+    iex: {Elixos.Boot.Login, :start_iex, []},
+    erl: {:shell, :start, []},
+    lfe: {:lfe_shell, :start, []},
+    clojerl: {:clojerl, :start, []},
+    gsh: {:gsh, :start, []}
+  ]
 
   @spec available() :: [name()]
-  def available, do: Elixos.NotImplemented.raise!(9, "Elixos.REPL.available/0")
+  def available do
+    # IEx and erl are part of Elixos; the other languages are offered when a
+    # package installed their modules *and* their shell entry point is really
+    # callable - an entry that cannot start is worse than no entry.
+    Enum.sort(for {name, mfa} <- @repls, name in [:iex, :erl] or callable?(mfa), do: name)
+  end
 
   @spec mfa(atom()) :: {:ok, {module(), atom(), list()}} | {:error, :unknown_repl | :unavailable}
-  def mfa(name) when is_atom(name),
-    do: Elixos.NotImplemented.raise!(9, "Elixos.REPL.mfa/1 #{inspect(name)}")
+  def mfa(name) when is_atom(name) do
+    case Keyword.fetch(@repls, name) do
+      {:ok, mfa} -> if name in available(), do: {:ok, mfa}, else: {:error, :unavailable}
+      :error -> {:error, :unknown_repl}
+    end
+  end
+
+  defp callable?({module, function, args}) do
+    Code.ensure_loaded?(module) and function_exported?(module, function, length(args))
+  end
 
   @doc "The REPL used when the user has not chosen one."
   @spec default() :: name()

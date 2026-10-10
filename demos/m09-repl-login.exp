@@ -1,0 +1,77 @@
+#!/usr/bin/expect -f
+# M9: REPLs are the login shells, and they all share one running world
+# (ADR-012). One power-on of a pristine disk copy shows both halves:
+#
+#   * the IEx session has its own working directory (/priv/home, then /tmp)
+#     while the VM's directory stays / (ADR-016, ADR-020) - `pwd()` and
+#     `File.cwd!()` are different questions;
+#   * Ctrl-G starts a second shell (an erl one) on the same VM: it has its own
+#     directory, and the process a GenServer registered in the first session
+#     is right there in the second.
+
+set timeout 300
+set send_human {.1 .3 10 .05 2}
+
+spawn -noecho qemu-system-x86_64 \
+    -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+
+expect "iex(1)> "
+sleep 1
+send -h "pwd()\r"
+expect "iex(2)> "
+sleep 1
+send -h "cd(\"/tmp\")\r"
+expect "iex(3)> "
+sleep 1
+send -h "pwd()\r"
+expect "iex(4)> "
+sleep 1
+
+# The VM's own directory never moves: one process, many sessions.
+send -h "File.cwd!()\r"
+expect "iex(5)> "
+sleep 1
+
+send -h "Agent.start(fn -> 42 end, name: :shared)\r"
+expect "iex(6)> "
+sleep 1
+
+# The registry knows every language whose shell could start: IEx and erl are
+# always there, LFE, Clojerl and gsh arrive when their packages are installed.
+send -h "Elixos.REPL.available()\r"
+expect "iex(7)> "
+sleep 1
+
+# Ctrl-G: start a second local shell (erl) and connect to it. The Ctrl-G
+# rides with a newline, for the same reason Ctrl-C does (ADR-024): the cooked
+# console delivers the line, not the keystroke.
+send "\x07\r"
+expect "User switch command"
+sleep 1
+send -h "s\r"
+sleep 1
+send -h "c 2\r"
+expect "1> "
+sleep 1
+
+# A different session, a different directory - and the same VM.
+send -h "pwd().\r"
+expect "2> "
+sleep 1
+send -h "file:get_cwd().\r"
+expect "3> "
+sleep 1
+send -h "'Elixir.Agent':get(shared, fun(X) -> X end).\r"
+expect "4> "
+sleep 2
+
+send -h "'Elixir.Elixos':poweroff().\r"
+expect "elixos-shim: shutdown poweroff"
+expect "reboot: Power down"
+expect eof
+sleep 1

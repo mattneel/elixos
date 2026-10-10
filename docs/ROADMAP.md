@@ -214,7 +214,7 @@ from `user_default`. Relative paths typed at a prompt resolve against the
 session directory, native tools run with `cd:` set to it, and nothing changes
 the VM's working directory (ADR-016).
 
-- [ ] Demo recorded: `demos/m09-repl-login.mp4` (`make demo M=9`).
+- [x] Demo recorded: `demos/m09-repl-login.mp4` (`make demo M=9`).
 
 ---
 
@@ -331,6 +331,31 @@ refused), the one-name-per-repo clash, and an install by name from the fixture
 repo.
 
 - [ ] Demo recorded: `demos/m14-packages.mp4` (`make demo M=14`).
+
+---
+
+## M15: Built-in AI agents (Jido)
+
+**Goal.** Agents are ordinary Elixos code: define one at a prompt, save it,
+and it is there after the next boot, holding its state and answering commands.
+The LLM is a provider, not the definition — an agent without one still works.
+
+**Acceptance (to be written).** `test/elixos/agent*_test.exs` and one QEMU
+test: a Jido agent defined at the prompt, `Elixos.save()`, power cycle; the
+next boot has it supervised and answering a command, and an agent whose action
+calls an LLM talks to a stubbed provider over the loopback.
+
+**Notes.** Jido is the framework: `jido` (agents, directives, runtime),
+`jido_action` (validated actions), `jido_signal`, and `jido_ai` + `req_llm`
+for providers. They arrive as packages (M14/ADR-019), so this milestone is
+almost entirely wiring and conventions: an agent's module is a user module
+(the M6 image already journals and restores those), its supervision is a tree
+built at boot (the answer to Q2), and its memory belongs on `/priv` with the
+rest of the machine's state. `~/src/jido-skills` on the development host
+(`jido-core`, `jido-agent`, `jido-action`, `jido-ai`, `jido-testing`) is the
+authority for the API and its conventions; see docs/notes/jido.md.
+
+- [ ] Demo recorded: `demos/m15-jido-agents.mp4` (`make demo M=15`).
 
 ---
 

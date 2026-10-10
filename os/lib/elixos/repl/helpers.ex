@@ -20,16 +20,21 @@ defmodule Elixos.REPL.Helpers do
 
   @doc "The session's working directory."
   @spec pwd() :: Path.t()
-  def pwd, do: Elixos.NotImplemented.raise!(9, "Elixos.REPL.Helpers.pwd/0")
+  def pwd, do: Elixos.Session.cwd()
 
   @doc "Changes the session's directory, like a shell's `cd`."
   @spec cd(Path.t()) :: Path.t() | {:error, term()}
-  def cd(path), do: Elixos.NotImplemented.raise!(9, "Elixos.REPL.Helpers.cd/1 #{inspect(path)}")
+  def cd(path) do
+    case Elixos.Session.cd(path) do
+      {:ok, dir} -> dir
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   @doc "Lists the session's directory, or `path` inside it."
-  @spec ls() :: [String.t()]
-  def ls, do: Elixos.NotImplemented.raise!(9, "Elixos.REPL.Helpers.ls/0")
+  @spec ls() :: [String.t()] | {:error, term()}
+  def ls, do: ls(".")
 
-  @spec ls(Path.t()) :: [String.t()]
-  def ls(path), do: Elixos.NotImplemented.raise!(9, "Elixos.REPL.Helpers.ls/1 #{inspect(path)}")
+  @spec ls(Path.t()) :: [String.t()] | {:error, term()}
+  def ls(path), do: Elixos.Session.ls(path)
 end

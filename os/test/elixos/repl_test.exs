@@ -12,8 +12,23 @@ defmodule Elixos.REPLTest do
     assert available == Enum.sort(available)
   end
 
-  test "gsh is listed only when it is installed" do
-    assert :gsh in REPL.available() == Code.ensure_loaded?(:gsh)
+  test "a language's shell is listed only when its modules are installed" do
+    # gsh (Gleam), LFE and Clojerl arrive as packages; until one is installed,
+    # the registry does not offer it, and an offered REPL always has a
+    # callable entry point.
+    assert :gsh in REPL.available() ==
+             (Code.ensure_loaded?(:gsh) and function_exported?(:gsh, :start, 0))
+
+    assert :lfe in REPL.available() ==
+             (Code.ensure_loaded?(:lfe_shell) and function_exported?(:lfe_shell, :start, 0))
+
+    assert :clojerl in REPL.available() ==
+             (Code.ensure_loaded?(:clojerl) and function_exported?(:clojerl, :start, 0))
+
+    for name <- REPL.available(), name not in [:iex, :erl] do
+      assert {:ok, {m, f, a}} = REPL.mfa(name)
+      assert function_exported?(m, f, length(a)), "offered #{name} without a callable entry"
+    end
   end
 
   test "each REPL is an MFA that starts a shell and returns its pid (OTP's contract)" do

@@ -255,7 +255,9 @@ that.
   builds; nobody ever gets an sh prompt.
 - Hex needs CA certificates; ship a bundle where `:public_key.cacerts_get/0`
   finds it.
-- gsh needs the `gleam` binary, which would also live in a package.
+- gsh needs the `gleam` binary, which would also live in a package; LFE and
+  Clojerl are Hex packages of their own (`lfe`, `clojerl`). `Elixos.REPL`
+  offers a language only when its shell entry point is really callable.
 
 ## §9 Real hardware (ADR-014, M13)
 

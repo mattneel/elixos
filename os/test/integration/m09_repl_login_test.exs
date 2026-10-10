@@ -32,7 +32,7 @@ defmodule Elixos.Integration.M09REPLLoginTest do
     vm = QEMU.boot_to_iex(ctx, disk: Disk.fresh!(ctx.tmp_dir))
     {_, vm} = QEMU.iex(vm, "Agent.start(fn -> 42 end, name: :shared)")
 
-    vm = QEMU.send_raw(vm, <<7>>)
+    vm = QEMU.send_raw(vm, <<7, ?\r>>)
     {_, vm} = QEMU.expect(vm, ~r/-->/)
     vm = QEMU.send_line(vm, "s shell")
     {_, vm} = QEMU.expect(vm, ~r/-->/)

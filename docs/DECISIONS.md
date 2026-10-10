@@ -477,6 +477,11 @@ the runaway expression and the prompt comes back usable.
 `Elixos.Boot.Login` spawns `IEx.Server.run/1` and lets IEx handle the break
 itself (`{:EXIT, _, :interrupt}`), exactly as the reference does.
 
+The same classification rule governs Ctrl-G: a chunk is `ctrl_g` only if it
+*contains* Ctrl-G with something after it, so the M9 tests send `\a\r` for the
+job-control switch. On a keyboard the newline the cooked console needs for
+Ctrl-C behaves the same way: the byte is held until the line is complete.
+
 ## ADR-025: Crash dumps live on the persistent disk
 
 **Status:** accepted
@@ -497,6 +502,21 @@ default: there is nowhere durable to put a dump. This is part of the launch
 contract (PROTOCOL.md §3) and of the disk layout (PROTOCOL.md §7); the M8
 integration test boots a generation that crashes and reads its dump from the
 fallback boot's IEx.
+
+## ADR-026: The M9 session test destructures its console helper wrong
+
+**Status:** accepted
+
+**Context.** `test/integration/m09_session_dir_test.exs` takes its output from
+`QEMU.expect_with_before/3`, whose documented contract is
+`{matched, before, vm}` (test/support/qemu.ex:144), as a two-element tuple:
+`{out, vm} = QEMU.expect_with_before(...)`. Every such call raises a
+`MatchError` before any assertion runs, so the test could not pass. The tests
+shipped with the M9 roadmap change were never run; this one is a transcription
+slip, not a statement about the console.
+
+**Decision.** Fix the four destructures (`{_, out, vm}`) and keep every
+assertion as it is. No behaviour changes, and the helper keeps its contract.
 
 Decide these with the human. Until then, follow the proposed default.
 

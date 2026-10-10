@@ -37,12 +37,37 @@ defmodule Elixos.Boot.Login do
 
   @doc "Starts the interactive shell, with the user's REPL as its shell."
   @spec start_shell(Elixos.Boot.Env.t() | :host) :: :ok | {:error, term()}
-  def start_shell(env) do
+  def start_shell(_env) do
     # IEx needs its application (the broker) up; a release does not start it.
-    with {:ok, _apps} <- Application.ensure_all_started(:iex) do
-      :shell.start_interactive({__MODULE__, :start_iex, [env]})
+    with {:ok, _apps} <- Application.ensure_all_started(:iex),
+         {:ok, mfa} <- login_repl() do
+      :shell.start_interactive(mfa)
     end
   end
+
+  @doc "The user's chosen REPL as an MFA (`/priv/user.exs`, ADR-013)."
+  @spec login_repl() :: {:ok, {module(), atom(), list()}}
+  def login_repl do
+    # A user file that cannot be read or parsed is not a reason to have no
+    # prompt: the default REPL is the fallback, and the file is the user's.
+    repl =
+      case Elixos.User.read(user_path()) do
+        {:ok, %{repl: repl}} -> repl
+        {:error, _reason} -> Elixos.REPL.default()
+      end
+
+    Elixos.REPL.mfa(repl)
+  end
+
+  @doc "Where the user's settings live (PROTOCOL.md §7)."
+  def user_path, do: "/priv/user.exs"
+
+  @doc """
+  The shell MFA without arguments, for `Elixos.REPL.mfa/1`: the same session,
+  with the boot environment and the image read from this VM.
+  """
+  @spec start_iex() :: pid()
+  def start_iex, do: start_iex({Elixos.Boot.Env.current(), Process.whereis(Elixos.Image)})
 
   @doc """
   The shell MFA: starts an IEx session and returns its pid, as
@@ -59,9 +84,16 @@ defmodule Elixos.Boot.Login do
     spawn_link(fn -> IEx.Server.run(iex_options(boot, image)) end)
   end
 
-  defp iex_options(_boot, image) when is_pid(image) do
-    [env: Elixos.Boot.Recorder.traced_env(file: "iex", line: 1)]
+  # What a prompt evaluates with: the recorder's tracer, so every module typed
+  # at the prompt is journaled (M6), and the session-aware helpers, so a
+  # prompt's `cd/1`, `pwd/0` and `ls/0,1` move the session and never the VM
+  # (ADR-016, ADR-020). The helpers travel as `:dot_iex`, a file the evaluator
+  # loads after its own import of IEx.Helpers and whose environment it keeps -
+  # which also means they survive an interrupt, where the env does not.
+  defp iex_options(_boot, _image) do
+    [env: Elixos.Boot.Recorder.traced_env(file: "iex", line: 1), dot_iex: helpers_path()]
   end
 
-  defp iex_options(_boot, _no_image), do: []
+  @doc "The file a login IEx loads for its session-aware helpers."
+  def helpers_path, do: Application.app_dir(:elixos, "priv/iex_helpers.exs")
 end

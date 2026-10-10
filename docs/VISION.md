@@ -14,7 +14,8 @@ boot in seconds, and program while it runs.
   tiny PID 1 shim, the shim runs the BEAM, and you land at `iex(1)>`.
   There is no login screen, no shell script, no `/bin/sh`.
 - **REPLs are the shells.** Where other systems offer bash and sh, Elixos
-  offers IEx, erl and gsh (Gleam). They are not separate worlds: a GenServer
+  offers IEx, erl, LFE, Clojerl and gsh (Gleam) - the ones whose packages are
+  installed. They are not separate worlds: a GenServer
   started from IEx is callable from erl a second later, because every REPL
   attaches to the same running VM. Ctrl-G job control switches between them.
 - **A live image, like a Lisp machine or a Smalltalk image.** Define a module

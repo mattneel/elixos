@@ -17,14 +17,27 @@ defmodule :user_default do
   `user_default`.
   """
 
+  # The erl shell prints binaries as <<"...">>, so these speak Erlang: paths
+  # are charlists, the way file/1 and friends expect them.
+
   @doc "Changes the session's directory."
-  def cd(path), do: Elixos.NotImplemented.raise!(9, ":user_default.cd/1 #{inspect(path)}")
+  def cd(path) do
+    case Elixos.Session.cd(to_string(path)) do
+      {:ok, dir} -> to_charlist(dir)
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   @doc "The session's working directory."
-  def pwd, do: Elixos.NotImplemented.raise!(9, ":user_default.pwd/0")
+  def pwd, do: to_charlist(Elixos.Session.cwd())
 
   @doc "Lists the session's directory, or `path` inside it."
-  def ls, do: Elixos.NotImplemented.raise!(9, ":user_default.ls/0")
+  def ls, do: ls(".")
 
-  def ls(path), do: Elixos.NotImplemented.raise!(9, ":user_default.ls/1 #{inspect(path)}")
+  def ls(path) do
+    case Elixos.Session.ls(to_string(path)) do
+      names when is_list(names) -> Enum.map(names, &to_charlist/1)
+      {:error, reason} -> {:error, reason}
+    end
+  end
 end

@@ -16,7 +16,7 @@ defmodule Elixos.Integration.M09SessionDirTest do
 
   alias Elixos.Test.{Disk, QEMU}
 
-  @ctrl_g "\a"
+  @ctrl_g "\a\r"
 
   test "two console sessions sit in different directories, and the VM stays at /", ctx do
     vm = QEMU.boot_to_iex(ctx, disk: Disk.fresh!(ctx.tmp_dir))
@@ -45,16 +45,16 @@ defmodule Elixos.Integration.M09SessionDirTest do
     {_, vm} = QEMU.expect(vm, ~r/1> /, 60_000)
 
     vm = QEMU.send_line(vm, "pwd().")
-    {out, vm} = QEMU.expect_with_before(vm, ~r/2> /, 60_000)
+    {_matched, out, vm} = QEMU.expect_with_before(vm, ~r/2> /, 60_000)
     assert out =~ ~s("/priv/home")
     # Even in the second session the VM's directory is still /.
     vm = QEMU.send_line(vm, "file:get_cwd().")
-    {out, vm} = QEMU.expect_with_before(vm, ~r/3> /, 60_000)
+    {_matched, out, vm} = QEMU.expect_with_before(vm, ~r/3> /, 60_000)
     assert out =~ ~s({ok,"/"})
     # and the second session has its own directory: cd here must not be seen
     # by the first one.
     vm = QEMU.send_line(vm, ~s|cd("/var").|)
-    {_, vm} = QEMU.expect_with_before(vm, ~r/4> /, 60_000)
+    {_matched, _out, vm} = QEMU.expect_with_before(vm, ~r/4> /, 60_000)
 
     # Back to the first session: its directory is what it was.
     vm = QEMU.send_raw(vm, @ctrl_g)
