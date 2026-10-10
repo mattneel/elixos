@@ -330,7 +330,7 @@ the repo/install unit tests cover trust (a repo without a trusted key is
 refused), the one-name-per-repo clash, and an install by name from the fixture
 repo.
 
-- [ ] Demo recorded: `demos/m14-packages.mp4` (`make demo M=14`).
+- [x] Demo recorded: `demos/m14-packages.mp4` (`make demo M=14`).
 
 ---
 
