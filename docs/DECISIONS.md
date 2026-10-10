@@ -355,6 +355,54 @@ POSIX shaped, and wrong for a system whose userland is one application.
 (d) Renaming `elixos.data`: rejected above — it would break the M1 and M3
 tests for no gain.
 
+## ADR-022: The factory's ERTS is built with the musl cross gcc
+
+**Status:** accepted (2026-10-09). Supersedes the ERTS half of ADR-008.
+
+**Context.** ADR-008 chose zig cc as the one toolchain that builds the shim,
+the ERTS and (later) the NIFs, with the ERTS dynamically linked against musl.
+Building OTP 29.1.1 that way failed for reasons that are properties of Zig as
+of 0.18.0-dev.131, not of the configuration (the full story is in
+docs/notes/factory-build.md):
+
+  * Zig's linker *localizes* libc's string and math symbols that shared
+    libraries need at run time (`memcpy`, `memcmp`, `bcmp`, the libm entry
+    points). Linking musl's own objects with `zig cc -shared` leaves them out
+    of `.dynsym`, while GNU ld exports them, as a canonical musl loader does
+    (checked against Alpine's `ld-musl-x86_64.so.1`). A shared library such as
+    `libcrypto.so.3` therefore carries dynamic relocations only a loader
+    exporting those names can satisfy — and Zig's bundled `libc.so` is
+    static-pie with no `_dlstart`, so it cannot be that loader.
+  * OTP's build works against it: `erts/emulator` defines `DEP_CC=$(CC)`, so it
+    preprocesses C++ sources with the C driver, which does not add libc++'s
+    include paths; and the *bootstrap* (host) builds inherit any exported
+    `CPPFLAGS`/`LDFLAGS`, which put musl headers in front of the host's.
+
+**Decision.** The factory's ERTS is built with musl.cc's
+`x86_64-linux-musl-cross` gcc, pinned and checksummed like the kernel is
+(ADR-001); every factory download is, so the image cannot change because an
+upstream tarball did. The shim stays on zig (ADR-003) and builds the initramfs;
+the on-box compiler for NIFs stays zig cc (ADR-009).
+
+**Consequences.** The split is invisible to the running system and to NIFs:
+they are loaded with `dlopen` into the same dynamically linked musl ERTS, and a
+session still compiles with zig cc. What changes is who produces the factory —
+`scripts/build-factory.sh` rather than a `zig build` step — and ADR-008's goal
+(a dynamic musl ERTS) is met by a different compiler. Replacing the cross gcc
+with zig cc later is a build-script change, not an image change; the two
+blockers above are what would have to be fixed first, and ADR-008's escape
+hatch (a known-good musl build behind the same paths) was not needed.
+
+**Alternatives considered.** (a) Keep pushing on zig cc: the loader problem was
+worked around by linking musl's loader with GNU ld and a fake-native configure
+made the probes run, but OTP's bootstrap and dependency generation still fought
+the toolchain, and the loader Zig links against is unusable as an interpreter.
+(b) The host's gcc with a musl sysroot: no musl-targeting host compiler exists
+here (`musl-gcc` links statically only, which breaks `dlopen` and ADR-008).
+(c) Build inside an Alpine container natively: the newest OTP there is 27, too
+old to bootstrap 29.1.1. (d) A prebuilt musl OTP: ADR-008 allows it as a
+temporary stand-in, but a checked-in binary is worse than a pinned download.
+
 ---
 
 ## Open questions
