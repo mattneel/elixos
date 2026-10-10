@@ -12,7 +12,7 @@ iex(4)> File.cwd!()
 iex(5)> Agent.start(fn -> 42 end, name: :shared)
 iex(6)> Elixos.REPL.available()
 [:erl, :iex]
-iex(7)> User switch command (enter 'h' for help)
+User switch command (enter 'h' for help)
 Eshell V
 1> pwd().
 "/priv/home"

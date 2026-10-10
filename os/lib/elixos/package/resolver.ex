@@ -28,7 +28,74 @@ defmodule Elixos.Package.Resolver do
           {:ok, %{install: [atom()], upgrade: [atom()], unchanged: [atom()]}}
           | {:error, [tuple()]}
   def plan(installed, incoming, os_version) do
-    _ = {installed, incoming, os_version}
-    Elixos.NotImplemented.raise!(10, "Elixos.Package.Resolver.plan/3")
+    conflicts =
+      bundled_os(incoming) ++ unsatisfied(installed, incoming, os_version)
+
+    case Enum.sort(conflicts) do
+      [] -> {:ok, classify(installed, incoming)}
+      conflicts -> {:error, conflicts}
+    end
+  end
+
+  # The OS itself must never arrive as a package to install.
+  defp bundled_os(incoming) do
+    for %{app: :elixos} <- incoming, do: {:bundled_os, :elixos}
+  end
+
+  # One version per package (ADR-015): installers arrive on top of what is
+  # there, and then every requirement of every resulting package must hold.
+  defp unsatisfied(installed, incoming, os_version) do
+    result = merge(installed, incoming)
+
+    for package <- Map.values(result),
+        {dep, requirement} <- package.deps,
+        conflict = requirement_conflict(result, package, dep, requirement, os_version),
+        conflict != nil,
+        do: conflict
+  end
+
+  defp merge(installed, incoming) do
+    installed
+    |> Map.new(&{&1.app, &1})
+    |> Map.merge(Map.new(incoming, &{&1.app, &1}))
+  end
+
+  defp requirement_conflict(_result, package, :elixos, requirement, os_version) do
+    unless Version.match?(os_version, requirement) do
+      {:os_version, package.app, requirement, os_version}
+    end
+  end
+
+  defp requirement_conflict(result, package, dep, requirement, _os_version) do
+    found = result |> Map.get(dep, %{version: nil}) |> Map.get(:version)
+
+    if found == nil or not Version.match?(found, requirement) do
+      {:unsatisfied, package.app, dep, requirement, found}
+    end
+  end
+
+  # The classification is over the resulting set: an installed package that
+  # nothing replaces is unchanged, and so is one arriving at its own version.
+  defp classify(installed, incoming) do
+    before = Map.new(installed, &{&1.app, &1.version})
+    arriving = Map.new(incoming, &{&1.app, &1.version})
+    result = merge(installed, incoming)
+
+    Enum.reduce(Map.keys(result), %{install: [], upgrade: [], unchanged: []}, fn app, acc ->
+      case {Map.fetch(before, app), Map.fetch(arriving, app)} do
+        {:error, {:ok, _version}} ->
+          Map.update!(acc, :install, &[app | &1])
+
+        {{:ok, version}, {:ok, version}} ->
+          Map.update!(acc, :unchanged, &[app | &1])
+
+        {{:ok, _old}, {:ok, _new}} ->
+          Map.update!(acc, :upgrade, &[app | &1])
+
+        {{:ok, _version}, :error} ->
+          Map.update!(acc, :unchanged, &[app | &1])
+      end
+    end)
+    |> Map.new(fn {kind, apps} -> {kind, Enum.sort(apps)} end)
   end
 end
