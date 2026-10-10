@@ -258,7 +258,7 @@ doc has a verified approach. Remember Elixir's `~> 0.1` means `< 1.0.0`.
 host keys in `/priv/ssh/`. No passwords. Networking in QEMU uses kernel
 `ip=dhcp` until Elixos has its own DHCP client.
 
-- [ ] Demo recorded: `demos/m12-ssh.mp4` (`make demo M=12`).
+- [x] Demo recorded: `demos/m12-ssh.mp4` (`make demo M=12`).
 
 ---
 
