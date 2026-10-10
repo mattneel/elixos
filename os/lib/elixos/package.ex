@@ -37,43 +37,124 @@ defmodule Elixos.Package do
     root = Path.expand(dir)
 
     if File.regular?(Path.join(root, "mix.exs")) do
-      install_project(root)
+      install_project(root, %{})
     else
       install_payload(root)
     end
   end
 
   def install(name) when is_atom(name) do
-    name = Atom.to_string(name)
+    string = Atom.to_string(name)
 
-    with {:ok, %{repo: repo, version: version}} <- Elixos.Package.Hex.resolve(name),
-         dir = Path.join([os_priv(), "apps", "#{name}-#{version}"]),
-         {:ok, ^dir} <- Elixos.Package.Hex.unpack(repo, name, version, dir) do
-      install(dir)
+    with {:ok, closure} <- Elixos.Package.Hex.closure(string),
+         :ok <- check_plan(closure),
+         :ok <- install_closure(closure) do
+      {:ok, name}
     end
   end
 
-  defp install_project(root) do
+  # One version of every package (ADR-015): the resolver weighs the whole
+  # closure, and everything already installed, before anything is unpacked.
+  defp check_plan(closure) do
+    case Elixos.Package.Resolver.plan(
+           installed_packages(),
+           closure_packages(closure),
+           os_version()
+         ) do
+      {:ok, _plan} -> :ok
+      {:error, conflicts} -> {:error, {:conflicts, conflicts}}
+    end
+  end
+
+  defp closure_packages(closure) do
+    for entry <- closure do
+      %{app: String.to_atom(entry.name), version: entry.version, deps: atom_deps(entry.deps)}
+    end
+  end
+
+  # Dependencies first: a package that requires another compiles against it,
+  # so it has to be there when the child ERTS builds it.
+  defp install_closure(closure) do
+    Enum.each(closure, fn entry ->
+      dir = Path.join([os_priv(), "apps", "#{entry.name}-#{entry.version}"])
+
+      case Elixos.Package.Hex.unpack(entry.repo, entry.name, entry.version, dir) do
+        {:ok, ^dir} ->
+          case install_project_or_payload(dir, atom_deps(entry.deps)) do
+            {:ok, _app} -> :ok
+            {:error, reason} -> throw({:error, {:install_failed, entry.name, reason}})
+          end
+
+        {:error, reason} ->
+          throw({:error, {:unpack_failed, entry.name, reason}})
+      end
+    end)
+
+    :ok
+  catch
+    {:error, reason} -> {:error, reason}
+  end
+
+  defp install_project_or_payload(dir, deps) do
+    if File.regular?(Path.join(dir, "mix.exs")) do
+      install_project(dir, deps)
+    else
+      install_payload(dir)
+    end
+  end
+
+  defp install_project(root, deps) do
     with {:ok, spec} <- spec(root),
          {:ok, app, version, ebin} <- build(root),
          :ok <- apply_config(root),
          :ok <- install_tree(app, ebin, root),
          :ok <- load(app, installed_ebin(app)),
          :ok <- start_services(spec.services),
-         :ok <- record(app, version, spec) do
+         :ok <- record(app, version, spec, deps) do
       {:ok, app}
     end
   end
 
-  # A package without a Mix project is a *payload*: programs and libraries its
-  # API (ADR-019) runs - the toolchain (ADR-009) is the first one. It is
-  # adopted where it lies (the disk's /priv/toolchain is 421M; copying it
-  # would be waste) and recorded, so it is part of the image like any package.
+  # A package without a Mix project is a *payload*. One that carries ebin/ has
+  # arrived already built (a repository can serve a library whose own build
+  # needs tools the box does not ship yet): its code is adopted where any
+  # install's lives, so it is on the path, loadable and removable like the
+  # rest. One without ebin/ - the toolchain (ADR-009) - is taken where it lies
+  # (the disk's /priv/toolchain is 421M; copying it would be waste) and
+  # recorded, so it is part of the image like any package.
   defp install_payload(root) do
-    name = root |> Path.basename() |> String.to_atom()
+    ebin = Path.join(root, "ebin")
 
-    with :ok <- record(name, payload_version(root), %Elixos.Package.Spec{}) do
-      {:ok, name}
+    if File.dir?(ebin) do
+      install_built(root, ebin)
+    else
+      name = root |> Path.basename() |> String.to_atom()
+
+      with :ok <- record(name, payload_version(root), %Elixos.Package.Spec{}, %{}) do
+        {:ok, name}
+      end
+    end
+  end
+
+  defp install_built(root, ebin) do
+    with {:ok, app, version} <- built_identity(ebin),
+         :ok <- install_tree(app, ebin, root),
+         :ok <- load(app, installed_ebin(app)),
+         :ok <- record(app, version, %Elixos.Package.Spec{}, %{}) do
+      {:ok, app}
+    end
+  end
+
+  # The application resource a built package carries names it.
+  defp built_identity(ebin) do
+    case Path.wildcard(Path.join(ebin, "*.app")) do
+      [app_file | _] ->
+        {:ok, terms} = :file.consult(String.to_charlist(app_file))
+        {:application, name, props} = Enum.find(terms, &match?({:application, _, _}, &1))
+        {:ok, name, to_string(props[:vsn])}
+
+      [] ->
+        {:error, {:no_built_app, ebin}}
     end
   end
 
@@ -127,20 +208,24 @@ defmodule Elixos.Package do
 
     # The release's boot script resolves $RELEASE_LIB against the boot_var the
     # shim passes, so a child ERTS has to pass it too.
-    args = [
-      "-noshell",
-      "-boot",
-      boot_script(),
-      "-boot_var",
-      "RELEASE_LIB",
-      lib_dir(),
-      "-config",
-      sys_config(),
-      "-pa",
-      mix_ebin(),
-      "-eval",
-      code
-    ]
+    # A package that requires an installed one compiles against it: the
+    # child sees every installed app's ebin, the way this VM does.
+    args =
+      [
+        "-noshell",
+        "-boot",
+        boot_script(),
+        "-boot_var",
+        "RELEASE_LIB",
+        lib_dir(),
+        "-config",
+        sys_config(),
+        "-pa",
+        mix_ebin(),
+        "-eval",
+        code
+      ] ++
+        Enum.flat_map(Path.wildcard(Path.join(os_priv(), "apps/*/ebin")), &["-pa", &1])
 
     {output, status} =
       System.cmd(erlexec(), args, cd: root, env: env, stderr_to_stdout: true)
@@ -265,12 +350,24 @@ defmodule Elixos.Package do
 
   defp child_spec(service), do: service
 
-  defp record(app, version, spec) do
+  defp record(app, version, spec, deps) do
     case Process.whereis(Elixos.Image) do
       nil -> {:error, :no_image}
-      image -> Elixos.Image.record_app(image, app, version, spec.services)
+      image -> Elixos.Image.record_app(image, app, version, spec.services, deps)
     end
   end
+
+  defp installed_packages do
+    case Process.whereis(Elixos.Image) do
+      nil -> []
+      image -> Elixos.Image.packages(image)
+    end
+  end
+
+  defp os_version, do: to_string(Application.spec(:elixos, :vsn))
+
+  defp atom_deps(deps),
+    do: Map.new(deps, fn {name, requirement} -> {String.to_atom(name), requirement} end)
 
   defp factory, do: Application.get_env(:elixos, :factory_dir, "/factory")
   defp erlexec, do: Path.join([factory(), "erts", "bin", "erlexec"])

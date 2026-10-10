@@ -125,10 +125,18 @@ defmodule Elixos.Image do
   @impl true
   def handle_call(:apps, _from, state), do: {:reply, state.apps, state}
 
-  def handle_call({:record_app, app, version, services}, _from, state) do
-    with {:ok, _seq} <- Journal.append(state.journal, {:app, app, version, services}) do
+  def handle_call({:record_app, app, version, services}, from, state) do
+    handle_call({:record_app, app, version, services, %{}}, from, state)
+  end
+
+  def handle_call({:record_app, app, version, services, deps}, _from, state) do
+    with {:ok, _seq} <- Journal.append(state.journal, {:app, app, version, services}),
+         {:ok, _seq} <- Journal.append(state.journal, {:app_deps, app, deps}) do
       {:reply, :ok,
-       %{state | apps: Map.put(state.apps, app, %{version: version, services: services})}}
+       %{
+         state
+         | apps: Map.put(state.apps, app, %{version: version, services: services, deps: deps})
+       }}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -272,7 +280,28 @@ defmodule Elixos.Image do
   """
   @spec record_app(t(), atom(), String.t(), [term()]) :: :ok | {:error, term()}
   def record_app(image, app, version, services) do
-    GenServer.call(image, {:record_app, app, version, services}, :infinity)
+    record_app(image, app, version, services, %{})
+  end
+
+  @doc """
+  The same, with what the package requires: `%{dep => requirement}`, so an
+  install can be weighed against the installed set (ADR-015). (M15)
+  """
+  @spec record_app(t(), atom(), String.t(), [term()], %{atom() => String.t()}) ::
+          :ok | {:error, term()}
+  def record_app(image, app, version, services, deps) do
+    GenServer.call(image, {:record_app, app, version, services, deps}, :infinity)
+  end
+
+  @doc """
+  Every installed package as the resolver wants it: `app`, `version` and what
+  it requires. (M15)
+  """
+  @spec packages(t()) :: [%{app: atom(), version: String.t(), deps: %{atom() => String.t()}}]
+  def packages(image) do
+    for {app, entry} <- GenServer.call(image, :apps) do
+      %{app: app, version: entry.version, deps: Map.get(entry, :deps, %{})}
+    end
   end
 
   @doc """
@@ -315,6 +344,11 @@ defmodule Elixos.Image do
 
         {:uninstall, app} ->
           Map.delete(apps, app)
+
+        # What a package requires, so the resolver can weigh an install
+        # against what is already there (M15).
+        {:app_deps, app, deps} ->
+          Map.update(apps, app, %{deps: deps}, &Map.put(&1, :deps, deps))
 
         _other ->
           apps
