@@ -613,7 +613,7 @@ devices (VISION.md, "Not").
 
 ## ADR-033: A package may arrive built
 
-**Status:** accepted (M15)
+**Status:** superseded by ADR-036 (M15)
 
 **Context.** M14 installs a package by building it on the box. Jido's closure
 cannot be built there yet: three of its 15 dependencies are rebar projects,
@@ -685,6 +685,51 @@ Which applications travel is a short list that grows when something needs one.
 
 **Alternatives.** Shipping every OTP application (the image is an initramfs);
 letting each package vendor its dependencies (ADR-019 forbids it).
+
+## ADR-036: Jido is a dependency of Elixos itself
+
+**Status:** accepted (M15)
+
+**Context.** M15 makes agents part of the operating system, and Jido is what
+an agent is written in. The first cut brought it in the way M14 brings in a
+program: a package, installed from a trusted repository by name, its whole
+closure (15 Hex packages) unpacked to `/priv/apps` and loaded at run time.
+That is the wrong shape for a framework the OS's own behavior is defined in -
+nothing installs `Enum` before the standard library works - and the closure
+cannot even be built on the box (three rebar projects, and telemetry's `pc`
+plugin fetches from the network), which is why ADR-033 had to invent a "may
+arrive built" package for it.
+
+**Decision.** `os/mix.exs` depends on `jido ~> 2.4`, and the factory ships it
+like every other application in the release: `mix release` carries the closure
+(jido, jido_action, jido_signal, jason, crontab, fuse, multigraph,
+nimble_options, nimble_parsec, poolboy, splode, telemetry, telemetry_metrics,
+time_zone_info, zoi), and `mnesia` - jido_signal's OTP dependency - comes from
+the cross-built OTP beside the ERTS. Nothing is installed or adopted at run
+time. The package manager keeps its M14 meaning for programs; a package that
+arrives built has no user left, so ADR-033 and the "arrive built" code path are
+superseded, and the fixture's prebuilt closure (`build-jido.sh`,
+`jido_build.exs`, 15 tarballs) is removed - the fixture repository serves the
+`hello_*` sources only.
+
+**Consequences.** Every boot starts jido (and through it mnesia) before
+`Elixos.Application` runs, so an agent can run the moment a prompt exists; the
+M15 acceptance asserts that instead of installing anything, and
+`agents_test.exs`'s moduledoc follows - both changed in their own commit, per
+AGENTS.md. `os/test/elixos/package/mix_target_test.exs` now resolves the
+project's own dependencies (its lock, pointed at this project's `deps/`) for
+the `sample_app` fixture, because the path dependency has a closure of its
+own. The OS's dependency set is a fact of the factory (ADR-008): building the
+factory needs the network once for `mix deps.get`, like the kernel and OTP
+downloads. The closure is pure BEAM - no NIFs - and `time_zone_info`'s
+`data.etf` is the only non-BEAM byte it carries, so nothing needed a musl
+cross-build.
+
+**Alternatives.** Vendoring the sources under `os/` (a second source of truth,
+and still not how a program arrives); keeping install-by-name for jido and
+pre-seeding the fixture (the slow, two-step path this replaces); building rebar
+packages on the box (ADR-033's alternative - still not possible, and no longer
+on the critical path).
 
 ## Open questions
 

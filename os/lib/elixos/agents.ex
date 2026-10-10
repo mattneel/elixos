@@ -186,8 +186,7 @@ defmodule Elixos.Agents do
     case Process.whereis(agent_name(id)) do
       nil ->
         if jido_agent?(module) do
-          registry = Module.concat(Keyword.get(opts, :jido, Jido), Registry)
-          apply(agent_server(), :whereis, [registry, id])
+          Jido.AgentServer.whereis(Jido.registry_name(Keyword.get(opts, :jido, Jido)), id)
         end
 
       pid ->
@@ -246,7 +245,7 @@ defmodule Elixos.Agents do
       # tell the server the module is `Jido.Agent` itself.
       options = if snapshot, do: Keyword.put(options, :initial_state, snapshot), else: options
 
-      {agent_server(), Keyword.merge(options, agent: module, id: id, jido: instance)}
+      {Jido.AgentServer, Keyword.merge(options, agent: module, id: id, jido: instance)}
     else
       %{
         id: {:elixos_agent, id},
@@ -272,8 +271,6 @@ defmodule Elixos.Agents do
     end
   end
 
-  defp agent_server, do: Module.concat([Jido, AgentServer])
-
   defp jido_agent?(module) do
     is_atom(module) and Code.ensure_loaded?(module) and
       function_exported?(module, :__agent_metadata__, 0)
@@ -293,7 +290,7 @@ defmodule Elixos.Agents do
   # What an agent remembers is its state map; the module comes from the
   # record, so this is all a restart needs.
   defp jido_snapshot(pid) do
-    case apply(agent_server(), :state, [pid]) do
+    case Jido.AgentServer.state(pid) do
       {:ok, state} -> Map.get(state, :agent).state
       {:error, _reason} -> nil
     end

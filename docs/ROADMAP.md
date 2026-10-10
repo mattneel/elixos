@@ -340,20 +340,25 @@ repo.
 and it is there after the next boot, holding its state and answering commands.
 The LLM is a provider, not the definition — an agent without one still works.
 
-**Acceptance (to be written).** `test/elixos/agent*_test.exs` and one QEMU
-test: a Jido agent defined at the prompt, `Elixos.save()`, power cycle; the
-next boot has it supervised and answering a command, and an agent whose action
-calls an LLM talks to a stubbed provider over the loopback.
+**Acceptance.** `test/elixos/agents_test.exs`,
+`test/elixos/agents_llm_test.exs`, `test/elixos/package/install_closure_test.exs`
+and `test/integration/m15_jido_agents_test.exs`: a Jido agent defined at the
+prompt, `Elixos.save()`, power cycle; the next boot has it supervised and
+answering a command, and an agent whose action calls an LLM talks to a stubbed
+provider over the loopback.
 
 **Notes.** Jido is the framework: `jido` (agents, directives, runtime),
 `jido_action` (validated actions), `jido_signal`, and `jido_ai` + `req_llm`
-for providers. They arrive as packages (M14/ADR-019), so this milestone is
-almost entirely wiring and conventions: an agent's module is a user module
-(the M6 image already journals and restores those), its supervision is a tree
-built at boot (the answer to Q2), and its memory belongs on `/priv` with the
-rest of the machine's state. `~/src/jido-skills` on the development host
-(`jido-core`, `jido-agent`, `jido-action`, `jido-ai`, `jido-testing`) is the
-authority for the API and its conventions; see docs/notes/jido.md.
+for providers. It is a dependency of Elixos itself (ADR-036): the factory ships
+it, nothing installs it at run time, and `mnesia` - jido_signal's OTP
+dependency - comes from the same cross-built OTP as the rest of the release.
+So this milestone is almost entirely wiring and conventions: an agent's module
+is a user module (the M6 image already journals and restores those), its
+supervision is a tree built at boot (the answer to Q2), and its memory belongs
+on `/priv` with the rest of the machine's state. `~/src/jido-skills` on the
+development host (`jido-core`, `jido-agent`, `jido-action`, `jido-ai`,
+`jido-testing`) is the authority for the API and its conventions; see
+docs/notes/jido.md.
 
 - [ ] Demo recorded: `demos/m15-jido-agents.mp4` (`make demo M=15`).
 

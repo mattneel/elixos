@@ -21,9 +21,10 @@ milestone code, in this order:
   OTP processes, which is how the unit tests here should work.
 
 The packages: `jido`, `jido_action`, `jido_signal` (the framework) and
-`jido_ai` + `req_llm` (providers). All are Hex packages, so they arrive through
-the package manager this repo already ships (ADR-019, M14) rather than being
-vendored.
+`jido_ai` + `req_llm` (providers). The framework is a dependency of Elixos
+itself (ADR-036) - the factory ships it, and nothing installs it at a prompt.
+`jido_ai` and `req_llm` are not part of the OS: `Elixos.Agents.LLM` speaks the
+providers' wire shapes over OTP directly (ADR-032).
 
 ## What Elixos adds, and what it does not
 
@@ -42,17 +43,20 @@ vendored.
 
 ## What M15 turned out to require
 
-**The closure, prebuilt.** Installing `jido` by name resolves 15 packages
-(jido 2.4.0, jido_action, jido_signal, jason, crontab, fuse, multigraph,
+**The closure, in the release.** Jido resolves to 15 Hex packages (jido
+2.4.0, jido_action, jido_signal, jason, crontab, fuse, multigraph,
 nimble_options, nimble_parsec, poolboy, splode, telemetry, telemetry_metrics,
 time_zone_info, zoi). Three are rebar projects and telemetry's rebar.config
 needs the `pc` plugin, which rebar3 fetches from the network: the box cannot
-build them yet. The fixture therefore ships the closure *built*
-(`os/test/fixtures/hex_repo/build-jido.sh` compiles it on the host, packs
-`ebin/` with Hex's own tarball writer, and adds it to the fixture repository);
-`Elixos.Package.install/1` adopts a package that arrives built (ADR-033).
-Telemetry's NIF is compiled for musl with the pinned zig - without it the
-Erlang path still works, but a glibc `.so` would be a landmine.
+build them, which is exactly why Jido is a dependency of the OS (ADR-036)
+rather than something a prompt installs. `mix release` carries the closure
+from the host, where it can be built, and `mnesia` - jido_signal's OTP
+dependency - comes from the cross-built OTP next to the ERTS. Nothing is
+adopted at run time, so the "arrive built" path ADR-033 had added lost its
+only user and went with the fixture's prebuilt closure (`build-jido.sh`,
+`jido_build.exs`); the fixture repository now serves the `hello_*` sources
+only. The whole closure is pure BEAM - no NIFs - so no part of it needed a
+musl cross-build after all.
 
 **Modules a prompt defines.** The image journals module definitions through
 the *session's* tracer (`Elixos.Boot.Recorder`). `Code.require_file/1` and
@@ -73,9 +77,10 @@ and a graceful shutdown call (ADR-032).
 
 **Loopback and the factory.** The kernel leaves `lo` down: the shim brings it
 up with one ioctl (ADR-034), which is what lets an action reach a stub on
-127.0.0.1. The factory also carries mnesia (jido's OTP dependency) and
-ssl + inets with the machine's CA bundle (ADR-035), and the application puts
-`/factory/lib/*/ebin` on the code path at boot.
+127.0.0.1. The release brings the stock OTP applications jido's graph names
+(mnesia, through jido_signal); the factory adds ssl + inets with the machine's
+CA bundle (ADR-035) and the application puts `/factory/lib/*/ebin` on the code
+path at boot.
 
 **The sign-in.** `Elixos.Agents.LLM` is OTP only (`:gen_tcp`, `:ssl`, `:json`)
 and speaks chat completions and the Responses API. Verified live with this
@@ -96,11 +101,11 @@ points at the dead one after a crash anyway. Two ways out, one per agent kind:
 a plain agent starts through `Elixos.Agents.start_agent_child/3`, whose MFA is
 the child spec's `start`, so every start (a supervisor restart included)
 registers the process under `:"elixos.agent.<id>"`; a Jido agent is in its
-instance's `Registry`, whose name is `Jido.registry_name/1`
+instance's `Registry`, whose name `Jido.registry_name/1` derives
 (`Module.concat(instance, Registry)`), and `Jido.AgentServer.whereis/2` reads
-it. Derive the registry name with `Module.concat` rather than calling
-`Jido.registry_name/1` directly: jido is a *package*, not a Mix dependency, so
-a direct call is a compile-time reference to a module that need not exist.
+it. Jido is a Mix dependency now (ADR-036), so those are direct calls that
+either compile or fail the build - the `apply/3` indirection the packaging
+days needed is gone.
 
 **Provider responses.** A hosted provider answers `Transfer-Encoding: chunked`
 as often as not, and the body assembles from hex-size lines -

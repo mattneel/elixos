@@ -33,10 +33,13 @@ test: test-shim test-os ## Fast tests: shim unit tests + Elixir unit tests (no Q
 test-shim: ## Zig unit tests for the PID 1 shim
 	zig build test -Dmilestone=$(MILESTONE) --summary all
 
-test-os: ## ExUnit tests for the Elixir userland (no QEMU)
+deps: ## Fetch the Elixir dependencies (M15: the OS has one, ADR-036)
+	cd os && mix deps.get
+
+test-os: deps ## ExUnit tests for the Elixir userland (no QEMU)
 	cd os && ELIXOS_MILESTONE=$(MILESTONE) mix test
 
-test-qemu: image ## Boot real images in QEMU (slow): os/test/integration
+test-qemu: deps image ## Boot real images in QEMU (slow): os/test/integration
 	cd os && ELIXOS_QEMU=1 ELIXOS_MILESTONE=$(MILESTONE) mix test test/integration
 
 ci: test test-qemu ## Everything for the current milestone

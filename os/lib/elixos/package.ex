@@ -115,46 +115,15 @@ defmodule Elixos.Package do
     end
   end
 
-  # A package without a Mix project is a *payload*. One that carries ebin/ has
-  # arrived already built (a repository can serve a library whose own build
-  # needs tools the box does not ship yet): its code is adopted where any
-  # install's lives, so it is on the path, loadable and removable like the
-  # rest. One without ebin/ - the toolchain (ADR-009) - is taken where it lies
-  # (the disk's /priv/toolchain is 421M; copying it would be waste) and
-  # recorded, so it is part of the image like any package.
+  # A package without a Mix project is a *payload*: the toolchain (ADR-009) is
+  # the only one, and it is taken where it lies (the disk's /priv/toolchain is
+  # 421M; copying it would be waste) and recorded, so it is part of the image
+  # like any package.
   defp install_payload(root, deps \\ %{}) do
-    ebin = Path.join(root, "ebin")
+    name = root |> Path.basename() |> String.to_atom()
 
-    if File.dir?(ebin) do
-      install_built(root, ebin, deps)
-    else
-      name = root |> Path.basename() |> String.to_atom()
-
-      with :ok <- record(name, payload_version(root), %Elixos.Package.Spec{}, deps) do
-        {:ok, name}
-      end
-    end
-  end
-
-  defp install_built(root, ebin, deps) do
-    with {:ok, app, version} <- built_identity(ebin),
-         :ok <- install_tree(app, ebin, root),
-         :ok <- load(app, installed_ebin(app)),
-         :ok <- record(app, version, %Elixos.Package.Spec{}, deps) do
-      {:ok, app}
-    end
-  end
-
-  # The application resource a built package carries names it.
-  defp built_identity(ebin) do
-    case Path.wildcard(Path.join(ebin, "*.app")) do
-      [app_file | _] ->
-        {:ok, terms} = :file.consult(String.to_charlist(app_file))
-        {:application, name, props} = Enum.find(terms, &match?({:application, _, _}, &1))
-        {:ok, name, to_string(props[:vsn])}
-
-      [] ->
-        {:error, {:no_built_app, ebin}}
+    with :ok <- record(name, payload_version(root), %Elixos.Package.Spec{}, deps) do
+      {:ok, name}
     end
   end
 

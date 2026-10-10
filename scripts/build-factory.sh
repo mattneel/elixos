@@ -186,6 +186,9 @@ RELEASE_VSN="$(sed -n 's/^  @version "\(.*\)"$/\1/p' "$ROOT/os/mix.exs")"
   # (same version, different libc: a host release would survive into a factory
   # one), so the assembly directory starts empty.
   rm -rf "$BUILD/rel"
+  # The OS itself has dependencies now (jido, ADR-036): fetch them here so a
+  # fresh checkout builds, and let Mix.Release carry their closure.
+  MIX_ENV=prod mix deps.get
   # Mix.Release takes the *erts* directory, and finds the OTP apps next to it.
   MIX_ENV=prod ELIXOS_ERTS="$OTP_ROOT/$ERTS_VERSION" mix release --overwrite --path "$BUILD/rel"
 )
@@ -227,10 +230,11 @@ rm -rf "$ROOTFS/factory/bin"
 
 # Stock OTP applications a package may need at run time travel with the
 # factory, because a release only carries what its own dependency graph names:
-# mnesia (the jido framework's hard dependency), ssl and inets (a provider
-# over the network, M15). `Elixos.Application` puts their ebins on the code
-# path at boot, like the mix application's.
-for app in mnesia ssl inets; do
+# ssl and inets (a provider over the network, M15). mnesia - jido_signal's
+# hard dependency - is named by the graph, so the release brings it (ADR-036).
+# `Elixos.Application` puts their ebins on the code path at boot, like the mix
+# application's.
+for app in ssl inets; do
   cp -a "$OTP_ROOT"/lib/"$app"-* "$ROOTFS/factory/lib/"
 done
 

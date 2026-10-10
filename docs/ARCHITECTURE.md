@@ -259,7 +259,7 @@ that.
   Clojerl are Hex packages of their own (`lfe`, `clojerl`). `Elixos.REPL`
   offers a language only when its shell entry point is really callable.
 
-## §10 Agents on Elixos (ADR-032, M15)
+## §10 Agents on Elixos (ADR-032, ADR-036, M15)
 
 An agent is an ordinary module: Jido's `use Jido.Agent` for the framework's
 agents, or any module with `start_link/1` (and `snapshot/1` if it remembers
@@ -270,8 +270,9 @@ remembers is written to `/priv/agents/<id>.term` when the image is written
 (`Elixos.save/1`) and when it stops; a Jido agent's memory is its state map,
 handed back as `initial_state` on the next start.
 
-The packages come from a repository (ADR-019): jido and its closure install by
-name, dependencies first, and may arrive built (ADR-033). The model is a
+Jido is a dependency of the OS itself (ADR-036): the factory ships it, and
+mnesia (jido_signal's OTP dependency) rides in the release with it, so no
+installation stands between a prompt and an agent. The model is a
 provider, not the definition: `Elixos.Agents.LLM` speaks chat completions and
 the Responses API over OTP's own sockets, with an API key, with nothing, or
 with a ChatGPT subscription (`~/.codex/auth.json`, refreshed as needed) - so

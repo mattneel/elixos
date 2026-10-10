@@ -41,5 +41,11 @@ defmodule Elixos.MixProject do
   defp elixirc_paths(_), do: ["lib"]
 
   # The OS core takes no runtime dependencies without an ADR in docs/DECISIONS.md.
-  defp deps, do: []
+  #
+  # Jido is a direct dependency of Elixos itself (ADR-036): agents are part of
+  # the operating system, so the framework that runs them ships in the factory
+  # rather than being installed from a repository at run time. Its closure is
+  # pure BEAM (no NIFs) and its OTP dependencies (mnesia, via jido_signal)
+  # come from the same cross-built OTP as everything else.
+  defp deps, do: [{:jido, "~> 2.4"}]
 end
