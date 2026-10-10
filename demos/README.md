@@ -48,8 +48,10 @@ differ, so the 3.x static binaries go in `build/tools`:
   attempts start from the pristine state. `-no-reboot` ends QEMU when the guest
   reboots, so a demo that needs two power-ons spawns QEMU twice inside one
   recording, on the same copy.
-* Recordings are 80 columns wide (what the guest's serial console assumes) and
-  use `-i 2`, so long waits and compiles do not eat playback time.
+* Recordings are 120x36: the guest's serial console assumes 80 columns, but
+  the Erlang banner, kernel lines and `[notice]` errors are longer than that
+  and were being cut off in the video. They use `-i 2`, so long waits and
+  compiles do not eat playback time.
   `demos/render.sh` draws the frames with `agg` and encodes H.264 with `ffmpeg`.
 * From M4 on a demo ends with `Elixos.poweroff()`; M12 records the host's ssh
   session instead and keeps QEMU's console out of it.

@@ -22,7 +22,10 @@ case "${1:-}" in
     milestone="$(cat MILESTONE)"
     for exp in demos/m*.exp; do
       name="$(basename "$exp" .exp)"
-      n="$(printf '%d' "${name%%-*}" | sed 's/^m0*//')"
+      # `m03-first-boot` is milestone 3: strip the m, then the leading zero.
+      n="${name%%-*}"
+      n="${n#m}"
+      n="$((10#$n))"
       [ "$n" -le "$milestone" ] || continue
       record_and_check "$name"
     done

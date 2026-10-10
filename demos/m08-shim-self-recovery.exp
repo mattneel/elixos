@@ -1,0 +1,40 @@
+#!/usr/bin/expect -f
+# M8: the shim survives its own panics (ADR-004). A test hook panics PID 1 on
+# purpose; the panic handler re-execs /init, which adopts the BEAM it was told
+# about, and the very same IEx session carries on - the binding assigned
+# before the panic is still there, and the prompt keeps counting.
+#
+# One power-on of a pristine disk copy.
+
+set timeout 300
+set send_human {.1 .3 10 .05 2}
+
+spawn -noecho qemu-system-x86_64 \
+    -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600 elixos.test.shim_panic_after=15" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+
+expect "iex(1)> "
+sleep 1
+send -h "x = 41\r"
+expect "iex(2)> "
+sleep 2
+
+# The shim panics (test hook), re-execs itself, and adopts the BEAM.
+expect "elixos-shim: re-exec after panic"
+expect "elixos-shim: adopting beam pid="
+sleep 1
+
+# Same VM, same session: the binding survived.
+send -h "x + 1\r"
+expect "iex(3)> "
+sleep 2
+
+send -h "Elixos.poweroff()\r"
+expect "elixos-shim: shutdown poweroff"
+expect "reboot: Power down"
+expect eof
+sleep 1

@@ -45,7 +45,7 @@ export ELIXOS_DEMO_KERNEL="$BUILD/bzImage"
 export ELIXOS_DEMO_INITRAMFS="$BUILD/initramfs.cpio.gz"
 
 echo "record: $NAME -> $NAME.cast"
-"$ASCII" rec --headless --window-size 80x30 -i 2 --overwrite \
+"$ASCII" rec --headless --window-size 120x36 -i 2 --overwrite \
   -c "expect $DEMO.exp" "$DEMO.cast"
 
 rm -f "$DEMO.disk"

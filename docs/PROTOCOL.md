@@ -58,7 +58,11 @@ plus `HOME=/priv/home`, `TERM=linux`, `LANG=C.UTF-8`, and:
 | `ELIXOS_CTL_FD`     | fd of the control pipe's write end (not CLOEXEC, ≥ 3)  |
 
 - fds 0, 1, 2 are `/dev/console`. The working directory is `/` and stays
-  there (ADR-016).
+  there (ADR-016). When the persistent disk is mounted, the shim also sets
+  `ERL_CRASH_DUMP` to `/priv/crash/gen<g>-attempt<n>.dump` (§7, ADR-025) and
+  `ERL_CRASH_DUMP_BYTES` to 1 MiB, so a crash leaves its evidence on the disk
+  the next boot mounts. Without the disk both are left unset and ERTS keeps
+  its default.
 - The emulator is launched with `+Bc`. The console is a tty that is not the
   shell's controlling terminal, so without it Ctrl+C does nothing at all and a
   runaway expression can only be stopped with Ctrl+G then `i`; with `+Bc`,
@@ -161,7 +165,8 @@ Placeholders: `<g>` generation, `<n>` number, `<m>` `normal|rescue`,
 | `heartbeat timeout after <n>s, killing beam`                           | deadline passed                       | M5   |
 | `commit generation=<g>`                                                | a COMMIT was applied                  | M5   |
 | `next generation=<g>`                                                  | a NEXT was applied                    | M6   |
-| `re-exec after panic: <message>`                                       | the new shim, after a panic           | M8   |
+| `re-exec after panic: <message>`                                       | a panic re-execs /init                | M8   |
+| `adopting beam pid=<n>`                                                | a re-exec adopts the running BEAM     | M8   |
 | `ignored control line (<error>)`                                       | a control line was not a message      | M4   |
 
 `attempt=<n>` is the plan's `next_state.attempts`. When planning from an
@@ -173,6 +178,7 @@ ext4, label `ELIXOS`, mounted on `/priv`:
 
 ```
 /priv/boot.state        §4, written only by the shim
+/priv/crash/            ERTS crash dumps, `gen<g>-attempt<n>.dump`, newest five kept
 /priv/store/            Elixos.Image.Store blobs: <2 hex>/<62 hex>
 /priv/journal.log       Elixos.Image.Journal (record format in its moduledoc)
 /priv/generations/      <n>.gen manifests (Elixos.Image.Generation)

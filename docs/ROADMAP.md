@@ -190,7 +190,7 @@ the handler re-execs `/init` with a pre-built argv carrying the BEAM pid and
 control fd; the new shim adopts the running BEAM instead of launching one.
 `elixos.test.shim_panic_after` triggers it.
 
-- [ ] Demo recorded: `demos/m08-shim-self-recovery.mp4` (`make demo M=8`).
+- [x] Demo recorded: `demos/m08-shim-self-recovery.mp4` (`make demo M=8`).
 
 ---
 

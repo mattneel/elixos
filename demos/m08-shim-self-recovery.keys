@@ -1,0 +1,12 @@
+# What the M8 demo must show, in order. The shim's own lines land on the
+# prompt line, and the typed echo follows them, so keys omit the prompts where
+# the recording puts them on a line of their own.
+elixos-shim: pid 1, version
+elixos-shim: launching generation=0 mode=normal
+iex(1)> x = 41
+41
+iex(2)> elixos-shim: re-exec after panic: test hook: shim_panic_after
+elixos-shim: adopting beam pid=
+x + 1
+42
+elixos-shim: shutdown poweroff

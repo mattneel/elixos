@@ -477,6 +477,27 @@ the runaway expression and the prompt comes back usable.
 `Elixos.Boot.Login` spawns `IEx.Server.run/1` and lets IEx handle the break
 itself (`{:EXIT, _, :interrupt}`), exactly as the reference does.
 
+## ADR-025: Crash dumps live on the persistent disk
+
+**Status:** accepted
+
+**Context.** A VM that dies while booting a generation writes `erl_crash.dump`
+into its working directory, which is `/`, the initramfs: it lives in RAM, the
+next crash overwrites it, and a power-off loses it. By the time the shim has
+fallen back to a good generation and a prompt comes up, the reason the bad one
+died is gone.
+
+**Decision.** The shim points ERTS at the persistent disk for every launch:
+`ERL_CRASH_DUMP=/priv/crash/gen<g>-attempt<n>.dump` (the generation and the
+attempt the plan is running) and `ERL_CRASH_DUMP_BYTES=1048576`, so one dump
+cannot fill `/priv`. It creates `/priv/crash` before launching and keeps only
+the newest five dumps, by modification time, so a crash loop cannot fill the
+disk. Without the data disk both variables are left unset and ERTS keeps its
+default: there is nowhere durable to put a dump. This is part of the launch
+contract (PROTOCOL.md §3) and of the disk layout (PROTOCOL.md §7); the M8
+integration test boots a generation that crashes and reads its dump from the
+fallback boot's IEx.
+
 Decide these with the human. Until then, follow the proposed default.
 
 - **Q10: The capture tracer across an IEx evaluator restart.** A console

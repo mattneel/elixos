@@ -42,14 +42,130 @@ pub const version = "0.0.0";
 /// elixos.test.* hooks are compiled in only for QEMU test images (`-Dtest-hooks=true`).
 pub const test_hooks = build_options.test_hooks;
 
-// ADR-004 (M8): replace the default panic handler with one that re-execs
-// /init in rescue mode instead of letting PID 1 die, e.g.
-//
-//   pub const panic = std.debug.FullPanic(rescuePanic);
-//   fn rescuePanic(msg: []const u8, first_trace_addr: ?usize) noreturn { ... execve ... }
-//
-// Build its argv/envp at startup (BEAM pid, control fd) so the handler never
-// allocates. execve keeps PID 1, and the BEAM stays our child across it.
+// ADR-004 (M8): PID 1 must not die of its own panic. The handler re-execs
+// this same binary, which then ADOPTS the BEAM it is told about: execve keeps
+// PID 1, so the BEAM stays this process's child (wait4 still works) and its
+// session never notices. Everything the handler needs - the new argv carrying
+// the BEAM's pid and control fd - is formatted while that BEAM is spawned,
+// because the panic path allocates nothing and must not fail.
+const init_path = "/init";
+
+const rescue = struct {
+    var pid_text: [24]u8 = undefined;
+    var ctl_text: [24]u8 = undefined;
+    /// { init, "--adopt", <pid>, <control fd>, <safe>, <mounted>, <request>, null }
+    var argv: [8:null]?[*:0]const u8 = .{ null, null, null, null, null, null, null, null };
+    /// The kernel gives PID 1 no environment; the new shim needs none either.
+    var envp: [1:null]?[*:0]const u8 = .{null};
+
+    const Adopted = struct {
+        beam_pid: linux.pid_t,
+        ctl_fd: linux.fd_t,
+        /// The *effective* decisions of the boot that panicked. Rescue may
+        /// have come from an unreadable state file or a missing disk, which
+        /// the adopted shim cannot re-derive, and a shutdown request already
+        /// read off the control pipe cannot be replayed.
+        safe: bool,
+        disk_mounted: bool,
+        requested: ?recovery.Shutdown,
+    };
+
+    const yes = "1";
+    const no = "0";
+
+    fn requestName(requested: ?recovery.Shutdown) [*:0]const u8 {
+        if (requested) |kind| switch (kind) {
+            .reboot => return "reboot",
+            .poweroff => return "poweroff",
+            .halt => return "halt",
+        };
+        return "none";
+    }
+
+    fn requestOf(name: []const u8) ?recovery.Shutdown {
+        if (std.mem.eql(u8, name, "reboot")) return .reboot;
+        if (std.mem.eql(u8, name, "poweroff")) return .poweroff;
+        if (std.mem.eql(u8, name, "halt")) return .halt;
+        return null;
+    }
+
+    /// Called after every spawn (a relaunch means a new pid) and whenever a
+    /// decision it carries changes, because this is what the panic handler
+    /// execs with.
+    fn arm(
+        beam_pid: linux.pid_t,
+        ctl_fd: linux.fd_t,
+        safe: bool,
+        disk_mounted: bool,
+        requested: ?recovery.Shutdown,
+    ) void {
+        argv = .{
+            init_path,
+            "--adopt",
+            zeroed(&pid_text, "{d}", .{beam_pid}),
+            zeroed(&ctl_text, "{d}", .{ctl_fd}),
+            if (safe) yes else no,
+            if (disk_mounted) yes else no,
+            requestName(requested),
+            null,
+        };
+    }
+
+    /// The adoption request in our own command line:
+    /// `--adopt <pid> <fd> <safe> <mounted> <request>`.
+    fn parse(args: []const []const u8) ?Adopted {
+        // init, --adopt, pid, fd, safe, mounted, request.
+        if (args.len < 7) return null;
+        if (!std.mem.eql(u8, args[1], "--adopt")) return null;
+        const pid = std.fmt.parseInt(linux.pid_t, args[2], 10) catch return null;
+        const fd = std.fmt.parseInt(linux.fd_t, args[3], 10) catch return null;
+        return .{
+            .beam_pid = pid,
+            .ctl_fd = fd,
+            .safe = args[4][0] == '1',
+            .disk_mounted = args[5][0] == '1',
+            .requested = requestOf(args[6]),
+        };
+    }
+};
+
+pub const panic = std.debug.FullPanic(rescuePanic);
+
+/// The panic handler (ADR-004): say what happened, then become /init again
+/// with the BEAM's pid and control fd on the new command line.
+fn rescuePanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
+    _ = first_trace_addr;
+
+    // No BEAM to adopt: the panic happened before one existed, and there is
+    // nothing to rescue. `shutdown` says what it does (PROTOCOL.md §6).
+    if (rescue.argv[0] == null) shutdown(.poweroff);
+
+    log("re-exec after panic: {s}", .{msg});
+    _ = linux.execve(init_path, @ptrCast(&rescue.argv), @ptrCast(&rescue.envp));
+
+    // Nothing left to trust, and the re-exec did not work: stop the machine.
+    shutdown(.poweroff);
+}
+
+/// Milliseconds on CLOCK_MONOTONIC: only the test hook needs a clock.
+fn monotonicMs() i64 {
+    var ts: linux.timespec = undefined;
+    _ = linux.clock_gettime(linux.CLOCK.MONOTONIC, &ts);
+    return @as(i64, ts.sec) * 1000 + @divTrunc(@as(i64, ts.nsec), std.time.ns_per_ms);
+}
+
+/// The shim's own command line, as a slice: the adoption request lives there.
+fn ownArgs(init: std.process.Init.Minimal, buffer: *[8][]const u8) []const []const u8 {
+    var count: usize = 0;
+    var it = std.process.Args.Iterator.init(init.args);
+    while (it.next()) |arg| {
+        if (count == buffer.len) break;
+        buffer[count] = arg;
+        count += 1;
+    }
+
+    return buffer[0..count];
+}
 
 /// PID 1's stdio: the kernel hands us /dev/console on fds 0, 1 and 2.
 const console_fd: linux.fd_t = 1;
@@ -60,6 +176,15 @@ const log_prefix = "elixos-shim: ";
 /// boot.state and the temp file it is written through (PROTOCOL.md §4).
 const state_path = "/priv/boot.state";
 const state_tmp_path = "/priv/boot.state.tmp";
+
+/// Crash dumps (PROTOCOL.md §7): ERTS writes them where the shim points
+/// ERL_CRASH_DUMP, on the persistent disk, so the evidence of why a
+/// generation failed survives the reboot that falls back from it.
+const crash_dir = "/priv/crash";
+/// One dump cannot fill /priv (ERL_CRASH_DUMP_BYTES).
+const crash_dump_bytes = "1048576";
+/// The newest few dumps are kept: a crash loop must not fill the disk.
+const crash_dumps_kept = 5;
 
 /// The factory (generation 0) lives in the initramfs from M4 on.
 const factory_path = "/factory";
@@ -73,8 +198,47 @@ const sys_config_path = factory_path ++ "/releases/current/sys.config";
 const lib_path = factory_path ++ "/lib";
 
 pub fn main(init: std.process.Init.Minimal) noreturn {
-    _ = init;
     log("pid 1, version " ++ version, .{});
+
+    // A re-exec after a panic (ADR-004): the mounts are still in place (they
+    // are not per-process), the BEAM is still our child, and its session is
+    // still running. Read what that boot decided and adopt it; nothing is
+    // planned, persisted or launched, because the running boot already
+    // counted its attempt.
+    var cmdline_buffer: [4096]u8 = undefined;
+    var argv_buffer: [8][]const u8 = undefined;
+    if (rescue.parse(ownArgs(init, &argv_buffer))) |adopted| {
+        const settings = readSettings(&cmdline_buffer);
+        var state: recovery.BootState = .{};
+        var state_unreadable = false;
+        if (readState(&state)) |_| {} else |err| switch (err) {
+            // The same rule as a fresh boot: an unreadable state file means
+            // rescue, and never writing over the evidence (ADR-006).
+            error.FileNotFound => {},
+            else => {
+                log("state file unreadable ({t}), entering rescue", .{err});
+                state_unreadable = true;
+            },
+        }
+
+        // The safe override comes from the handoff, not from this boot's
+        // command line: the boot that panicked may have entered rescue because
+        // its disk would not mount, which cannot be re-derived here.
+        var overrides: recovery.Overrides = .{ .safe = adopted.safe or state_unreadable };
+        if (!overrides.safe) overrides.generation = settings.generation;
+
+        const policy: recovery.Policy = .{ .max_attempts = settings.max_attempts };
+
+        log("adopting beam pid={d}", .{adopted.beam_pid});
+        supervise(
+            recovery.planLaunch(state, policy, overrides),
+            settings,
+            overrides,
+            adopted.disk_mounted,
+            state,
+            adopted,
+        );
+    }
 
     var overrides: recovery.Overrides = .{};
 
@@ -82,11 +246,9 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
     //    fatal: it only costs us /proc/cmdline or a place to mount /priv.
     if (!mountBase()) overrides.safe = true;
 
-    // 2. Kernel command line (PROTOCOL.md §5).
-    var cmdline_buffer: [4096]u8 = undefined;
-    const text: []const u8 = readFile("/proc/cmdline", &cmdline_buffer) catch "";
-    const settings = cmdline.parse(text);
-    if (settings.invalid > 0) log("ignored {d} invalid elixos.* parameters", .{settings.invalid});
+    // 2. Kernel command line (PROTOCOL.md §5). The buffer outlives the
+    //    settings it is parsed into, for the whole of main.
+    const settings = readSettings(&cmdline_buffer);
     if (settings.safe) overrides.safe = true;
 
     // 3+4. /priv and boot.state. The disk is mounted and read even when the
@@ -192,6 +354,110 @@ fn mountData(device: []const u8, wait_s: u32) bool {
     }
 }
 
+/// Creates /priv/crash and prunes it to the newest `crash_dumps_kept` dumps.
+/// Runs before every launch - including a relaunch after a crash, so a crash
+/// loop inside one boot is bounded too - on a disk we may have just mounted;
+/// without a disk there is nowhere to keep a dump.
+fn prepareCrashDir() void {
+    _ = linux.mkdir(crash_dir, 0o755);
+
+    // One scan holds a bounded number of entries. A directory with more than
+    // that gets another pass: an overflowing pass always has more than
+    // `crash_dumps_kept` candidates, so it always removes some, and the loop
+    // terminates. The bound is only a guard against a pathological directory.
+    for (0..1024) |_| {
+        if (!pruneCrashDumps()) break;
+    }
+}
+
+/// True when `a` is older than `b`, comparing (seconds, nanoseconds) without
+/// multiplying: kernel timestamps run to the year 2446, past i64 nanoseconds.
+fn older(secs: []const i64, nsecs: []const u32, a: usize, b: usize) bool {
+    if (secs[a] != secs[b]) return secs[a] < secs[b];
+    return nsecs[a] < nsecs[b];
+}
+
+/// Unlinks the oldest `.dump` files until only `crash_dumps_kept` remain.
+/// Everything is a fixed buffer: this runs on the launch path. Returns true
+/// when the directory held more entries than one scan could see.
+fn pruneCrashDumps() bool {
+    const dir = linux.openat(
+        linux.AT.FDCWD,
+        crash_dir,
+        // ACCMODE defaults to O_RDONLY: only reading is wanted here.
+        .{ .DIRECTORY = true, .CLOEXEC = true },
+        0,
+    );
+    if (linux.errno(dir) != .SUCCESS) return false;
+    defer _ = linux.close(@intCast(dir));
+
+    const max_entries = 24;
+    var names: [max_entries][64]u8 = undefined;
+    var secs: [max_entries]i64 = undefined;
+    var nsecs: [max_entries]u32 = undefined;
+    var count: usize = 0;
+    var overflow = false;
+
+    var buffer: [4096]u8 align(@alignOf(linux.dirent64)) = undefined;
+    while (true) {
+        const rc = linux.getdents64(@intCast(dir), &buffer, buffer.len);
+        if (linux.errno(rc) != .SUCCESS or rc == 0) break;
+
+        var offset: usize = 0;
+        while (offset + @sizeOf(linux.dirent64) <= rc) {
+            const entry: *align(1) const linux.dirent64 = @ptrCast(&buffer[offset]);
+            const raw: [*:0]const u8 = @ptrCast(&entry.name);
+            const name = std.mem.sliceTo(raw, 0);
+            offset += entry.reclen;
+
+            if (!std.mem.endsWith(u8, name, ".dump")) continue;
+            if (count == max_entries) {
+                // Whatever else is here is swept in the next pass.
+                overflow = true;
+                break;
+            }
+            if (name.len >= names[count].len) continue;
+
+            var st: linux.Statx = undefined;
+            if (linux.errno(linux.statx(@intCast(dir), raw, 0, .{ .MTIME = true }, &st)) != .SUCCESS) continue;
+
+            @memcpy(names[count][0..name.len], name);
+            names[count][name.len] = 0;
+            secs[count] = @intCast(st.mtime.sec);
+            nsecs[count] = st.mtime.nsec;
+            count += 1;
+        }
+    }
+
+    while (count > crash_dumps_kept) {
+        var oldest: usize = 0;
+        for (1..count) |i| {
+            if (older(secs[0..count], nsecs[0..count], i, oldest)) oldest = i;
+        }
+
+        _ = linux.unlinkat(@intCast(dir), @ptrCast(&names[oldest]), 0);
+
+        names[oldest] = names[count - 1];
+        secs[oldest] = secs[count - 1];
+        nsecs[oldest] = nsecs[count - 1];
+        count -= 1;
+    }
+
+    return overflow;
+}
+
+/// Reads and parses the kernel command line (PROTOCOL.md §5). Both the fresh
+/// boot and an adoption need it, so it is read per path rather than hoisted:
+/// the fresh boot's console lines keep the order the tests expect.
+/// `buffer` is the caller's: the returned settings point into it (data_device
+/// and friends are slices into the command line), so it must outlive them.
+fn readSettings(buffer: *[4096]u8) cmdline.Settings {
+    const text: []const u8 = readFile("/proc/cmdline", buffer) catch "";
+    const settings = cmdline.parse(text);
+    if (settings.invalid > 0) log("ignored {d} invalid elixos.* parameters", .{settings.invalid});
+    return settings;
+}
+
 /// Reads and parses /priv/boot.state (PROTOCOL.md §4).
 fn readState(state: *recovery.BootState) StateError!void {
     var buffer: [128]u8 = undefined;
@@ -215,16 +481,27 @@ fn launch(plan: recovery.Plan, settings: cmdline.Settings, overrides: recovery.O
         log("factory missing, powering off", .{});
         shutdown(.poweroff);
     }
-    supervise(plan, settings, overrides, disk_mounted);
+    // A fresh launch: the plan's next_state is what the session supervises.
+    supervise(plan, settings, overrides, disk_mounted, plan.next_state, null);
 }
 
 /// The child's half of the launch: log, set up argv/envp, exec. Only returns
 /// by way of exit_group: PID 1's child must not fall back into the shim.
-fn execErts(plan: recovery.Plan, ctl_fd: linux.fd_t) noreturn {
+///
+/// `ctl_fd` is the pipe's write end (the BEAM's); `ctl_read_end` is the
+/// parent's side, which the BEAM must not inherit: PID 1 keeps it across its
+/// own re-exec (ADR-004), so it is closed here rather than made CLOEXEC.
+fn execErts(
+    plan: recovery.Plan,
+    ctl_fd: linux.fd_t,
+    ctl_read_end: linux.fd_t,
+    disk_mounted: bool,
+) noreturn {
     var generation: [32]u8 = undefined;
     var attempt: [32]u8 = undefined;
     var control: [32]u8 = undefined;
     var mode: [32]u8 = undefined;
+    var crash: [80]u8 = undefined;
 
     // erlexec takes $ROOTDIR and $BINDIR from the environment (below) and
     // passes -root/-bindir to ERTS itself: repeating them here makes ERTS
@@ -245,6 +522,17 @@ fn execErts(plan: recovery.Plan, ctl_fd: linux.fd_t) noreturn {
         "-noshell",
         null,
     };
+    // Without the persistent disk there is nowhere to keep a dump, and ERTS
+    // would fail writing one: leave its default (the working directory) then.
+    const crash_env: [2]?[*:0]const u8 = if (disk_mounted) .{
+        zeroed(&crash, "ERL_CRASH_DUMP={s}/gen{d}-attempt{d}.dump", .{
+            crash_dir,
+            plan.launch.generation,
+            plan.next_state.attempts,
+        }),
+        "ERL_CRASH_DUMP_BYTES=" ++ crash_dump_bytes,
+    } else .{ null, null };
+
     const envp = [_]?[*:0]const u8{
         "ROOTDIR=" ++ factory_path,
         "BINDIR=" ++ bindir_path,
@@ -257,6 +545,8 @@ fn execErts(plan: recovery.Plan, ctl_fd: linux.fd_t) noreturn {
         zeroed(&mode, "ELIXOS_MODE={t}", .{plan.launch.mode}),
         zeroed(&attempt, "ELIXOS_ATTEMPT={d}", .{plan.next_state.attempts}),
         zeroed(&control, "ELIXOS_CTL_FD={d}", .{ctl_fd}),
+        crash_env[0],
+        crash_env[1],
         null,
     };
 
@@ -264,6 +554,9 @@ fn execErts(plan: recovery.Plan, ctl_fd: linux.fd_t) noreturn {
     // keeps that mask: ERTS would inherit SIGTERM/SIGINT/SIGPWR blocked and
     // never see a shutdown request. The child gets a clean mask.
     unblockSignals();
+
+    // PID 1's end of the control pipe, which the BEAM must not hold.
+    _ = linux.close(ctl_read_end);
 
     log("launching generation={d} mode={t}", .{ plan.launch.generation, plan.launch.mode });
     _ = linux.execve(erlexec_path, @ptrCast(&argv), @ptrCast(&envp));
@@ -310,6 +603,8 @@ const Session = struct {
     beam: linux.pid_t = 0,
     ctl_fd: linux.fd_t = -1,
     requested: ?recovery.Shutdown = null,
+    /// Set only by the `elixos.test.shim_panic_after` hook, in test images.
+    panic_deadline_ms: ?i64 = null,
     first_heartbeat_pending: bool = true,
     buffer: [protocol.max_line_len * 2]u8 = undefined,
     pending: usize = 0,
@@ -321,6 +616,11 @@ const Session = struct {
     /// Forks and execs `plan` with a fresh control pipe, then arms the
     /// heartbeat deadline with the boot grace (PROTOCOL.md §2 and §3).
     fn spawn(self: *Session, plan: recovery.Plan) void {
+        // Before the fork: the child may reach ERTS's crash handler before
+        // this process would otherwise have created the directory, and a dump
+        // whose directory is missing is not written at all.
+        if (self.disk_mounted) prepareCrashDir();
+
         var pipe_fds: [2]linux.fd_t = undefined;
         if (linux.errno(linux.pipe2(&pipe_fds, .{ .NONBLOCK = true })) != .SUCCESS) {
             log("cannot create the control pipe, powering off", .{});
@@ -330,20 +630,25 @@ const Session = struct {
         // must return EAGAIN rather than suspend the loop. The BEAM's write
         // end stays a normal blocking one.
         _ = linux.fcntl(pipe_fds[1], linux.F.SETFL, 0);
-        // The BEAM keeps the write end across exec; the read end must not
-        // survive it, or EOF would never arrive when the BEAM exits.
-        _ = linux.fcntl(pipe_fds[0], linux.F.SETFD, linux.FD_CLOEXEC);
+        // The read end is deliberately NOT close-on-exec: the panic handler
+        // execs this binary again, and the shim that comes back must inherit
+        // the channel to the BEAM it adopts (ADR-004, M8). The BEAM itself
+        // must not inherit it, or EOF would never arrive when it exits, so
+        // the child closes it just before its own exec.
 
         const child = linux.fork();
         if (linux.errno(child) != .SUCCESS) {
             log("cannot fork, powering off", .{});
             shutdown(.poweroff);
         }
-        if (child == 0) execErts(plan, pipe_fds[1]);
+        if (child == 0) execErts(plan, pipe_fds[1], pipe_fds[0], self.disk_mounted);
 
         _ = linux.close(pipe_fds[1]);
         self.beam = @intCast(child);
         self.ctl_fd = pipe_fds[0];
+        // The panic handler re-execs with this: a relaunch means a new pid, so
+        // it is rebuilt every time.
+        self.rearm();
         self.pending = 0;
         self.discarding = false;
         self.first_heartbeat_pending = true;
@@ -351,6 +656,31 @@ const Session = struct {
         self.state = plan.next_state;
         watch(self.epfd, pipe_fds[0]);
         armTimer(self.timerfd, self.settings.boot_grace_s);
+    }
+
+    /// Adopts the BEAM a re-exec left running (ADR-004, M8): no fork and no
+    /// new control pipe - the read end is the one the old shim had, still
+    /// open across execve - and the pid is still our child, so wait4 keeps
+    /// seeing it. The BEAM has been running, so it owes its next heartbeat
+    /// within the normal timeout, not the boot grace.
+    fn adopt(self: *Session, a: rescue.Adopted) void {
+        self.beam = a.beam_pid;
+        self.ctl_fd = a.ctl_fd;
+        self.pending = 0;
+        self.discarding = false;
+        self.first_heartbeat_pending = false;
+        // A shutdown request the old shim had already read off the pipe: the
+        // line cannot be replayed, so it is carried across the handoff.
+        self.requested = a.requested;
+        watch(self.epfd, a.ctl_fd);
+        armTimer(self.timerfd, self.settings.heartbeat_timeout_s);
+        self.rearm();
+    }
+
+    /// Refreshes the panic handler's argv: it carries the decisions that have
+    /// changed since the last arming.
+    fn rearm(self: *Session) void {
+        rescue.arm(self.beam, self.ctl_fd, self.overrides.safe, self.disk_mounted, self.requested);
     }
 
     /// One read of the control pipe: applies what it can, reports whether
@@ -439,7 +769,10 @@ const Session = struct {
                 else => {},
             }
         }
-        if (outcome.shutdown) |kind| self.requested = kind;
+        if (outcome.shutdown) |kind| {
+            self.requested = kind;
+            self.rearm();
+        }
     }
 
     /// A signal arrived: SIGCHLD means a child exited (perhaps the BEAM);
@@ -464,6 +797,9 @@ const Session = struct {
     /// heartbeat deadline deal with it if it does not.
     fn outsideShutdown(self: *Session, kind: recovery.Shutdown) void {
         self.requested = kind;
+        // The handoff carries the request: a panic between here and the
+        // BEAM's exit must not turn the shutdown back into a relaunch.
+        self.rearm();
         if (self.beam != 0) _ = linux.kill(self.beam, .TERM);
     }
 
@@ -535,6 +871,8 @@ fn supervise(
     settings: cmdline.Settings,
     overrides: recovery.Overrides,
     disk_mounted: bool,
+    state: recovery.BootState,
+    adopted: ?rescue.Adopted,
 ) noreturn {
     // Signals arrive through a signalfd: PID 1 must not die of SIGTERM, and
     // blocking them is exactly what signalfd needs.
@@ -560,14 +898,41 @@ fn supervise(
         .sigfd = sigfd,
         .timerfd = timerfd,
         .plan = plan,
-        .state = plan.next_state,
+        .state = state,
     };
-    session.spawn(plan);
+    // An adopted state comes from disk: the running boot counted its attempt
+    // when it started, and a fresh launch counts the plan's.
+    if (adopted) |a| session.adopt(a) else session.spawn(plan);
+
+    if (test_hooks) {
+        if (session.settings.test_shim_panic_after_s) |seconds| {
+            session.panic_deadline_ms = monotonicMs() + @as(i64, seconds) * 1000;
+        }
+    }
 
     while (true) {
+        if (session.panic_deadline_ms) |deadline| {
+            // QEMU test hook (ADR-018): panic on purpose so the handler above
+            // is what gets exercised.
+            if (monotonicMs() >= deadline) @panic("test hook: shim_panic_after");
+        }
+
         var events: [4]linux.epoll_event = undefined;
-        const ready = linux.epoll_wait(epfd, &events, events.len, -1);
+        // With the panic hook armed, never sleep past its deadline: the
+        // heartbeats that would normally wake this loop may have stopped, and
+        // a heartbeat timeout would kill the BEAM before the hook fires.
+        const wait_ms: i32 = if (session.panic_deadline_ms) |deadline|
+            @intCast(std.math.clamp(deadline - monotonicMs(), 0, 60_000))
+        else
+            -1;
+        const ready = linux.epoll_wait(epfd, &events, events.len, wait_ms);
         if (linux.errno(ready) != .SUCCESS) continue; // EINTR: look again
+
+        if (session.panic_deadline_ms) |deadline| {
+            // Checked again before dispatching: a heartbeat timeout event in
+            // this batch must not kill the BEAM the hook was meant to adopt.
+            if (monotonicMs() >= deadline) @panic("test hook: shim_panic_after");
+        }
         for (events[0..ready]) |event| {
             const fd = event.data.fd;
             if (fd == sigfd) {
@@ -761,6 +1126,36 @@ fn pathExists(path: [*:0]const u8) bool {
 /// readFile's errors, plus the state file's own parse errors.
 const ReadError = error{ FileNotFound, ReadFailed, TooLong };
 const StateError = ReadError || statefile.ParseError;
+
+test "the rescue argv round-trips everything an adopted shim needs" {
+    rescue.arm(4242, 7, true, false, .poweroff);
+
+    const args = [_][]const u8{
+        std.mem.span(rescue.argv[0].?),
+        std.mem.span(rescue.argv[1].?),
+        std.mem.span(rescue.argv[2].?),
+        std.mem.span(rescue.argv[3].?),
+        std.mem.span(rescue.argv[4].?),
+        std.mem.span(rescue.argv[5].?),
+        std.mem.span(rescue.argv[6].?),
+    };
+    const adopted = rescue.parse(&args) orelse return error.TestExpectedAdoption;
+    try std.testing.expectEqual(@as(linux.pid_t, 4242), adopted.beam_pid);
+    try std.testing.expectEqual(@as(linux.fd_t, 7), adopted.ctl_fd);
+    // The boot that panicked may have been in rescue because its disk would
+    // not mount, and may have a shutdown request already off the pipe.
+    try std.testing.expectEqual(true, adopted.safe);
+    try std.testing.expectEqual(false, adopted.disk_mounted);
+    try std.testing.expectEqual(@as(?recovery.Shutdown, .poweroff), adopted.requested);
+}
+
+test "a fresh boot carries no adoption request" {
+    const fresh = [_][]const u8{"init"};
+    try std.testing.expectEqual(@as(?rescue.Adopted, null), rescue.parse(&fresh));
+
+    const malformed = [_][]const u8{ "init", "--adopt", "nope", "7" };
+    try std.testing.expectEqual(@as(?rescue.Adopted, null), rescue.parse(&malformed));
+}
 
 test {
     // Zig only analyzes what is referenced, so broken code can compile "clean"
