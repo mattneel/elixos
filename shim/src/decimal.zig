@@ -9,8 +9,16 @@ const milestone = @import("milestone.zig");
 
 /// Returns the value, or null if `text` is not a canonical u32.
 pub fn parseU32(text: []const u8) ?u32 {
-    _ = text;
-    @panic("TODO(M1): decimal.parseU32");
+    // "0" or [1-9][0-9]*: at most ten digits, and no leading zero otherwise.
+    if (text.len == 0 or text.len > 10) return null;
+    if (text[0] == '0') return if (text.len == 1) 0 else null;
+    var value: u64 = 0;
+    for (text) |byte| {
+        if (byte < '0' or byte > '9') return null;
+        value = value * 10 + (byte - '0');
+    }
+    if (value > std.math.maxInt(u32)) return null;
+    return @intCast(value);
 }
 
 test "decimal: accepts canonical u32 values" {

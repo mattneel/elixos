@@ -46,27 +46,64 @@ pub const ExitDecision = union(enum) { shutdown: Shutdown, relaunch: Plan };
 
 /// What to launch when the shim starts, and after any exit nobody asked for.
 pub fn planLaunch(state: BootState, policy: Policy, overrides: Overrides) Plan {
-    _ = state;
-    _ = policy;
-    _ = overrides;
-    @panic("TODO(M1): recovery.planLaunch");
+    // A safe override boots the factory in rescue mode and leaves the state
+    // alone: it is what an unreadable boot.state or elixos.safe asks for.
+    if (overrides.safe) return .{ .launch = .{ .generation = 0, .mode = .rescue }, .next_state = state };
+    // A generation override boots that generation once, outside accounting.
+    if (overrides.generation) |generation| {
+        return .{ .launch = .{ .generation = generation, .mode = .normal }, .next_state = state };
+    }
+    // Attempts are counted *before* the launch, so a crash or a power cut still
+    // counts against this generation (ADR-007).
+    if (state.attempts < policy.max_attempts) {
+        return .{
+            .launch = .{ .generation = state.current, .mode = .normal },
+            .next_state = .{
+                .current = state.current,
+                .last_good = state.last_good,
+                .attempts = state.attempts +| 1,
+            },
+        };
+    }
+    // Exhausted and not the same as last_good: fall back to it.
+    if (state.current != state.last_good) {
+        return .{
+            .launch = .{ .generation = state.last_good, .mode = .normal },
+            .next_state = .{ .current = state.last_good, .last_good = state.last_good, .attempts = 1 },
+        };
+    }
+    // Even last_good is exhausted: the factory, in rescue mode, state untouched.
+    return .{ .launch = .{ .generation = 0, .mode = .rescue }, .next_state = state };
 }
 
 /// Applies one control message from the BEAM.
 pub fn applyMessage(state: BootState, msg: protocol.Message) Outcome {
-    _ = state;
-    _ = msg;
-    @panic("TODO(M1): recovery.applyMessage");
+    return switch (msg) {
+        // Heartbeats are the shim's liveness signal; they change no state.
+        .heartbeat => .{ .state = state },
+        // Only the running generation can be committed (PROTOCOL.md §2).
+        .commit => |generation| if (generation == state.current)
+            .{ .state = .{ .current = state.current, .last_good = generation, .attempts = 0 } }
+        else
+            .{ .state = state },
+        // A provisional generation: attempts start over for it.
+        .next => |generation| .{ .state = .{
+            .current = generation,
+            .last_good = state.last_good,
+            .attempts = 0,
+        } },
+        .reboot => .{ .state = state, .shutdown = .reboot },
+        .poweroff => .{ .state = state, .shutdown = .poweroff },
+        .halt => .{ .state = state, .shutdown = .halt },
+    };
 }
 
 /// The BEAM exited: it crashed, was killed after a heartbeat timeout, or was
 /// asked to shut down (`requested` is then the last shutdown message received).
 pub fn onBeamExit(state: BootState, policy: Policy, overrides: Overrides, requested: ?Shutdown) ExitDecision {
-    _ = state;
-    _ = policy;
-    _ = overrides;
-    _ = requested;
-    @panic("TODO(M1): recovery.onBeamExit");
+    if (requested) |shutdown| return .{ .shutdown = shutdown };
+    // A generation override is good for exactly one launch: drop it, keep safe.
+    return .{ .relaunch = planLaunch(state, policy, .{ .safe = overrides.safe }) };
 }
 
 // ---------------------------------------------------------------------------

@@ -18,15 +18,45 @@ pub const ParseError = error{ BadLine, UnknownKey, DuplicateKey, BadValue, Missi
 
 /// Strict parse. See PROTOCOL.md §4 for the exact grammar and error precedence.
 pub fn parse(text: []const u8) ParseError!BootState {
-    _ = text;
-    @panic("TODO(M1): statefile.parse");
+    // Rule 1: strip exactly one trailing newline. Empty text has no lines.
+    const body = if (std.mem.endsWith(u8, text, "\n")) text[0 .. text.len - 1] else text;
+    var state: BootState = .{};
+    var seen = std.EnumSet(std.meta.FieldEnum(BootState)).empty;
+    if (body.len > 0) {
+        var lines = std.mem.splitScalar(u8, body, '\n');
+        while (lines.next()) |line| {
+            // Rule 2: a line needs a non-empty key before '='.
+            const equals = std.mem.indexOfScalar(u8, line, '=') orelse return error.BadLine;
+            if (equals == 0) return error.BadLine;
+            const key = line[0..equals];
+            const value = line[equals + 1 ..];
+            // Rule 3: only three keys exist, spelled exactly.
+            const field: std.meta.FieldEnum(BootState) =
+                if (std.mem.eql(u8, key, "current")) .current else if (std.mem.eql(u8, key, "last_good")) .last_good else if (std.mem.eql(u8, key, "attempts")) .attempts else return error.UnknownKey;
+            // Rule 4: a repeated key is an error, whatever the value.
+            if (seen.contains(field)) return error.DuplicateKey;
+            seen.insert(field);
+            // Rule 5: canonical decimal u32.
+            const parsed = decimal.parseU32(value) orelse return error.BadValue;
+            switch (field) {
+                .current => state.current = parsed,
+                .last_good => state.last_good = parsed,
+                .attempts => state.attempts = parsed,
+            }
+        }
+    }
+    // Rule 6: every key must be present.
+    if (!seen.eql(.full)) return error.MissingKey;
+    return state;
 }
 
 /// Canonical form: `current=N\nlast_good=N\nattempts=N\n`, in that order.
 pub fn encode(state: BootState, buf: []u8) error{NoSpaceLeft}![]u8 {
-    _ = state;
-    _ = buf;
-    @panic("TODO(M1): statefile.encode");
+    return std.fmt.bufPrint(
+        buf,
+        "current={d}\nlast_good={d}\nattempts={d}\n",
+        .{ state.current, state.last_good, state.attempts },
+    );
 }
 
 test "statefile: parses the canonical form" {

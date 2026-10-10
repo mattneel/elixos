@@ -34,8 +34,69 @@ pub const Settings = struct {
 /// Tokens are separated by spaces or newlines; the last occurrence of a key wins.
 /// Returned slices point into `text`. Numbers use decimal.parseU32.
 pub fn parse(text: []const u8) Settings {
-    _ = text;
-    @panic("TODO(M1): cmdline.parse");
+    var settings: Settings = .{};
+    var tokens = std.mem.tokenizeAny(u8, text, " \n");
+    while (tokens.next()) |token| {
+        const equals = std.mem.indexOfScalar(u8, token, '=');
+        const key = if (equals) |i| token[0..i] else token;
+        const value: ?[]const u8 = if (equals) |i| token[i + 1 ..] else null;
+        // Everything else on the command line belongs to the kernel.
+        const name = std.mem.cutPrefix(u8, key, "elixos.") orelse continue;
+
+        if (std.mem.eql(u8, name, "safe")) {
+            if (setFlag(&settings.safe, value) == null) settings.invalid += 1;
+        } else if (std.mem.eql(u8, name, "generation")) {
+            if (setNumber(&settings.generation, value, 0) == null) settings.invalid += 1;
+        } else if (std.mem.eql(u8, name, "max_attempts")) {
+            if (setNumber(&settings.max_attempts, value, 1) == null) settings.invalid += 1;
+        } else if (std.mem.eql(u8, name, "hb_timeout")) {
+            if (setNumber(&settings.heartbeat_timeout_s, value, 1) == null) settings.invalid += 1;
+        } else if (std.mem.eql(u8, name, "boot_grace")) {
+            if (setNumber(&settings.boot_grace_s, value, 1) == null) settings.invalid += 1;
+        } else if (std.mem.eql(u8, name, "data")) {
+            const device = value orelse {
+                settings.invalid += 1;
+                continue;
+            };
+            if (std.mem.startsWith(u8, device, "/dev/") and device.len > "/dev/".len) {
+                settings.data_device = device;
+            } else {
+                settings.invalid += 1;
+            }
+        } else if (std.mem.eql(u8, name, "test.stop_before_launch")) {
+            if (setFlag(&settings.test_stop_before_launch, value) == null) settings.invalid += 1;
+        } else if (std.mem.eql(u8, name, "test.shim_panic_after")) {
+            if (setNumber(&settings.test_shim_panic_after_s, value, 1) == null) settings.invalid += 1;
+        } else {
+            settings.invalid += 1;
+        }
+    }
+    return settings;
+}
+
+/// `elixos.flag`, `=1` or `=0`; null for anything else. Returns true when set.
+fn setFlag(field: *bool, value: ?[]const u8) ?void {
+    const flag = value orelse {
+        field.* = true;
+        return {};
+    };
+    if (std.mem.eql(u8, flag, "1")) {
+        field.* = true;
+        return {};
+    }
+    if (std.mem.eql(u8, flag, "0")) {
+        field.* = false;
+        return {};
+    }
+    return null;
+}
+
+/// `key=N` with a canonical u32 N >= `min`; null for anything else.
+fn setNumber(field: anytype, value: ?[]const u8, min: u32) ?void {
+    const parsed = decimal.parseU32(value orelse return null) orelse return null;
+    if (parsed < min) return null;
+    field.* = parsed;
+    return {};
 }
 
 test "cmdline: defaults when nothing elixos-specific is present" {

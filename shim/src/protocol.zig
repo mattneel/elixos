@@ -30,15 +30,33 @@ pub const ParseError = error{ Invalid, TooLong };
 /// Parses one line, given without its trailing '\n'.
 /// Generation numbers use decimal.parseU32 (one grammar everywhere).
 pub fn parse(line: []const u8) ParseError!Message {
-    _ = line;
-    @panic("TODO(M1): protocol.parse");
+    // The length limit is checked before anything else (PROTOCOL.md §2).
+    if (line.len > max_line_len) return error.TooLong;
+    if (std.mem.eql(u8, line, "HB")) return .heartbeat;
+    if (std.mem.eql(u8, line, "REBOOT")) return .reboot;
+    if (std.mem.eql(u8, line, "POWEROFF")) return .poweroff;
+    if (std.mem.eql(u8, line, "HALT")) return .halt;
+    if (std.mem.startsWith(u8, line, "COMMIT ")) {
+        const generation = decimal.parseU32(line["COMMIT ".len..]) orelse return error.Invalid;
+        return .{ .commit = generation };
+    }
+    if (std.mem.startsWith(u8, line, "NEXT ")) {
+        const generation = decimal.parseU32(line["NEXT ".len..]) orelse return error.Invalid;
+        return .{ .next = generation };
+    }
+    return error.Invalid;
 }
 
 /// Writes `msg` into `buf` as a wire line including the trailing '\n'.
 pub fn encode(msg: Message, buf: []u8) error{NoSpaceLeft}![]u8 {
-    _ = msg;
-    _ = buf;
-    @panic("TODO(M1): protocol.encode");
+    return switch (msg) {
+        .heartbeat => std.fmt.bufPrint(buf, "HB\n", .{}),
+        .commit => |generation| std.fmt.bufPrint(buf, "COMMIT {d}\n", .{generation}),
+        .next => |generation| std.fmt.bufPrint(buf, "NEXT {d}\n", .{generation}),
+        .reboot => std.fmt.bufPrint(buf, "REBOOT\n", .{}),
+        .poweroff => std.fmt.bufPrint(buf, "POWEROFF\n", .{}),
+        .halt => std.fmt.bufPrint(buf, "HALT\n", .{}),
+    };
 }
 
 // ---------------------------------------------------------------------------
