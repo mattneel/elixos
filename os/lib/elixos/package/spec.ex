@@ -56,7 +56,13 @@ defmodule Elixos.Package.Spec do
 
   # Every problem is collected, not just the first: an app that opts in should
   # learn everything that is wrong in one go.
-  defp build(elixos) when is_list(elixos) do
+  defp build(elixos) do
+    if Keyword.keyword?(elixos),
+      do: collect(elixos),
+      else: {:error, [elixos: :not_a_keyword_list]}
+  end
+
+  defp collect(elixos) do
     errors =
       elixos
       |> Enum.flat_map(&check/1)
@@ -75,17 +81,12 @@ defmodule Elixos.Package.Spec do
     end
   end
 
-  defp build(_other), do: {:error, [elixos: :not_a_keyword_list]}
-
-  defp check({:services, services}) do
-    case services do
-      [_ | _] = list ->
-        if Enum.all?(list, &service?/1), do: [], else: [services: :invalid]
-
-      _other ->
-        [services: :invalid]
-    end
+  defp check({:services, services}) when is_list(services) do
+    # An empty list is the default, said out loud, and is fine.
+    if Enum.all?(services, &service?/1), do: [], else: [services: :invalid]
   end
+
+  defp check({:services, _other}), do: [services: :invalid]
 
   defp check({:persist, paths}) when is_list(paths) do
     Enum.flat_map(paths, fn
@@ -135,29 +136,54 @@ defmodule Elixos.Package.Spec do
   def read_project(dir) do
     path = Path.join(dir, "mix.exs")
 
-    with {:ok, modules} <- compile_mix_exs(path) do
-      try do
-        # Compiling the file is what pushes the project (its __after_compile__),
-        # so the stack is balanced by popping it here whatever happens next.
-        config = Mix.Project.config()
-        Mix.Project.pop()
-        from_project(config)
-      after
-        unload(modules)
+    # Mix's project stack is global to this VM, so two reads at once would
+    # trade projects: the whole read is serialized.
+    :global.trans({__MODULE__, :read_project}, fn -> read_locked(path) end, [node()])
+  end
+
+  defp loaded_modules do
+    MapSet.new(for {module, _file, _loaded} <- :code.all_loaded(), do: module)
+  end
+
+  defp read_locked(path) do
+    project = Mix.Project.get()
+    loaded = loaded_modules()
+
+    try do
+      # Compiling the file is what pushes the project (its __after_compile__),
+      # and loading it is what defines its modules. Both are global state, and
+      # both are undone below whatever happens.
+      Code.compile_file(path)
+      from_project(Mix.Project.config())
+    rescue
+      error -> {:error, error}
+    after
+      unwind_to(project)
+      unload(MapSet.difference(loaded_modules(), loaded))
+    end
+  end
+
+  # Only the frames this read pushed come off: a file may define no project at
+  # all, or more than one, and the caller's stack is theirs.
+  defp unwind_to(project, budget \\ 8)
+  defp unwind_to(_project, 0), do: :ok
+
+  defp unwind_to(project, budget) do
+    if Mix.Project.get() == project do
+      :ok
+    else
+      case Mix.Project.pop() do
+        :error -> :ok
+        _popped -> unwind_to(project, budget - 1)
       end
     end
   end
 
-  defp compile_mix_exs(path) do
-    {:ok, Code.compile_file(path)}
-  rescue
-    error -> {:error, error}
-  end
-
-  # mix.exs defines its project module in this VM, and read_project has no
-  # business leaving it loaded: the next read would see it as already there.
+  # Only modules this read loaded are unloaded. A module that was already
+  # loaded stays as it is: purging it could kill processes still running the
+  # old version, and the reader has no business doing that to the VM.
   defp unload(modules) do
-    for {module, _binary} <- modules do
+    for module <- modules do
       :code.purge(module)
       :code.delete(module)
       :code.purge(module)
