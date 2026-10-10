@@ -65,6 +65,6 @@ defmodule Elixos.Package.Repo do
   a resource that does not verify.
   """
   @spec verify(t(), binary()) :: {:ok, binary()} | {:error, :bad_signature}
-  def verify(%__MODULE__{} = repo, resource),
+  def verify(%__MODULE__{} = repo, _resource),
     do: Elixos.NotImplemented.raise!(14, "Elixos.Package.Repo.verify/2 #{inspect(repo.name)}")
 end

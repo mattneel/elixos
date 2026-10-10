@@ -1,4 +1,6 @@
 defmodule Elixos.Image.Journal do
+  use GenServer
+
   @moduledoc """
   Append-only change journal: Smalltalk's changes file (docs/ARCHITECTURE.md §4.3).
 
@@ -135,7 +137,7 @@ defmodule Elixos.Image.Journal do
         {:ok, Enum.reverse(acc), offset, :torn}
 
       true ->
-        <<_::binary-size(offset), declared::32-big, crc::32-big, _::binary>> = bytes
+        <<_::binary-size(^offset), declared::32-big, crc::32-big, _::binary>> = bytes
 
         if offset + 8 + declared > size do
           {:ok, Enum.reverse(acc), offset, :torn}
