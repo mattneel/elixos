@@ -28,6 +28,8 @@ Fast tests: `make test`. QEMU tests: `make test-qemu` (M3 onward).
 
 **Done when.** `make check-tools` is happy on your machine and `make test` is green.
 
+- [x] Done (2026-10-09): `make check-tools` happy (flex/bison installed), `make test` green (2 passed, 190 excluded at M0).
+
 ---
 
 ## M1: The shim's pure core (Zig, host only)
@@ -45,6 +47,8 @@ Fast tests: `make test`. QEMU tests: `make test-qemu` (M3 onward).
 number is parsed. Saturating `+|` for attempts.
 
 **Done when.** 36 tests that were skipped now pass; nothing else changed.
+
+- [x] Done (2026-10-09): 37/37 Zig tests pass (the 36 gated M1 tests plus `refAllDecls`); `make ci` green; reviewer subagent found no hard-rule violations.
 
 ---
 
