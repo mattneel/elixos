@@ -30,6 +30,7 @@ environment:
       - elfutils-dev
       - findutils
       - flex
+      - gawk
       - linux-headers
       - openssl-dev
       - perl

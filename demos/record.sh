@@ -3,10 +3,10 @@
 #
 #   demos/record.sh 3 m03-first-boot
 #
-# The recording is demos/mNN-<slug>.cast, made exactly as docs/DEMOS.md says:
-# 80x30 (the guest's serial console assumes 80 columns), headless (the caller
-# has no TTY), and -i 2 so long waits and compiles do not eat playback time.
-# Each demo gets its own sparse copy of build/disk.img.
+# The recording is demos/mNN-<slug>.cast, made as demos/README.md says:
+# 120x36, headless (the caller has no TTY), and -i 2 so long waits and compiles
+# do not eat playback time.
+# Each demo gets its own sparse copy of its architecture's pristine disk.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -35,14 +35,31 @@ MSG
   exit 1
 }
 
-# Demos that count attempts need the *pristine* disk, and never build/disk.img
-# itself (which `make qemu` may have written to). mkdisk.sh recreates it
-# unconditionally; `make disk` would leave a drifted file alone.
-"$ROOT/scripts/mkdisk.sh" >/dev/null
-cp --sparse=always "$BUILD/disk.img" "$DEMO.disk"
+
+# One demo boots the other architecture (m16-aarch64); everything else is the
+# host's.
+case "$NAME" in
+  *-aarch64)
+    arch=aarch64
+    pristine="$BUILD/aarch64/disk.img"
+    export ELIXOS_DEMO_KERNEL="$BUILD/aarch64/Image"
+    export ELIXOS_DEMO_INITRAMFS="$BUILD/aarch64/initramfs.cpio.gz"
+    ;;
+  *)
+    export ELIXOS_DEMO_KERNEL="$BUILD/bzImage"
+    arch=x86_64
+    pristine="$BUILD/disk.img"
+    export ELIXOS_DEMO_INITRAMFS="$BUILD/initramfs.cpio.gz"
+    ;;
+esac
+for f in "$ELIXOS_DEMO_KERNEL" "$ELIXOS_DEMO_INITRAMFS"; do
+  [ -f "$f" ] || { echo "record: $f missing; run: make image" >&2; exit 1; }
+done
+
+# Recreate the pristine disk: interactive QEMU may have changed the x86 one.
+"$ROOT/scripts/mkdisk.sh" "$arch" >/dev/null
+cp --sparse=always "$pristine" "$DEMO.disk"
 export ELIXOS_DEMO_DISK="$DEMO.disk"
-export ELIXOS_DEMO_KERNEL="$BUILD/bzImage"
-export ELIXOS_DEMO_INITRAMFS="$BUILD/initramfs.cpio.gz"
 
 echo "record: $NAME -> $NAME.cast"
 "$ASCII" rec --headless --window-size 120x36 -i 2 --overwrite \

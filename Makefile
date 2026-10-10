@@ -54,6 +54,7 @@ demos: ## Record and check every demo up to MILESTONE
 image: ## The images QEMU boots, both architectures (M16: melange + apko, ADR-041)
 	scripts/build-image.sh
 	scripts/mkdisk.sh
+	scripts/mkdisk.sh aarch64
 
 reproducible: ## Assemble the x86_64 rootfs twice from the lockfile; print the one digest
 	scripts/build-image.sh x86_64

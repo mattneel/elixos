@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create the pristine persistent disk, build/disk.img: ext4, label ELIXOS.
+# Create an architecture's pristine persistent disk: ext4, label ELIXOS.
 # QEMU tests never boot this file directly; each test boots a sparse copy
 # (Elixos.Test.Disk.fresh!/1), so tests cannot leak state into each other.
 set -euo pipefail
@@ -7,9 +7,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="${ELIXOS_BUILD:-$ROOT/build}"
 SIZE="${DISK_SIZE:-1G}"
-DISK="$BUILD/disk.img"
+ARCH="${1:-x86_64}"
+case "$ARCH" in
+  x86_64) DISK="$BUILD/disk.img" ;;
+  aarch64) DISK="$BUILD/aarch64/disk.img" ;;
+  *) echo "disk: unsupported architecture $ARCH" >&2; exit 1 ;;
+esac
 
-mkdir -p "$BUILD"
+mkdir -p "$(dirname "$DISK")"
 
 # The pristine disk carries the guest toolchain (M11, ADR-009): the disk is
 # mounted at /priv, so this is what a box with no network builds NIFs with.
@@ -18,12 +23,14 @@ mkdir -p "$BUILD"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
-TOOLCHAIN_APK="$(ls "$BUILD"/apk/x86_64/x86_64/elixos-toolchain-*.apk 2>/dev/null | head -n1)"
-if [ -z "$TOOLCHAIN_APK" ]; then
-  echo "disk: no elixos-toolchain package under $BUILD/apk/x86_64" >&2
-  echo "  build it first: scripts/build-image.sh x86_64" >&2
+shopt -s nullglob
+packages=("$BUILD/apk/$ARCH/$ARCH"/elixos-toolchain-*.apk)
+if [ "${#packages[@]}" -eq 0 ]; then
+  echo "disk: no elixos-toolchain package under $BUILD/apk/$ARCH" >&2
+  echo "  build it first: scripts/build-image.sh $ARCH" >&2
   exit 1
 fi
+TOOLCHAIN_APK="${packages[0]}"
 # melange's APKs are tar streams a plain `tar` reads (the checksum xattr is
 # just a warning); only toolchain/ is wanted, not the package metadata.
 tar -xzf "$TOOLCHAIN_APK" -C "$STAGE" --warning=no-unknown-keyword toolchain

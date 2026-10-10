@@ -19,6 +19,7 @@ means a failing test first, then the fix).
 | `m13-uefi.mp4` | M13 | firmware boots the EFI-stub kernel from the ESP, under EFI, with the built-in command line |
 | `m14-packages.mp4` | M14 | the official repository is trusted out of the box; adding one with its key is consent; install by name |
 | `m15-jido-agents.mp4` | M15 | jido is part of the OS, an agent is defined and started at the prompt, an action talks to a stub model, and a power cycle keeps its state |
+| `m16-aarch64.mp4` | M16 | the same Elixos built for aarch64 boots on qemu-system-aarch64, reports its architecture, and keeps a module across a power cycle |
 
 ## Play, record, check
 
@@ -54,11 +55,12 @@ differ, so the 3.x static binaries go in `build/tools`:
   scrolled past inside one frame (a boot's shim lines, say) can be missing from
   it. The check also requires the recording to end on
   `elixos-shim: shutdown poweroff` and to contain no kernel panic.
-* Each demo boots **its own sparse copy** of a freshly made `build/disk.img`,
-  never that file: a recording cannot drift the disk, and demos that count
-  attempts start from the pristine state. `-no-reboot` ends QEMU when the guest
-  reboots, so a demo that needs two power-ons spawns QEMU twice inside one
-  recording, on the same copy.
+* Each demo boots **its own sparse copy** of its architecture's freshly made
+  disk: `build/disk.img` for x86_64, `build/aarch64/disk.img` for aarch64.
+  A recording cannot drift the pristine disk, and demos that count attempts
+  start from the pristine state. `-no-reboot` ends QEMU when the guest reboots,
+  so a demo that needs two power-ons spawns QEMU twice inside one recording,
+  on the same copy.
 * Recordings are 120x36: the guest's serial console assumes 80 columns, but
   the Erlang banner, kernel lines and `[notice]` errors are longer than that
   and were being cut off in the video. They use `-i 2`, so long waits and

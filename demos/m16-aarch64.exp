@@ -1,0 +1,94 @@
+#!/usr/bin/expect -f
+# M16: the same Elixos, built for another architecture. The image the new
+# pipeline assembles for aarch64 boots on qemu-system-aarch64's `virt` machine
+# under TCG (no KVM here for it), reports what it is through Elixos.info, keeps
+# a module across a power cycle, and powers off - the smoke set, recorded.
+
+# Boots are slow under emulation; prompts and content afterwards are not. The
+# timeout is set per phase so a wedged boot is loud rather than fifteen minutes
+# of silence.
+set timeout 900
+
+expect_after {
+    timeout {
+        puts stderr "\nDEMO ABORTED waiting for a pattern. Last output:\n$expect_out(buffer)"
+        exit 1
+    }
+}
+set send_human {.1 .3 10 .05 2}
+
+spawn -noecho qemu-system-aarch64 \
+    -machine virt -accel tcg -cpu cortex-a72 -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyAMA0 panic=-1 quiet elixos.commit_after=3600" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+
+expect "iex(1)> "
+set timeout 120
+sleep 1
+
+# A recording is easier to read - and to drive - without colour: the escapes
+# land inside the very strings the script waits for.
+send {IEx.configure(colors: [enabled: false])}
+send "\r"
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# The box says what it is: the architecture comes from the BEAM, so it is the
+# architecture of the image that booted.
+send "Elixos.info().arch"
+send "\r"
+expect -exact {"aarch64"}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# A module defined at the prompt, one expression the way a defmodule is typed.
+send {(defmodule Demo.Arm do
+  def value, do: :arm_ok
+end)}
+send "\r"
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+send "Elixos.save()"
+send "\r"
+expect -exact "{:ok,"
+expect -re {iex\([0-9]+\)> }
+sleep 2
+send "Elixos.poweroff()"
+send "\r"
+expect "elixos-shim: shutdown poweroff"
+expect "reboot: Power down"
+expect eof
+sleep 2
+
+# Power on again on the same disk: the module is part of the image now.
+set timeout 900
+spawn -noecho qemu-system-aarch64 \
+    -machine virt -accel tcg -cpu cortex-a72 -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyAMA0 panic=-1 quiet elixos.commit_after=3600" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+
+expect "iex(1)> "
+set timeout 120
+sleep 1
+send {IEx.configure(colors: [enabled: false])}
+send "\r"
+expect -re {iex\([0-9]+\)> }
+sleep 1
+send "Demo.Arm.value()"
+send "\r"
+expect {:arm_ok}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send "Elixos.poweroff()"
+send "\r"
+expect "elixos-shim: shutdown poweroff"
+expect eof
+sleep 1

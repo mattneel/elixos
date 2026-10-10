@@ -401,21 +401,28 @@ on the box. apko runs no package install scripts, so users an image needs
 (M17's postgres) are declared in the image config. Alpine edge is allowed
 package by package, each with a note in DECISIONS.md. Emerge ships no aarch64
 musl NIF (only aarch64 GNU), so M22 needs a source build for aarch64. Out of
-scope here: OCI images and the shim's container mode - the next milestone,
-which the human writes up separately.
+scope here: OCI/container runtime mode, which gets a separate write-up from
+the human.
 
-**Image size.** Before (hand-built, x86_64): initramfs 44M, rootfs 108M
-(factory 82M, libs 27M), kernel 14.3MiB. After (x86_64, 2026-10-10): initramfs
-91M, root filesystem tar 114M, kernel 14.5MiB - bigger, because the initramfs
-now carries Alpine's base, the kernel, a full OTP install and the release;
-the release no longer duplicates the ERTS (that change removed 18M). aarch64
-recorded when its build lands.
+**Image size.** Before (hand-built, x86_64): initramfs 44M, unpacked rootfs
+108M (factory 82M, libs 27M), kernel 14.3MiB. Measured package-built artifacts:
+
+| architecture | initramfs (`.cpio.gz`) | apko archive (`rootfs.tar`) | kernel artifact |
+|--------------|-----------------------|-----------------------------|-----------------|
+| x86_64 | 90.1 MiB | 114.0 MiB | 14.5 MiB |
+| aarch64 | 88.8 MiB | 94.5 MiB | 40.1 MiB |
+
+MiB is 1,048,576 bytes. The apko archive is an OCI-format build intermediate,
+not the old unpacked rootfs measurement. The x86_64 kernel is a compressed
+`bzImage`; aarch64's `Image` is uncompressed. The initramfs carries Alpine's
+base, the kernel, a full OTP install and the factory release; excluding ERTS
+from the release removed 18M of duplication.
 
 **Done when.** `make ci` is green with `MILESTONE=16` on the new x86_64
 image, `make test-qemu-aarch64` passes its smoke set, `make reproducible`
 prints one digest twice, the SBOM check passes, and `make audit` is still 0.
 
-- [ ] Demo recorded: `demos/m16-aarch64.mp4` (`make demo M=16`, driving
+- [x] Demo recorded: `demos/m16-aarch64.mp4` (`make demo M=16`, driving
   qemu-system-aarch64).
 
 ---

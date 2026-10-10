@@ -3,10 +3,10 @@
 # is that it is built in the architecture's own environment instead of through
 # a hand-rolled musl cross toolchain (that is what supersedes ADR-008).
 #
-# The runtime ERTS the guest boots comes from the *release* the factory
-# package assembles (mix release copies the ERTS into it); this package is
-# what that assembly points at, and the apps/erts install is also what a
-# NIF-building on-box build points its headers at.
+# This package supplies the guest's runtime ERTS and OTP applications.
+# The factory's Mix release uses include_erts: false and boots this ERTS
+# directly instead of duplicating it. The package also supplies the headers
+# that on-box NIF builds use.
 package:
   name: elixos-otp
   version: "29.1.1"

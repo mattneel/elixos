@@ -10,6 +10,11 @@ apko v1.4.10, both by sha256).
   Alpine that is the `linux-headers` package, on glibc distros it is there
   already (linux-libc-dev). Without it objtool fails with "asm/types.h: No such
   file or directory".
+- The x86_64 kernel build also needs `gawk`. BusyBox awk rejects the literal
+  `{` in mainline `scripts/orc_hash.sh`; its pipeline can still exit zero and
+  emit the hash of empty input. Adding `gawk` to the melange build environment
+  fixes the ORC metadata without patching Linux. A fresh packaged build must
+  have no `awk: bad regex` warning as well as passing the config guard.
 - `--source-dir` does **not** bind your tree read-only: melange *copies* it
   into its workspace, which it then binds at `/home/build`. Pointing it at the
   repo root once copied 55G (the kernel tree, `os/_build`, `os/tmp`). Stage a
@@ -26,6 +31,15 @@ apko v1.4.10, both by sha256).
 - aarch64 packages on an x86_64 host run under binfmt emulation
   (`qemu-aarch64` registered, docker for the `docker` runner if wanted). This
   machine has both; `scripts/check-tools.sh` reports them.
+- The first aarch64 image build on this x86_64 WSL host took 5,143 seconds;
+  the next `make image` assembled both architectures from cached APKs in
+  51 seconds. Kernel-fragment preflight is cheap; emulated kernel and OTP
+  compilation is not. Delete only the APK whose sources changed to rebuild
+  it, or use `FORCE=1` when every package really needs rebuilding.
+- A cold on-box C toolchain smoke in a 1 GiB aarch64 TCG guest took 480
+  seconds: the pinned Zig ran, the `cc` bridge built a static musl binary,
+  that binary exited 23, and the VM cwd stayed `/`. Keep this separate from
+  the boot/save/restore smoke, which does not run the native C compiler.
 - The build environment needs its own packages (busybox, curl, tar, xz for the
   shim); the repositories in the YAML are the same pinned Alpine release apko
   uses.
@@ -117,3 +131,11 @@ apko v1.4.10, both by sha256).
 - A killed QEMU run leaves its `@moduletag :tmp_dir` behind, and each holds a
   copy of the disk image: `os/tmp` reached 19G once. When the disk looks
   wrong, `rm -rf os/tmp/*` is safe - the tests recreate it.
+- A daemon returned by `:ssh.daemon/2` is already a child of OTP's
+  `:sshd_sup`. Returning that PID as an Elixos supervisor child does not
+  reparent it: Elixos's shutdown signal is not from its parent, so Elixos
+  waits five seconds and force-kills it. The aarch64 demo exposed the
+  resulting `{:sshd, :acceptor_sup}` crash report. `Elixos.SSH` now owns a
+  small GenServer that traps exits, monitors the daemon and calls
+  `:ssh.stop_daemon/1` on termination. The regression checks normal daemon
+  exit, EOF on an open connection and refusal of new connections.

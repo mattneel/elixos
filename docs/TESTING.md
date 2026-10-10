@@ -53,9 +53,11 @@ there and both sides must handle it. The format is documented in the file.
   - Shim log lines can arrive while you wait for something else; assert them
     with `await_log/3`, which searches everything this boot printed.
 - `Elixos.Test.Disk`: `fresh!/1` (sparse copy of the pristine
-  `build/disk.img`), `read/2`, `exists?/2`, `write!/3`, `put_tree!/3`. It uses
-  e2fsprogs' `debugfs`, so no root and no mounting. Only use it while QEMU is
-  not running. Guest `/priv/x` is `/x` here.
+  `build/disk.img`, or `build/aarch64/disk.img` when
+  `ELIXOS_QEMU_AARCH64=1`), `read/2`, `exists?/2`, `write!/3`, `put_tree!/3`.
+  Each disk carries its own architecture's toolchain. It uses e2fsprogs'
+  `debugfs`, so no root and no mounting. Only use it while QEMU is not running.
+  Guest `/priv/x` is `/x` here.
 
 **Conventions.**
 - QEMU tests live in `os/test/integration/`, are tagged `:qemu`, and set a

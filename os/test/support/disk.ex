@@ -7,9 +7,15 @@ defmodule Elixos.Test.Disk do
   in the guest is `/boot.state` here.
   """
 
-  @doc "Copies the pristine build/disk.img into `dir` and returns the copy's path."
+  @doc """
+  Copies the pristine disk into `dir`; `ELIXOS_QEMU_AARCH64=1` selects the
+  aarch64 disk and its native toolchain instead of the default x86_64 disk.
+  """
   def fresh!(dir) do
-    pristine = Elixos.Test.Paths.build("disk.img")
+    name =
+      if System.get_env("ELIXOS_QEMU_AARCH64") == "1", do: "aarch64/disk.img", else: "disk.img"
+
+    pristine = Elixos.Test.Paths.build(name)
 
     unless File.exists?(pristine) do
       raise "missing #{pristine}; run `make image` first (docs/TESTING.md)"

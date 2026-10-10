@@ -1,0 +1,15 @@
+# What the M16 demo must show, in order: the aarch64 image boots to IEx on
+# qemu-system-aarch64's virt machine, the box reports its architecture, a
+# module defined at the prompt survives a power cycle, and it powers off.
+elixos-shim: pid 1, version
+iex(1)> IEx.configure(colors: [enabled: false])
+iex(2)> Elixos.info().arch
+"aarch64"
+iex(3)> (defmodule Demo.Arm do
+iex(4)> Elixos.save()
+{:ok,
+elixos-shim: shutdown poweroff
+iex(1)> IEx.configure(colors: [enabled: false])
+iex(2)> Demo.Arm.value()
+:arm_ok
+elixos-shim: shutdown poweroff

@@ -10,15 +10,15 @@ default shell; a POSIX shell exists for tooling. Programs are packages,
 commands are functions, and the running system is a live image you can save.
 
 For shipping living Elixir apps as well as personal machines: USB sticks,
-cyberdecks and SBCs. The image build is moving to pinned Alpine packages,
-targeting **x86_64 and aarch64**.
+cyberdecks and SBCs. Images are built from pinned Alpine packages for
+**x86_64 and aarch64**.
 
 ## Status
 
-**M1–M15 are landed:** live generations and recovery, on-box Mix builds, SSH,
-UEFI boot, trusted Hex packages and Jido agents.
+**M1–M16 are landed:** live generations and recovery, on-box Mix builds, SSH,
+UEFI boot, trusted Hex packages, Jido agents and package-built images.
 
-**Next:** finish M16's package-built images and aarch64 smoke checks.
+**Next:** the unprivileged-BEAM escape hatch and sealed generations.
 The coding-agent toolset and safe self-modification remain planned work.
 See the [roadmap and acceptance criteria](docs/ROADMAP.md).
 

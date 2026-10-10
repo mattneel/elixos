@@ -18,16 +18,23 @@ defmodule Elixos.SSH do
   (default `&shell/2`).
   """
 
+  use GenServer, restart: :temporary
+
   require Logger
 
   # id-Ed25519: the named curve public_key and ssh_file both know.
   @id_ed25519 {1, 3, 101, 112}
 
-  @doc "Supervisor-shaped start: boots the daemon, or steps aside."
-  def start_link(opts) do
+  @doc "Own the daemon's lifecycle; OTP's SSH supervisor still owns the daemon PID."
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    Process.flag(:trap_exit, true)
+
     case start(opts) do
       {:ok, daemon} ->
-        {:ok, daemon}
+        {:ok, {daemon, Process.monitor(daemon)}}
 
       {:error, reason} ->
         # SSH is not boot-critical: a box with no network, or a rescue boot,
@@ -37,13 +44,22 @@ defmodule Elixos.SSH do
     end
   end
 
-  @doc "A child that does not come back from the dead: the daemon is its own."
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      restart: :temporary
-    }
+  @impl true
+  def handle_info({:DOWN, monitor, :process, daemon, reason}, {daemon, monitor}) do
+    {:stop, reason, nil}
+  end
+
+  @impl true
+  def terminate(_reason, nil), do: :ok
+
+  def terminate(_reason, {daemon, _monitor}) do
+    try do
+      :ssh.stop_daemon(daemon)
+    catch
+      # The SSH application may have stopped first during VM shutdown.
+      :exit, :noproc -> :ok
+      :exit, {:noproc, _call} -> :ok
+    end
   end
 
   @spec start(keyword()) :: {:ok, pid()} | {:error, term()}
