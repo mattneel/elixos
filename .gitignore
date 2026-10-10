@@ -6,6 +6,8 @@
 /os/test/fixtures/*/_build/
 /os/test/fixtures/*/deps/
 /os/test/fixtures/*/priv/
+# The sample_app fixture copies the project's lock at test time (M15).
+/os/test/fixtures/*/mix.lock
 erl_crash.dump
 /os/tmp/
 # A demo's working disk copy, made and removed by demos/record.sh

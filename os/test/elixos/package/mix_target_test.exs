@@ -8,13 +8,27 @@ defmodule Elixos.Package.MixTargetTest do
   @moduletag timeout: 300_000
 
   @fixture Elixos.Test.Paths.fixture("sample_app")
+  @os Path.expand("../../..", @fixture)
 
   setup do
-    on_exit(fn -> File.rm_rf!(Path.join(@fixture, "_build")) end)
+    # The fixture depends on elixos by path, and elixos has dependencies of its
+    # own (jido, M15/ADR-036). Resolve them where this project already put
+    # them - a second copy would be a second download - with the same lock.
+    File.cp!(Path.join(@os, "mix.lock"), Path.join(@fixture, "mix.lock"))
+
+    on_exit(fn ->
+      File.rm_rf!(Path.join(@fixture, "_build"))
+      File.rm(Path.join(@fixture, "mix.lock"))
+    end)
   end
 
   defp where(target_env) do
-    env = [{"MIX_ENV", "dev"}, {"MIX_TARGET", target_env}]
+    env = [
+      {"MIX_ENV", "dev"},
+      {"MIX_TARGET", target_env},
+      {"MIX_DEPS_PATH", Path.join(@os, "deps")}
+    ]
+
     eval = "IO.write(Application.fetch_env!(:sample_app, :where))"
 
     {output, status} =

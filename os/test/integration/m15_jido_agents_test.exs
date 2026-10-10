@@ -1,10 +1,10 @@
 defmodule Elixos.Integration.M15JidoAgentsTest do
   @moduledoc """
-  M15: agents are ordinary Elixos code. A Jido agent - installed from a
-  trusted repository by name, with its dependency closure - is defined at the
-  prompt, started under the system's own supervisor, and then the machine is
-  powered off and on again: the next boot starts it again with what it
-  remembered. An action that calls a model talks to a stub over the loopback.
+  M15: agents are ordinary Elixos code. Jido is a dependency of Elixos itself
+  (ADR-036), so a Jido agent is defined at the prompt, started under the
+  system's own supervisor, and then the machine is powered off and on again:
+  the next boot starts it again with what it remembered. An action that calls
+  a model talks to a stub over the loopback.
   """
   use ExUnit.Case, async: false
 
@@ -13,7 +13,7 @@ defmodule Elixos.Integration.M15JidoAgentsTest do
   @moduletag timeout: 900_000
   @moduletag :tmp_dir
 
-  alias Elixos.Test.{Disk, Paths, QEMU}
+  alias Elixos.Test.{Disk, QEMU}
 
   # What a prompt would define: a Jido instance, two actions (one keeps a
   # note, one asks the model), an agent wiring them, a stub provider, and two
@@ -94,22 +94,15 @@ defmodule Elixos.Integration.M15JidoAgentsTest do
     """
   end
 
-  test "a jido agent is installed by name, supervised, and back after a power cycle", ctx do
+  test "a jido agent ships with the OS, is supervised, and back after a power cycle", ctx do
     disk = Disk.fresh!(ctx.tmp_dir)
-    Disk.put_tree!(disk, Path.join(Paths.fixture("hex_repo"), "public"), "/hex-repo")
 
     vm = QEMU.boot_to_iex(ctx, disk: disk)
 
-    add =
-      ~s|Elixos.Package.add_repo(:fixture, "/priv/hex-repo", key: File.read!("/priv/hex-repo/public_key"))|
+    # Jido is part of the OS (ADR-036): it is up before the prompt is.
+    {out, vm} =
+      QEMU.iex(vm, ~s{Enum.any?(Application.started_applications(), &(elem(&1, 0) == :jido))})
 
-    {out, vm} = QEMU.iex(vm, add)
-    assert out =~ ":ok"
-
-    # By name: the closure (jido and its dependencies) installs first.
-    {out, vm} = QEMU.iex(vm, "Elixos.Package.install(:jido)", 600_000)
-    assert out =~ "{:ok, :jido}"
-    {out, vm} = QEMU.iex(vm, ~s{Map.has_key?(Elixos.Package.installed(), :jido)})
     assert out =~ ~r/^true$/m
 
     # The modules go in as *one* expression - the way the M6 test defines a

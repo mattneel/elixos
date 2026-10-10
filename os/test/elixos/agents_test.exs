@@ -3,7 +3,7 @@ defmodule Elixos.AgentsTest do
   Agents as ordinary Elixos code (M15): start one, it is recorded; what it
   remembers is written on `/priv`; a boot starts it again with that memory;
   stopping it forgets it. This is the plain-module half of the contract - the
-  Jido half runs in the M15 QEMU acceptance, where the packages are installed.
+  Jido half runs in the M15 QEMU acceptance, where Jido is part of the OS.
   """
   use ExUnit.Case, async: false
 
