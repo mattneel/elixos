@@ -110,10 +110,11 @@ defmodule Zig do
   # build in any session reuses what another already compiled.
   defp cache, do: Application.get_env(:elixos, :zig_cache_dir, "/priv/cache/zig")
 
-  # The disk's copy (M11) has zig at the toolchain root; a package payload has
-  # it in bin/. Either layout is the toolchain.
+  # A package payload (ADR-019) is laid out like a prefix: bin/ holds the
+  # programs, so bin/zig is what a *package* provides. The disk's copy (M11)
+  # predates that and has zig at the toolchain root; it is the fallback.
   defp zig(path) do
-    candidates = [Path.join(path, "zig"), Path.join([path, "bin", "zig"])]
+    candidates = [Path.join([path, "bin", "zig"]), Path.join(path, "zig")]
 
     case Enum.find(candidates, &File.regular?/1) do
       nil -> Path.join(path, "zig")

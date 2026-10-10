@@ -100,17 +100,16 @@ defmodule Elixos.Integration.M14PackagesTest do
 
     # A stand-in toolchain whose `zig` prints the directory it was started in.
     # An escript is exec'd directly through its `#!` line: no shell anywhere.
-    write = """
-    File.mkdir_p!("/priv/toolchain/bin")
-    File.write!(
-      "/priv/toolchain/bin/zig",
-      "#!/factory/erts/bin/escript\\nmain(_) ->\\n  {ok, Dir} = file:get_cwd(),\\n  io:format(\\"~s~n\\", [Dir]).\\n",
-      [:write]
-    )
-    File.chmod!("/priv/toolchain/bin/zig", 0o755)
-    """
+    # One expression per call: QEMU.iex/3 sends a single line and waits for the
+    # *next* prompt, so a multi-line paste makes it lose track of which prompt
+    # it is waiting for (ADR-030).
+    escript = "#!/factory/erts/bin/escript\\nmain(_) ->\\n  {ok, Dir} = file:get_cwd(),\\n  io:format(\\"~s~n\\", [Dir]).\\n"
 
-    {out, vm} = QEMU.iex(vm, write)
+    {out, vm} = QEMU.iex(vm, ~s{File.mkdir_p!("/priv/toolchain/bin")})
+    assert out =~ ":ok"
+    {out, vm} = QEMU.iex(vm, ~s{File.write!("/priv/toolchain/bin/zig", "#{escript}", [:write])})
+    assert out =~ ":ok"
+    {out, vm} = QEMU.iex(vm, ~s{File.chmod!("/priv/toolchain/bin/zig", 0o755)})
     assert out =~ ":ok"
 
     {out, vm} = QEMU.iex(vm, ~s|cd("/priv/home")|)

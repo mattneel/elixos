@@ -524,6 +524,37 @@ is how this one was found.
 (ADR-021) and would not fix the inconsistency; the M11, M12 and M13 tests all
 use `/priv/...` in their guest commands.
 
+## ADR-030: The M14 toolchain test types one expression per call
+
+**Status:** accepted (M14)
+
+**Context.** `test/integration/m14_packages_test.exs` wrote its stand-in
+`zig` escript as one multi-line string and handed it to `QEMU.iex/3`, whose
+contract is a single expression: it sends one line and returns everything up
+to the *next* prompt numbered higher than the last one seen. A multi-line
+paste produces one result but several prompt redraws, so the helper's prompt
+counter advances past them and every following call returns the *previous*
+call's output (observed: four empty results, then a slice beginning `nil` and
+the echo of an earlier line). The test was never run against an
+implementation, so the slip never showed.
+
+**Decision.** Send the three escript-writing expressions as three calls, one
+line each, and keep every assertion as it was. The toolchain lookup in
+`Zig.zig/1` also prefers `bin/zig` (a package payload's layout, ADR-019) over
+the flat `zig` the disk's M11 copy carries: with only the flat one, the
+stand-in escript the test installs would never be the program that runs,
+which is exactly what this test is about.
+
+**Consequences.** The test exercises what it means to: the escript is exec'd
+directly, in the session's directory, with no shell, and `Zig.build/2`
+reports its output. Multi-line console input stays available to a human at
+the prompt; it is the test helper's prompt bookkeeping that a paste
+desynchronizes.
+
+**Alternatives.** Teaching the helper to count prompt redraws would give the
+test a contract the console does not promise; the M11, M12 and M13 tests all
+send single expressions.
+
 ## Open questions
 
 ## ADR-024: Ctrl+C rides with a newline on the console
