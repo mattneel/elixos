@@ -78,12 +78,14 @@ defmodule Elixos.Integration.M14PackagesTest do
     vm = QEMU.boot_to_iex(ctx, disk: disk)
 
     for {name, dir} <- [{":fixture", "/priv/hex-repo"}, {":mirror", "/priv/hex-mirror"}] do
-      {out, vm} =
-        QEMU.iex(
-          vm,
-          ~s|Elixos.Package.add_repo(#{name}, "#{dir}", key: File.read!("#{dir}/public_key"))|
-        )
+      # One short expression per call, deliberately: IEx redraws an input line
+      # that wraps the terminal, and the harness reads prompts off the console -
+      # a wrapped 100-character line reads like one. The key travels in a
+      # variable so the call itself stays under the width.
+      {out, vm} = QEMU.iex(vm, ~s|key = File.read!("#{dir}/public_key")|)
+      assert out =~ "BEGIN RSA PUBLIC KEY"
 
+      {out, vm} = QEMU.iex(vm, ~s|Elixos.Package.add_repo(#{name}, "#{dir}", key: key)|)
       assert out =~ ":ok"
     end
 
@@ -93,7 +95,7 @@ defmodule Elixos.Integration.M14PackagesTest do
     QEMU.stop(vm)
   end
 
-  test "a native tool runs in the session's directory, without a shell", ctx do
+  test "a native tool runs in the session's directory, exec'd directly", ctx do
     disk = Disk.fresh!(ctx.tmp_dir)
 
     vm = QEMU.boot_to_iex(ctx, disk: disk)
@@ -144,9 +146,11 @@ defmodule Elixos.Integration.M14PackagesTest do
     {out, vm} = QEMU.iex(vm, "File.cwd!()")
     assert out =~ ~s("/")
 
-    # And no part of the system needs a shell (ADR-012).
-    {out, vm} = QEMU.iex(vm, ~s|Enum.any?(["/bin/sh", "/bin/bash", "/sbin/sh"], &File.exists?/1)|)
-    assert out =~ ~r/^false$/m
+    # ADR-041 amends ADR-012: a shell exists, for *tools* - and this tool did
+    # not need one. (The boot path's rule is m04's business: PID 1 execs ERTS
+    # itself and the console is IEx.)
+    {out, vm} = QEMU.iex(vm, ~s|System.cmd("/bin/sh", ["-c", "echo tool-ok"])|)
+    assert out =~ ~s|{"tool-ok\\n", 0}|
 
     QEMU.refute_kernel_panic(vm)
     QEMU.stop(vm)

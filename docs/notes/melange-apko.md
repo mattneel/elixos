@@ -86,6 +86,13 @@ apko v1.4.10, both by sha256).
 
 ## Test hygiene
 
+- The QEMU harness reads prompts off the console and counts them: it waits for
+  a prompt numbered higher than the last one it saw. On the Alpine-built OTP
+  a redrawn prompt can arrive with the *result* text still to come, and
+  `QEMU.iex/3` then returns early with only the echoed input - M14's two-repo
+  test caught this. Keep test expressions short (one per call, key material in
+  a variable) and, before M16 is done, make `iex/3` wait for the expression's
+  output rather than for the next prompt number.
 - A killed QEMU run leaves its `@moduletag :tmp_dir` behind, and each holds a
   copy of the disk image: `os/tmp` reached 19G once. When the disk looks
   wrong, `rm -rf os/tmp/*` is safe - the tests recreate it.
