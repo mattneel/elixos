@@ -178,7 +178,8 @@ defmodule Elixos.Package.Hex do
            %{
              version: version,
              inner_checksum: Proto.one(release, 2),
-             outer_checksum: Proto.one(release, 5)
+             outer_checksum: Proto.one(release, 5),
+             deps: deps_of(release)
            }}
 
         [] ->
@@ -187,6 +188,164 @@ defmodule Elixos.Package.Hex do
     else
       false -> {:error, :package_mismatch}
       {:error, _reason} = error -> error
+    end
+  end
+
+  # A release's requirements: name => requirement. Optional dependencies are
+  # not required and are left out; a dependency on `:elixos` is kept, because
+  # the resolver checks it against the running OS like any other.
+  defp deps_of(release) do
+    for entry <- Proto.all(release, 3),
+        {:ok, dep} <- [Proto.decode(entry)],
+        name when is_binary(name) <- [Proto.one(dep, 1)],
+        Proto.one(dep, 3) != 1,
+        requirement = Proto.one(dep, 2),
+        is_binary(requirement),
+        into: %{},
+        do: {name, requirement}
+  end
+
+  @doc """
+  The dependency closure of `name`: every release that has to be installed
+  for it, each dependency before what requires it (ADR-015, M15).
+
+  Releases carry their requirements - they are part of the signed registry -
+  so the closure is read from the trusted resources: for every name the
+  newest release satisfying *every* requirement seen for it. A requirement
+  nothing satisfies is `{:error, {:no_matching_version, name, requirements}}`,
+  and a name in two trusted repositories is `resolve/2`'s error.
+  """
+  @spec closure(String.t(), String.t() | nil) ::
+          {:ok,
+           [
+             %{
+               name: String.t(),
+               version: String.t(),
+               repo: Repo.t(),
+               deps: %{String.t() => String.t()}
+             }
+           ]}
+          | {:error, term()}
+  def closure(name, requirement \\ nil) do
+    requirements = if requirement, do: [requirement], else: []
+
+    with {:ok, root} <- resolve_all(name, requirements),
+         {:ok, picked} <- solve(%{name => %{repo: root.repo, requirements: requirements}}),
+         {:ok, ordered} <- order(picked) do
+      {:ok, ordered}
+    end
+  end
+
+  # Fixpoint: pick every constrained name from the requirements seen so far,
+  # read what the picked release requires, add those, repeat until a pass adds
+  # nothing new.
+  defp solve(constraints) do
+    with {:ok, picked} <- pick_all(constraints) do
+      {constraints, grown?} = add_requirements(constraints, picked)
+      if grown?, do: solve(constraints), else: {:ok, picked}
+    end
+  end
+
+  defp pick_all(constraints) do
+    Enum.reduce_while(constraints, {:ok, %{}}, fn {name,
+                                                   %{repo: repo, requirements: requirements}},
+                                                  {:ok, acc} ->
+      with {:ok, versions} <- releases(repo, name),
+           [version | _] <- matching_all(versions, requirements),
+           {:ok, release} <- release(repo, name, version) do
+        {:cont,
+         {:ok,
+          Map.put(acc, name, %{name: name, version: version, repo: repo, deps: release.deps})}}
+      else
+        [] -> {:halt, {:error, {:no_matching_version, name, requirements}}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp add_requirements(constraints, picked) do
+    Enum.reduce(picked, {constraints, false}, fn {_name, entry}, {acc, grown?} ->
+      Enum.reduce(entry.deps, {acc, grown?}, fn
+        {"elixos", _requirement}, {acc, grown?} ->
+          {acc, grown?}
+
+        {dep, requirement}, {acc, grown?} ->
+          merge_requirement(acc, dep, entry.repo, requirement, grown?)
+      end)
+    end)
+  end
+
+  defp merge_requirement(constraints, dep, repo, requirement, grown?) do
+    case Map.fetch(constraints, dep) do
+      :error ->
+        {Map.put(constraints, dep, %{repo: repo, requirements: [requirement]}), true}
+
+      {:ok, %{requirements: requirements}} ->
+        if requirement in requirements do
+          {constraints, grown?}
+        else
+          {Map.put(constraints, dep, %{repo: repo, requirements: requirements ++ [requirement]}),
+           true}
+        end
+    end
+  end
+
+  defp matching_all(versions, requirements) do
+    Enum.filter(versions, fn version ->
+      Enum.all?(requirements, fn requirement ->
+        case Version.parse_requirement(requirement) do
+          {:ok, parsed} -> Version.match?(version, parsed, allow_pre: false)
+          :error -> false
+        end
+      end)
+    end)
+  end
+
+  # Dependencies first, deterministically: repeatedly take the names whose
+  # dependencies are all placed, sorted. Anything left over is a cycle.
+  defp order(picked) do
+    graph = Map.new(picked, fn {name, entry} -> {name, Map.keys(entry.deps) -- ["elixos"]} end)
+
+    case place(Map.keys(graph), graph, []) do
+      {:ok, names} -> {:ok, Enum.map(names, &Map.fetch!(picked, &1))}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp place([], _graph, acc), do: {:ok, Enum.reverse(acc)}
+
+  defp place(remaining, graph, acc) do
+    ready =
+      remaining |> Enum.filter(fn name -> Enum.all?(graph[name], &(&1 in acc)) end) |> Enum.sort()
+
+    if ready == [] do
+      {:error, {:dependency_cycle, Enum.sort(remaining)}}
+    else
+      place(remaining -- ready, graph, Enum.reverse(ready) ++ acc)
+    end
+  end
+
+  # Requirements-aware resolution: the one trusted repository, and the newest
+  # release satisfying all of `requirements`.
+  defp resolve_all(name, requirements) do
+    offering =
+      for repo <- Repo.list(), {:ok, names} <- [names(repo, nil)], name in names, do: repo
+
+    case offering do
+      [] ->
+        {:error, :no_such_package}
+
+      [repo] ->
+        with {:ok, versions} <- releases(repo, name),
+             [version | _] <- matching_all(versions, requirements) do
+          {:ok, %{repo: repo, version: version}}
+        else
+          [] -> {:error, {:no_matching_version, name, requirements}}
+          {:error, reason} -> {:error, reason}
+        end
+
+      [repo_a, repo_b | _rest] ->
+        {:error, {:name_in_multiple_repos, name, repo_a.name, repo_b.name}}
     end
   end
 
