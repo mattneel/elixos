@@ -190,6 +190,17 @@ RELEASE_VSN="$(sed -n 's/^  @version "\(.*\)"$/\1/p' "$ROOT/os/mix.exs")"
   MIX_ENV=prod ELIXOS_ERTS="$OTP_ROOT/$ERTS_VERSION" mix release --overwrite --path "$BUILD/rel"
 )
 
+# M11: the box builds Mix projects itself, and `mix release` leaves the mix
+# application out. Copying it in beside Elixir makes it loadable from lib/, so
+# a child ERTS can run Mix.CLI directly - no mix script, no shell (ADR-012).
+ELIXIR_LIB="$(elixir -e 'IO.puts(:code.lib_dir(:elixir))' | tail -n1)"
+cp -a "$(dirname "$ELIXIR_LIB")/mix" "$BUILD/rel/lib/"
+
+# M11: a NIF that includes erl_nif.h has to find it on the box, so the ERTS
+# headers the OTP build installed travel with the release.
+mkdir -p "$BUILD/rel/erts-${ERTS_VERSION#erts-}/usr/include"
+cp -a "$OTP_ROOT/usr/include/." "$BUILD/rel/erts-${ERTS_VERSION#erts-}/usr/include/"
+
 rm -rf "$ROOTFS"
 mkdir -p "$ROOTFS/factory" "$ROOTFS/lib"
 
