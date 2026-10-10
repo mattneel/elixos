@@ -1,0 +1,68 @@
+# Erlang/OTP (M16, ADR-041): the version .tool-versions pins, built from the
+# OTP release tarball with the options the old factory used - the difference
+# is that it is built in the architecture's own environment instead of through
+# a hand-rolled musl cross toolchain (that is what supersedes ADR-008).
+#
+# The runtime ERTS the guest boots comes from the *release* the factory
+# package assembles (mix release copies the ERTS into it); this package is
+# what that assembly points at, and the apps/erts install is also what a
+# NIF-building on-box build points its headers at.
+package:
+  name: elixos-otp
+  version: "29.1.1"
+  epoch: 0
+  description: "Erlang/OTP for Elixos: the BEAM the whole OS runs on"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime: []
+
+vars:
+  sha256: 054e0143e39c780e091107fc9b345792a9c1a55f6bac1eca1c1101510fc06bf6
+
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    packages:
+      - build-base
+      - bash
+      - curl
+      - ncurses-dev
+      - openssl-dev
+      - perl
+      - zlib-dev
+
+pipeline:
+  - runs: |
+      version="$(sed -n 's/^erlang //p' /home/build/.tool-versions)"
+      if [ "$version" != "${{package.version}}" ]; then
+        echo "otp: .tool-versions says $version, this package says ${{package.version}}" >&2
+        exit 1
+      fi
+
+      curl -fsSL -o /tmp/otp.tar.gz \
+        "https://github.com/erlang/otp/releases/download/OTP-${version}/otp_src_${version}.tar.gz"
+      echo "${{vars.sha256}}  /tmp/otp.tar.gz" | sha256sum -c -
+
+      mkdir -p /tmp/otp
+      tar -xzf /tmp/otp.tar.gz -C /tmp/otp --strip-components=1
+      cd /tmp/otp
+
+      # Dynamic ssl from the system OpenSSL (the same choice the old factory
+      # made, so the image carries openssl and the ERTS links it), and none of
+      # the applications a cyberdeck has no use for.
+      ./configure --enable-dynamic-ssl-lib --with-ssl \
+        --without-javac --without-wx --without-odbc --without-observer \
+        --without-debugger --without-et --without-megaco
+      make -j"$(nproc)"
+      make install DESTDIR="${{targets.destdir}}"
+
+      # An escript execs `erl` from beside the emulator, and OTP's `erl` is a
+      # shell script; on this machine erl is erlexec, with no script in the
+      # path (ADR-012's rule, and it still holds for the boot path).
+      for erts in "${{targets.destdir}}"/usr/local/lib/erlang/erts-*; do
+        ln -sfn erlexec "$erts/bin/erl"
+        # ERTS headers for NIF builds, at the path :code.root_dir() reports.
+        cp -a "${{targets.destdir}}/usr/local/lib/erlang/usr/include" "$erts/include"
+      done

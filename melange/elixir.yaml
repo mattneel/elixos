@@ -1,0 +1,46 @@
+# Elixir (M16, ADR-041): the version .tool-versions pins, built from the
+# release tarball against *our* OTP package - not Alpine's erlang/elixir,
+# which are different builds of different versions.
+package:
+  name: elixos-elixir
+  version: "1.20.4"
+  epoch: 0
+  description: "Elixir for Elixos: what the factory release and the prompt run"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - elixos-otp
+
+vars:
+  sha256: 2f87be1702583ecbeee82c0ad4d6353de96463cfa0fa6e7557e05f68d90da869
+
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    packages:
+      - elixos-otp
+      - build-base
+      - bash
+      - curl
+      - make
+
+pipeline:
+  - runs: |
+      version="$(sed -n 's/^elixir \([0-9.]*\).*/\1/p' /home/build/.tool-versions)"
+      if [ "$version" != "${{package.version}}" ]; then
+        echo "elixir: .tool-versions says $version, this package says ${{package.version}}" >&2
+        exit 1
+      fi
+
+      curl -fsSL -o /tmp/elixir.tar.gz \
+        "https://github.com/elixir-lang/elixir/archive/refs/tags/v${version}.tar.gz"
+      echo "${{vars.sha256}}  /tmp/elixir.tar.gz" | sha256sum -c -
+
+      mkdir -p /tmp/elixir
+      tar -xzf /tmp/elixir.tar.gz -C /tmp/elixir --strip-components=1
+      cd /tmp/elixir
+
+      make -j"$(nproc)"
+      make install PREFIX=/usr/local DESTDIR="${{targets.destdir}}"

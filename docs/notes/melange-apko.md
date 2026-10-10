@@ -70,6 +70,20 @@ apko v1.4.10, both by sha256).
   list: ownership, modes and device nodes come from the tar, so nothing in the
   packing path needs root.
 
+## The factory release and OTP
+
+- `mix release` with `include_erts: false` takes the ERTS *and the OTP
+  applications* from the system: the release carries only this project and its
+  Hex dependencies. Elixos installs OTP as its own package (`elixos-otp`) and
+  the release points at it - `/factory/erts` and `/factory/erts-<vsn>` as
+  symlinks to the install, plus a symlink for every app in the OTP install's
+  `lib/` that the release does not carry itself. Without those links the BEAM
+  starts and dies before the prompt (it writes a crash dump under
+  `/priv/crash/`), because the boot script's `$ROOT/lib` is the release's.
+- The same package makes `erl` a symlink to `erlexec` inside the installed
+  ERTS and copies the headers to `erts-<vsn>/include`, which is where
+  `:code.root_dir()` sends a NIF build.
+
 ## Test hygiene
 
 - A killed QEMU run leaves its `@moduletag :tmp_dir` behind, and each holds a

@@ -1,0 +1,86 @@
+# The Elixos factory (M16, ADR-041): generation 0's release - the ERTS
+# included - which the shim execs, so the guest gets its BEAM the moment PID 1
+# starts it.
+#
+# Built with our own OTP and Elixir packages. ELIXOS_ERTS points `mix release`
+# at the OTP install so the release carries the *target* ERTS - the same dance
+# the hand-rolled factory did, with no cross toolchain under it (ADR-008 is
+# superseded). The pieces the old pipeline added by hand are added here too:
+# no release bin/ scripts (ADR-012), the mix application for on-box builds
+# (M11), the ERTS headers for NIFs, and erl as a symlink to erlexec for
+# escripts.
+package:
+  name: elixos-factory
+  version: "0.1.0"
+  epoch: 0
+  description: "The Elixos factory: the release the shim boots"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - elixos-otp
+      - openssl
+      - ncurses-libs
+      - libstdc++
+      - zlib
+
+vars:
+  # Hex builds the release; pinned so two builds resolve the same deps.
+  hex: "2.5.1"
+
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    packages:
+      - elixos-otp
+      - elixos-elixir
+      - bash
+      - ca-certificates
+      - curl
+      - openssl
+
+pipeline:
+  - runs: |
+      version="$(sed -n 's/^  @version "\(.*\)"$/\1/p' /home/build/os/mix.exs)"
+      if [ "$version" != "${{package.version}}" ]; then
+        echo "factory: os/mix.exs says $version, this package says ${{package.version}}" >&2
+        exit 1
+      fi
+
+      export MIX_ENV=prod HEX_HOME=/tmp/hex MIX_HOME=/tmp/mix
+      mix local.hex "${{vars.hex}}" --force >/dev/null
+
+      cd /home/build/os
+      mix deps.get
+
+      lib=/usr/local/lib/erlang
+      erts="$(ls -d "$lib"/erts-* | head -n1)"
+      # OTP is the image's own package (elixos-otp): the release points at that
+      # install instead of carrying a second copy of the same ERTS.
+      ELIXOS_ERTS="$erts" ELIXOS_INCLUDE_ERTS=0 mix release --overwrite --path /tmp/rel
+
+      # The layout the shim's CLI expects: /factory/erts and erts-<vsn> where
+      # the ERTS itself looks, /factory/lib, /factory/releases/current - and no
+      # bin/ scripts (ADR-012).
+      dest="${{targets.destdir}}/factory"
+      mkdir -p "$dest"
+      cp -a /tmp/rel/. "$dest/"
+      rm -rf "$dest/bin"
+
+      # The release carries this project and its Hex dependencies; the OTP
+      # applications themselves live in the machine's own OTP install
+      # (elixos-otp), so the release points at them - same versions, same
+      # install - instead of copying them.
+      for app in "$lib"/lib/*; do
+        name="$(basename "$app")"
+        [ -e "$dest/lib/$name" ] || ln -sfn "$app" "$dest/lib/$name"
+      done
+
+      ln -sfn "$erts" "$dest/$(basename "$erts")"
+      ln -sfn "$(basename "$erts")" "$dest/erts"
+      ln -sfn "$version" "$dest/releases/current"
+
+      # The box builds Mix projects itself (M11), and `mix release` leaves the
+      # mix application out.
+      cp -a /usr/local/lib/elixir/lib/mix "$dest/lib/"

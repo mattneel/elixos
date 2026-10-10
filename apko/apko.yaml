@@ -15,9 +15,18 @@ contents:
     - alpine-baselayout
     - busybox
     - alpine-release
+    # The machine's CA bundle (:public_key.cacerts_get/0 reads it).
+    - ca-certificates-bundle
     # Our own APKs (melange's output, added as a build repository by
-    # scripts/build-image.sh). elixos-shim installs /init.
+    # scripts/build-image.sh): the shim is /init, the kernel is the file the
+    # firmware loads, OTP and Elixir are the machine's own installations, and
+    # the factory is the release the shim execs - pointing at that OTP rather
+    # than carrying a second ERTS.
     - elixos-shim
+    - elixos-kernel
+    - elixos-otp
+    - elixos-elixir
+    - elixos-factory
 
 # apko runs no install scripts: anything a package's script would have created
 # has to be declared. /priv is the persistent disk's mount point - the shim
