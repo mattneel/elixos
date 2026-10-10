@@ -59,6 +59,10 @@ plus `HOME=/priv/home`, `TERM=linux`, `LANG=C.UTF-8`, and:
 
 - fds 0, 1, 2 are `/dev/console`. The working directory is `/` and stays
   there (ADR-016).
+- The emulator is launched with `+Bc`. The console is a tty that is not the
+  shell's controlling terminal, so without it Ctrl+C does nothing at all and a
+  runaway expression can only be stopped with Ctrl+G then `i`; with `+Bc`,
+  Ctrl+C interrupts the running expression and returns to the prompt.
 - The BEAM must send its first `HB` within `elixos.boot_grace` seconds and then
   at least every `elixos.hb_timeout` seconds; it sends one per second.
 - When the BEAM exits, the shim logs `beam exited status=<n>` or
@@ -118,6 +122,13 @@ BEAM side (`Elixos.Boot.Cmdline`):
 | parameter                  | default | meaning                                   |
 |----------------------------|---------|-------------------------------------------|
 | `elixos.commit_after=<s≥1>`| 30      | healthy seconds before auto-commit        |
+
+Every parameter belongs to exactly one side, and the shim knows both tables
+(ADR-023): it *validates* a BEAM-side parameter's syntax and never applies it,
+while `invalid` counts only keys that neither side defines and values that are
+malformed by the rule of the side that owns them. `elixos.commit_after=2` is
+therefore silent; `elixos.commit_after=abc` and `elixos.nonsense=1` are
+counted and logged.
 
 Test hooks, honored only by shims built with `-Dtest-hooks=true` (QEMU test
 images; never real hardware):

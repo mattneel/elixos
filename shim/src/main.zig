@@ -115,22 +115,8 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
     const policy: recovery.Policy = .{ .max_attempts = settings.max_attempts };
     if (!overrides.safe) overrides.generation = settings.generation;
 
-    if (!overrides.safe and overrides.generation == null and
-        state.attempts >= policy.max_attempts and state.current != state.last_good)
-    {
-        log("fallback to last_good={d} after {d} attempts of generation={d}", .{
-            state.last_good,
-            state.attempts,
-            state.current,
-        });
-    }
-
     const plan = recovery.planLaunch(state, policy, overrides);
-    log("plan generation={d} mode={t} attempt={d}", .{
-        plan.launch.generation,
-        plan.launch.mode,
-        plan.next_state.attempts,
-    });
+    logPlan(state, plan, policy, overrides);
     // Persisted before the launch, so a crash, a hang or a power cut mid-boot
     // still counts. Only a plan that changes the state is written at all: the
     // safe and generation overrides, and an exhausted rescue, leave the file
@@ -250,6 +236,10 @@ fn execErts(plan: recovery.Plan, ctl_fd: linux.fd_t) noreturn {
         "-boot_var", "RELEASE_LIB", lib_path,
         "-config",   sys_config_path,
         "-mode",     "embedded",
+        // The console is a tty that is not the shell's controlling terminal,
+        // so without +Bc Ctrl+C does nothing at all and a runaway expression
+        // can only be stopped with Ctrl+G then `i` (PROTOCOL.md §3).
+        "+Bc",
         // No shell at boot: the login REPL asks user_drv for one when the
         // application is up (ADR-012), so the prompt never races the boot.
         "-noshell",
@@ -269,6 +259,11 @@ fn execErts(plan: recovery.Plan, ctl_fd: linux.fd_t) noreturn {
         zeroed(&control, "ELIXOS_CTL_FD={d}", .{ctl_fd}),
         null,
     };
+
+    // PID 1 blocks the signals it handles through the signalfd, and fork
+    // keeps that mask: ERTS would inherit SIGTERM/SIGINT/SIGPWR blocked and
+    // never see a shutdown request. The child gets a clean mask.
+    unblockSignals();
 
     log("launching generation={d} mode={t}", .{ plan.launch.generation, plan.launch.mode });
     _ = linux.execve(erlexec_path, @ptrCast(&argv), @ptrCast(&envp));
@@ -292,9 +287,10 @@ fn zeroed(buffer: []u8, comptime fmt: []const u8, args: anytype) [*:0]const u8 {
 /// loop cannot spin the machine, short enough that a restart feels immediate.
 const relaunch_backoff_ms = 1_000;
 
-/// rt_sigprocmask's SIG_BLOCK. The kernel ABI fixes these values: SIG_BLOCK 0,
-/// SIG_UNBLOCK 1, SIG_SETMASK 2 (x86_64 only, ADR-014).
+/// rt_sigprocmask's SIG_BLOCK and SIG_SETMASK. The kernel ABI fixes these
+/// values: SIG_BLOCK 0, SIG_UNBLOCK 1, SIG_SETMASK 2 (x86_64 only, ADR-014).
 const sig_block: u32 = 0;
+const sig_setmask: u32 = 2;
 
 /// One supervision session: the BEAM we launched, the control channel to it,
 /// and the decisions that follow from its exit (ARCHITECTURE.md §3.3).
@@ -326,10 +322,14 @@ const Session = struct {
     /// heartbeat deadline with the boot grace (PROTOCOL.md §2 and §3).
     fn spawn(self: *Session, plan: recovery.Plan) void {
         var pipe_fds: [2]linux.fd_t = undefined;
-        if (linux.errno(linux.pipe2(&pipe_fds, .{})) != .SUCCESS) {
+        if (linux.errno(linux.pipe2(&pipe_fds, .{ .NONBLOCK = true })) != .SUCCESS) {
             log("cannot create the control pipe, powering off", .{});
             shutdown(.poweroff);
         }
+        // epoll readiness can be stale by the time PID 1 reads: the read end
+        // must return EAGAIN rather than suspend the loop. The BEAM's write
+        // end stays a normal blocking one.
+        _ = linux.fcntl(pipe_fds[1], linux.F.SETFL, 0);
         // The BEAM keeps the write end across exec; the read end must not
         // survive it, or EOF would never arrive when the BEAM exits.
         _ = linux.fcntl(pipe_fds[0], linux.F.SETFD, linux.FD_CLOEXEC);
@@ -353,21 +353,22 @@ const Session = struct {
         armTimer(self.timerfd, self.settings.boot_grace_s);
     }
 
-    /// The control pipe has data, or its write end closed.
-    fn readControl(self: *Session) void {
+    /// One read of the control pipe: applies what it can, reports whether
+    /// anything was read, and closes the channel on EOF or a hard error.
+    fn readControl(self: *Session) bool {
         const space = self.buffer.len - self.pending;
         const rc = linux.read(self.ctl_fd, self.buffer[self.pending..].ptr, space);
         const err = linux.errno(rc);
         if (err != .SUCCESS) {
-            if (err == .INTR or err == .AGAIN) return;
+            if (err == .INTR or err == .AGAIN) return false;
             self.forgetControl();
-            return;
+            return false;
         }
         if (rc == 0) {
             // EOF: every write end is closed. The BEAM may still be alive for
             // a moment (a requested shutdown); its exit decides what follows.
             self.forgetControl();
-            return;
+            return false;
         }
 
         self.pending += rc;
@@ -396,6 +397,15 @@ const Session = struct {
             self.pending = 0;
             self.discarding = true;
         }
+
+        return true;
+    }
+
+    /// Reads until the pipe is empty: messages already written are still the
+    /// BEAM's word, and a COMMIT, NEXT or POWEROFF must not be lost to an
+    /// exit that arrived in the same epoll batch.
+    fn drainControl(self: *Session) void {
+        while (self.ctl_fd >= 0 and self.readControl()) {}
     }
 
     fn forgetControl(self: *Session) void {
@@ -472,23 +482,24 @@ const Session = struct {
 
     fn beamExited(self: *Session, status: u32) void {
         logBeamExit(status);
+        // Anything the BEAM wrote before exiting still counts: shutdown
+        // requests are remembered, and COMMIT/NEXT change the state.
+        self.drainControl();
         self.forgetControl();
         self.beam = 0;
 
-        switch (recovery.onBeamExit(self.state, self.policy, self.overrides, self.requested)) {
+        // A generation override does not survive a crash: onBeamExit drops it
+        // and keeps a safe override (ARCHITECTURE.md §3.3).
+        const overrides: recovery.Overrides = .{ .safe = self.overrides.safe };
+
+        switch (recovery.onBeamExit(self.state, self.policy, overrides, self.requested)) {
             .shutdown => |kind| shutdown(kind),
             .relaunch => |next| {
-                // Persist before launching, so this attempt counts too. A
-                // generation override does not survive a crash: onBeamExit
-                // drops it and keeps a safe override (ARCHITECTURE.md §3.3).
+                logPlan(self.state, next, self.policy, overrides);
+                // Persist before launching, so this attempt counts too.
                 if (self.disk_mounted and !std.meta.eql(next.next_state, self.state)) {
                     writeState(next.next_state);
                 }
-                log("plan generation={d} mode={t} attempt={d}", .{
-                    next.launch.generation,
-                    next.launch.mode,
-                    next.next_state.attempts,
-                });
                 sleepMs(relaunch_backoff_ms);
                 self.spawn(next);
             },
@@ -499,7 +510,11 @@ const Session = struct {
     /// same event, so the BEAM is killed and its exit decides what follows.
     fn handleTimer(self: *Session) void {
         var expirations: u64 = undefined;
-        _ = linux.read(self.timerfd, @ptrCast(&expirations), @sizeOf(u64));
+        const rc = linux.read(self.timerfd, @ptrCast(&expirations), @sizeOf(u64));
+        // A cached event may outlive the deadline it was queued for (a
+        // relaunch re-arms the timer): only a read that returned the count
+        // means this deadline has passed.
+        if (linux.errno(rc) != .SUCCESS or rc != @sizeOf(u64)) return;
         if (self.beam == 0) return;
 
         const seconds = if (self.first_heartbeat_pending)
@@ -560,10 +575,41 @@ fn supervise(
             } else if (fd == timerfd) {
                 session.handleTimer();
             } else if (fd == session.ctl_fd) {
-                session.readControl();
+                _ = session.readControl();
             }
         }
     }
+}
+
+/// The lines every plan owes (PROTOCOL.md §6): the fallback first, then the
+/// plan itself, both before the state is persisted.
+fn logPlan(
+    previous: recovery.BootState,
+    plan: recovery.Plan,
+    policy: recovery.Policy,
+    overrides: recovery.Overrides,
+) void {
+    if (!overrides.safe and overrides.generation == null and
+        previous.attempts >= policy.max_attempts and previous.current != previous.last_good)
+    {
+        log("fallback to last_good={d} after {d} attempts of generation={d}", .{
+            previous.last_good,
+            previous.attempts,
+            previous.current,
+        });
+    }
+
+    log("plan generation={d} mode={t} attempt={d}", .{
+        plan.launch.generation,
+        plan.launch.mode,
+        plan.next_state.attempts,
+    });
+}
+
+/// A child of PID 1 starts with a clean signal mask (see execErts).
+fn unblockSignals() void {
+    const empty = linux.sigemptyset();
+    _ = linux.sigprocmask(sig_setmask, &empty, null);
 }
 
 /// A syscall that creates something PID 1 cannot run without. Failing it is

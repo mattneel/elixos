@@ -139,7 +139,7 @@ persist, log, and a clean power off, all without ERTS yet.
 in a loop; relaunch with a short backoff. `Elixos.Boot.AutoCommit` runs only in
 normal mode and commits once.
 
-- [ ] Demo recorded: `demos/m05-beam-supervision.mp4` (`make demo M=5`).
+- [x] Demo recorded: `demos/m05-beam-supervision.mp4` (`make demo M=5`).
 
 ---
 

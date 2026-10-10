@@ -14,9 +14,11 @@ defmodule Elixos.Boot.Login do
   use GenServer
 
   @doc "Supervisor child: starts the login REPL once the tree is up."
-  def start_link(env) do
-    GenServer.start_link(__MODULE__, env, name: __MODULE__)
+  def start_link({env, image}) do
+    GenServer.start_link(__MODULE__, {env, image}, name: __MODULE__)
   end
+
+  def start_link(env), do: start_link({env, nil})
 
   @impl true
   def init(env) do
@@ -48,10 +50,18 @@ defmodule Elixos.Boot.Login do
   whole session, so it runs in a process of its own.
   """
   @spec start_iex(Elixos.Boot.Env.t() | :host) :: pid()
-  def start_iex(env) do
-    spawn_link(fn -> IEx.Server.run(iex_options(env)) end)
+  def start_iex({_env, image} = boot) do
+    # The console's shell, and the pid a break lands on: `+Bc` (PROTOCOL.md §3)
+    # makes user_drv exit the group with `interrupt`, and the group forwards it
+    # to this pid as an exit signal. IEx.Server handles exactly that itself —
+    # `** (EXIT) interrupted`, the evaluator killed, a fresh prompt, the same
+    # input path — so the console spawns the session and stays out of it.
+    spawn_link(fn -> IEx.Server.run(iex_options(boot, image)) end)
   end
 
-  # M6 adds the capture tracer to :env; until then there is nothing to carry.
-  defp iex_options(_env), do: []
+  defp iex_options(_boot, image) when is_pid(image) do
+    [env: Elixos.Boot.Recorder.traced_env(file: "iex", line: 1)]
+  end
+
+  defp iex_options(_boot, _no_image), do: []
 end

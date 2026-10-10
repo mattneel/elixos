@@ -70,6 +70,11 @@ pub fn parse(text: []const u8) Settings {
             }
         } else if (std.mem.eql(u8, name, "data_wait")) {
             if (setNumber(&settings.data_wait_s, value, 0) == null) settings.invalid += 1;
+        } else if (std.mem.eql(u8, name, "commit_after")) {
+            // BEAM side (PROTOCOL.md §5, ADR-023): the shim knows the name and
+            // the syntax, checks them, and never applies the value - the BEAM
+            // reads it itself. A good value is not an invalid parameter.
+            if (!validNumber(value, 1)) settings.invalid += 1;
         } else if (std.mem.eql(u8, name, "test.stop_before_launch")) {
             if (setFlag(&settings.test_stop_before_launch, value) == null) settings.invalid += 1;
         } else if (std.mem.eql(u8, name, "test.shim_panic_after")) {
@@ -79,6 +84,12 @@ pub fn parse(text: []const u8) Settings {
         }
     }
     return settings;
+}
+
+/// A BEAM-side parameter (ADR-023): checked here, applied by Elixos.Boot.Cmdline.
+fn validNumber(value: ?[]const u8, min: u32) bool {
+    const parsed = decimal.parseU32(value orelse return false) orelse return false;
+    return parsed >= min;
 }
 
 /// `elixos.flag`, `=1` or `=0`; null for anything else. Returns true when set.
@@ -151,6 +162,25 @@ test "cmdline: malformed or unknown elixos.* tokens are counted, never applied" 
     var expected: Settings = .{};
     expected.invalid = 9;
     try testing.expectEqualDeep(expected, s);
+}
+
+test "cmdline: a BEAM-side parameter is validated but never counted" {
+    try milestone.require(5);
+
+    // `elixos.commit_after` belongs to the BEAM (PROTOCOL.md §5, ADR-023): the
+    // shim checks its syntax and never applies it, and a good value is not an
+    // "invalid elixos.* parameter".
+    const good = parse("console=ttyS0 quiet elixos.commit_after=2 elixos.data=/dev/vda");
+    try testing.expectEqual(@as(u32, 0), good.invalid);
+
+    // A malformed value is still the shim's business to report.
+    try testing.expectEqual(@as(u32, 1), parse("elixos.commit_after=abc").invalid);
+    try testing.expectEqual(@as(u32, 1), parse("elixos.commit_after=0").invalid);
+    try testing.expectEqual(@as(u32, 1), parse("elixos.commit_after=07").invalid);
+    try testing.expectEqual(@as(u32, 1), parse("elixos.commit_after").invalid);
+
+    // And a key neither side defines stays a typo.
+    try testing.expectEqual(@as(u32, 1), parse("elixos.commit_after_x=2").invalid);
 }
 
 test "cmdline: tolerates repeated spaces and the trailing newline" {

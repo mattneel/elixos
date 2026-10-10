@@ -73,7 +73,15 @@ defmodule Elixos.Test.QEMU do
   defp boot_args(opts) do
     case Keyword.get(opts, :uefi) do
       nil ->
-        append = Enum.join(["console=ttyS0", "panic=-1" | Keyword.get(opts, :append, [])], " ")
+        # `quiet`: the kernel log is noise on a console whose lines the tests
+        # match byte for byte (docs/PROTOCOL.md §6), and on a serial port
+        # printk can interleave with them. Emergencies ("reboot: Power down")
+        # still print, which is what the tests that check them need.
+        append =
+          Enum.join(
+            ["console=ttyS0", "panic=-1", "quiet" | Keyword.get(opts, :append, [])],
+            " "
+          )
 
         [
           "-kernel",

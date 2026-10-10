@@ -42,18 +42,24 @@ import json, re, sys
 
 CSI = re.compile("\x1b\\[[0-?]*[ -/]*[@-~]")
 CHARSET = re.compile("\x1b[()][A-Za-z0-9]")
+ESC = re.compile("\x1b[^\x1b]")
 
 with open(sys.argv[1]) as cast, open(sys.argv[2], "w") as out:
     json.loads(cast.readline())  # the header
+    raw = []
     for line in cast:
         if not line.strip():
             continue
         event = json.loads(line)
         if event[1] != "o":
             continue
-        text = CSI.sub("", event[2])
-        text = CHARSET.sub("", text)
-        out.write(text.replace("\r", ""))
+        raw.append(event[2])
+
+    # Sequence on the *joined* text: an escape can be split across events.
+    text = CSI.sub("", "".join(raw))
+    text = CHARSET.sub("", text)
+    text = ESC.sub("", text)
+    out.write(text.replace("\r", ""))
 PY
 
 rm -f "$SCREEN"
@@ -61,19 +67,49 @@ rm -f "$SCREEN"
 
 problems=0
 # Every expected line, in order: a demo that shows them out of order does not
-# show the same story.
-position=0
-while IFS= read -r pattern; do
-  [ -n "$pattern" ] || continue
-  case "$pattern" in \#*) continue ;; esac
-  found="$(tail -n "+$((position + 1))" "$TEXT" | grep -n -m1 -F -- "$pattern" | cut -d: -f1 || true)"
-  if [ -z "$found" ]; then
-    echo "check: $NAME: missing (or out of order): $pattern" >&2
-    problems=$((problems + 1))
-  else
-    position=$((position + found))
-  fi
-done < "$DEMO.keys"
+# show the same story. A key matches either on the line where the previous key
+# ended (a prompt and the command typed at it share a line) or at the start of
+# a later line — never in the middle of one, so a result key cannot be
+# satisfied by a prompt that happens to contain it.
+misses="$(python3 - "$TEXT" "$DEMO.keys" <<'PY'
+import sys
+
+text = open(sys.argv[1]).read()
+cursor = 0
+misses = 0
+
+for raw in open(sys.argv[2]):
+    pattern = raw.rstrip("\n")
+    if not pattern or pattern.startswith("#"):
+        continue
+
+    line_end = text.find("\n", cursor)
+    if line_end < 0:
+        line_end = len(text)
+
+    found = text.find(pattern, cursor, line_end)
+    if found < 0:
+        found = -1
+        at = text.find(pattern, cursor)
+        while at >= 0:
+            if at == 0 or text[at - 1] == "\n":
+                found = at
+                break
+            at = text.find(pattern, at + 1)
+
+    if found < 0:
+        print(pattern, file=sys.stderr)
+        misses += 1
+    else:
+        cursor = found + len(pattern)
+
+print(misses)
+PY
+)"
+if [ "${misses:-1}" != 0 ]; then
+  echo "check: $NAME: ${misses} key(s) missing or out of order (above)" >&2
+  problems=$((problems + misses))
+fi
 
 if ! grep -q "elixos-shim: shutdown poweroff" "$TEXT"; then
   echo "check: $NAME: the recording does not end on 'elixos-shim: shutdown poweroff'" >&2

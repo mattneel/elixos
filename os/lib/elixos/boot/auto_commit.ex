@@ -21,7 +21,10 @@ defmodule Elixos.Boot.AutoCommit do
     * normal mode checks `healthy?` every `after_ms`; the first time it is true
       it calls `commit` exactly once and the process exits `:normal`
   """
-  use GenServer
+  # :transient, because this child is done when it commits: a :permanent
+  # restart would commit again and again, and at a short commit_after the
+  # restarts would exceed the supervisor's limit and take the tree down.
+  use GenServer, restart: :transient
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts)

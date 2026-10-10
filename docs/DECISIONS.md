@@ -479,6 +479,16 @@ itself (`{:EXIT, _, :interrupt}`), exactly as the reference does.
 
 Decide these with the human. Until then, follow the proposed default.
 
+- **Q10: The capture tracer across an IEx evaluator restart.** A console
+  interrupt makes `IEx.Server` replace its evaluator with `rerun(state, [], ...)`,
+  which keeps only `:dot_iex` in `evaluator_options` and rebuilds the
+  environment from `opts[:env]`, so the traced env of `Elixos.Boot.Recorder`
+  is lost and modules defined after an interrupt are not journaled (evidence in
+  that module's moduledoc). Proposed default: accept and document it, and fix
+  it in the pinned Elixir when we next touch it (one line in
+  `lib/iex/lib/iex/server.ex`: take `[:dot_iex, :env]`), rather than wrapping
+  or patching IEx at runtime.
+
 - **Q1: Package versions.** One version per package system-wide (proposed,
   ADR-015), or something cleverer, such as per-app module renaming?
 - **Q2: Process state.** Rebuild from supervisors and `/priv` at boot
