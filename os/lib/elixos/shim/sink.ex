@@ -22,11 +22,19 @@ defmodule Elixos.Shim.Sink.Fd do
 
   @impl true
   def open(fd) when is_integer(fd) and fd >= 0 do
-    Elixos.NotImplemented.raise!(4, "Elixos.Shim.Sink.Fd.open/1")
+    # Reopening /proc/self/fd/<n> for writing gives us the pipe's write end:
+    # the shim's fd was inherited, so there is no path to it otherwise.
+    File.open("/proc/self/fd/#{fd}", [:write, :raw, :binary])
   end
 
   @impl true
-  def write(_state, _data) do
-    Elixos.NotImplemented.raise!(4, "Elixos.Shim.Sink.Fd.write/2")
+  def write(device, data) do
+    IO.binwrite(device, data)
+  rescue
+    # A control pipe whose reader is gone (EPIPE) must be reported, not crash
+    # the control server: Elixos.Shim.Control keeps running and tells callers.
+    error -> {:error, error}
+  catch
+    :exit, reason -> {:error, reason}
   end
 end

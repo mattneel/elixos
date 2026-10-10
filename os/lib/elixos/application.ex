@@ -18,9 +18,28 @@ defmodule Elixos.Application do
 
   @impl true
   def start(_type, _args) do
-    # TODO(M4): when Elixos.Boot.Env.current() returns {:ok, %Elixos.Boot.Env{}},
-    # start the children listed in the moduledoc.
-    children = []
-    Supervisor.start_link(children, strategy: :one_for_one, name: Elixos.Supervisor)
+    case Elixos.Boot.Env.current() do
+      # On the dev host (unit tests) there is no shim and nothing to start.
+      {:ok, :host} ->
+        Supervisor.start_link([], strategy: :one_for_one, name: Elixos.Supervisor)
+
+      {:ok, env} ->
+        children = [
+          # The control channel first: heartbeats start before anything can
+          # hang, and the shim's boot grace is running until the first one.
+          {Elixos.Shim.Control,
+           sink: {Elixos.Shim.Sink.Fd, env.ctl_fd},
+           heartbeat_ms: Application.get_env(:elixos, :heartbeat_ms, 1_000)},
+          {Elixos.Boot.Login, env}
+        ]
+
+        Supervisor.start_link(children, strategy: :one_for_one, name: Elixos.Supervisor)
+
+      {:error, {kind, name}} ->
+        # A partial launch contract means the boot is broken: returning an
+        # error makes the VM exit non-zero, so the shim counts the attempt and
+        # falls back (ADR-007, PROTOCOL.md §3). Never swallow it.
+        {:error, {:launch_contract, kind, name}}
+    end
   end
 end

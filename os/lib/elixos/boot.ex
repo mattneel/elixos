@@ -15,5 +15,27 @@ defmodule Elixos.Boot do
           attempt: non_neg_integer() | nil,
           version: String.t()
         }
-  def info, do: Elixos.NotImplemented.raise!(4, "Elixos.Boot.info/0")
+  def info do
+    case Elixos.Boot.Env.current() do
+      {:ok, :host} ->
+        %{generation: nil, mode: :host, attempt: nil, version: version()}
+
+      {:ok, env} ->
+        %{generation: env.generation, mode: env.mode, attempt: env.attempt, version: version()}
+
+      {:error, {kind, name}} ->
+        # The shim sets all four variables or none (PROTOCOL.md §3); a partial
+        # contract means the boot is broken, so say so loudly.
+        raise "broken launch contract: #{kind} #{name} (PROTOCOL.md §3)"
+    end
+  end
+
+  @doc "The version of the running OS, the :elixos application's."
+  @spec version() :: String.t()
+  def version do
+    case Application.spec(:elixos, :vsn) do
+      nil -> "unknown"
+      vsn -> to_string(vsn)
+    end
+  end
 end

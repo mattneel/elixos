@@ -14,16 +14,26 @@ defmodule Elixos do
   """
 
   @doc "Boot facts: generation, mode (:normal | :rescue), attempt, OS version. (M4)"
-  def info, do: Elixos.NotImplemented.raise!(4, "Elixos.info/0")
+  def info, do: Elixos.Boot.info()
 
   @doc "Ask the shim to reboot once the VM has stopped. (M4)"
-  def reboot, do: Elixos.NotImplemented.raise!(4, "Elixos.reboot/0")
+  def reboot, do: request_shutdown(&Elixos.Shim.Control.reboot/0)
 
   @doc "Ask the shim to power off once the VM has stopped. (M4)"
-  def poweroff, do: Elixos.NotImplemented.raise!(4, "Elixos.poweroff/0")
+  def poweroff, do: request_shutdown(&Elixos.Shim.Control.poweroff/0)
 
   @doc "Ask the shim to halt once the VM has stopped. (M4)"
-  def halt, do: Elixos.NotImplemented.raise!(4, "Elixos.halt/0")
+  def halt, do: request_shutdown(&Elixos.Shim.Control.halt/0)
+
+  # The shim remembers the request and carries it out when we are gone
+  # (PROTOCOL.md §2), so the last thing we do is stop the VM. PID 1 is the
+  # only thing that can power the machine off; we just ask.
+  defp request_shutdown(request) do
+    case request.() do
+      :ok -> :init.stop()
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   @doc "Mark the running generation healthy now instead of waiting for auto-commit. (M5)"
   def commit, do: Elixos.NotImplemented.raise!(5, "Elixos.commit/0")
