@@ -26,6 +26,7 @@
 //!
 //! Prefer raw std.os.linux syscalls here. Allocate nothing after startup.
 const std = @import("std");
+const linux = std.os.linux;
 const build_options = @import("build_options");
 
 pub const milestone = @import("milestone.zig");
@@ -50,10 +51,243 @@ pub const test_hooks = build_options.test_hooks;
 // Build its argv/envp at startup (BEAM pid, control fd) so the handler never
 // allocates. execve keeps PID 1, and the BEAM stays our child across it.
 
+/// PID 1's stdio: the kernel hands us /dev/console on fds 0, 1 and 2.
+const console_fd: linux.fd_t = 1;
+
+/// Every console line starts with this (PROTOCOL.md §6).
+const log_prefix = "elixos-shim: ";
+
+/// boot.state and the temp file it is written through (PROTOCOL.md §4).
+const state_path = "/data/boot.state";
+const state_tmp_path = "/data/boot.state.tmp";
+
+/// The factory (generation 0) lives in the initramfs from M4 on.
+const factory_path = "/factory";
+
 pub fn main(init: std.process.Init.Minimal) noreturn {
     _ = init;
-    @panic("TODO(M3): PID 1 duties, see the list at the top of shim/src/main.zig");
+    log("pid 1, version " ++ version, .{});
+
+    var overrides: recovery.Overrides = .{};
+
+    // 1. The filesystems the rest of the boot needs. A missing one is not
+    //    fatal: it only costs us /proc/cmdline or a place to mount /data.
+    if (!mountBase()) overrides.safe = true;
+
+    // 2. Kernel command line (PROTOCOL.md §5).
+    var cmdline_buffer: [4096]u8 = undefined;
+    const text: []const u8 = readFile("/proc/cmdline", &cmdline_buffer) catch "";
+    const settings = cmdline.parse(text);
+    if (settings.invalid > 0) log("ignored {d} invalid elixos.* parameters", .{settings.invalid});
+    if (settings.safe) overrides.safe = true;
+
+    // 3+4. /data and boot.state. `state_writable` is false exactly when the
+    //      plan's next_state must not touch the disk: rescue keeps whatever
+    //      evidence is there (ADR-006).
+    var state: recovery.BootState = .{};
+    var state_writable = false;
+    if (overrides.safe) {
+        // elixos.safe or a failed base mount: state untouched.
+    } else if (mountData(settings.data_device)) {
+        if (readState(&state)) |_| {
+            state_writable = true;
+        } else |err| switch (err) {
+            // No file yet: the defaults mean "boot the factory, count it".
+            error.FileNotFound => state_writable = true,
+            else => {
+                log("state file unreadable ({t}), entering rescue", .{err});
+                overrides.safe = true;
+            },
+        }
+    } else {
+        overrides.safe = true;
+    }
+
+    // 5. Plan, log it, persist it, then carry it out (ARCHITECTURE.md §3.3).
+    const policy: recovery.Policy = .{ .max_attempts = settings.max_attempts };
+    if (!overrides.safe) overrides.generation = settings.generation;
+
+    if (!overrides.safe and overrides.generation == null and
+        state.attempts >= policy.max_attempts and state.current != state.last_good)
+    {
+        log("fallback to last_good={d} after {d} attempts of generation={d}", .{
+            state.last_good,
+            state.attempts,
+            state.current,
+        });
+    }
+
+    const plan = recovery.planLaunch(state, policy, overrides);
+    log("plan generation={d} mode={t} attempt={d}", .{
+        plan.launch.generation,
+        plan.launch.mode,
+        plan.next_state.attempts,
+    });
+    // Persisted before the launch, so a crash, a hang or a power cut mid-boot
+    // still counts. A failed write only risks over-counting attempts: the boot
+    // is not held hostage by the disk.
+    if (state_writable) writeState(plan.next_state);
+
+    // Test hooks are compiled in for QEMU test images only (ADR-018).
+    if (test_hooks and settings.test_stop_before_launch) {
+        log("test hook stop_before_launch", .{});
+        shutdown(.poweroff);
+    }
+
+    launch(plan);
 }
+
+// ---------------------------------------------------------------------------
+// Boot steps
+
+/// /proc, /sys, /dev, /run and /tmp. Returns false if any of them failed.
+fn mountBase() bool {
+    const Mount = struct {
+        target: [*:0]const u8,
+        fstype: [*:0]const u8,
+        data: usize = 0,
+    };
+    const mounts = [_]Mount{
+        .{ .target = "/proc", .fstype = "proc" },
+        .{ .target = "/sys", .fstype = "sysfs" },
+        .{ .target = "/dev", .fstype = "devtmpfs" },
+        .{ .target = "/run", .fstype = "tmpfs", .data = @intFromPtr("mode=0755") },
+        .{ .target = "/tmp", .fstype = "tmpfs", .data = @intFromPtr("mode=1777") },
+    };
+    var ok = true;
+    for (mounts) |m| {
+        const err = linux.errno(linux.mount(m.fstype, m.target, m.fstype, 0, m.data));
+        if (err != .SUCCESS) {
+            // Not fatal in itself: losing /proc only costs us the command line.
+            log("cannot mount {s} ({t}), entering rescue", .{ m.target, err });
+            ok = false;
+        }
+    }
+    return ok;
+}
+
+/// Mounts the data device on /data. Logs and returns false when it fails, so
+/// the boot goes to the factory in rescue mode (PROTOCOL.md §6).
+fn mountData(device: []const u8) bool {
+    var buffer: [512]u8 = undefined;
+    const path = std.mem.printSentinel(&buffer, "{s}", .{device}, 0) catch {
+        log("cannot mount {s} (ENAMETOOLONG), entering rescue", .{device});
+        return false;
+    };
+    const err = linux.errno(linux.mount(path.ptr, "/data", "ext4", 0, 0));
+    if (err == .SUCCESS) return true;
+    log("cannot mount {s} ({t}), entering rescue", .{ device, err });
+    return false;
+}
+
+/// Reads and parses /data/boot.state (PROTOCOL.md §4).
+fn readState(state: *recovery.BootState) StateError!void {
+    var buffer: [128]u8 = undefined;
+    const text = try readFile(state_path, &buffer);
+    state.* = try statefile.parse(text);
+}
+
+/// Write boot.state.tmp, fsync it, rename it over boot.state, fsync /data
+/// (PROTOCOL.md §4). Every failure leaves the old file in place.
+fn writeState(state: recovery.BootState) void {
+    var buffer: [statefile.max_len]u8 = undefined;
+    const text = statefile.encode(state, &buffer) catch return;
+    writeFileAtomic(state_path, state_tmp_path, text);
+}
+
+/// 6. The launch. M4 turns this into fork + exec of ERTS (PROTOCOL.md §3).
+fn launch(plan: recovery.Plan) noreturn {
+    if (!pathExists(factory_path)) {
+        // Until M4 the factory image does not exist: there is nothing to run.
+        log("factory missing, powering off", .{});
+        shutdown(.poweroff);
+    }
+    log("launching generation={d} mode={t}", .{ plan.launch.generation, plan.launch.mode });
+    @panic("TODO(M4): fork + exec erlexec for the plan");
+}
+
+/// 9. Shutdown. PID 1 does not exit (ADR-002); the kernel powers the machine
+/// off, reboots or halts, and if it refuses we idle forever.
+fn shutdown(kind: recovery.Shutdown) noreturn {
+    linux.sync();
+    _ = linux.umount2("/data", 0);
+    log("shutdown {t}", .{kind});
+    const cmd: linux.LINUX_REBOOT.CMD = switch (kind) {
+        .reboot => .RESTART,
+        .poweroff => .POWER_OFF,
+        .halt => .HALT,
+    };
+    _ = linux.reboot(.MAGIC1, .MAGIC2, cmd, null);
+    while (true) _ = linux.pause();
+}
+
+// ---------------------------------------------------------------------------
+// Syscall helpers. Raw std.os.linux, no allocation.
+
+/// One console line: `elixos-shim: <text>\n` (PROTOCOL.md §6).
+fn log(comptime fmt: []const u8, args: anytype) void {
+    var buffer: [512]u8 = undefined;
+    const line = std.fmt.bufPrint(&buffer, log_prefix ++ fmt ++ "\n", args) catch return;
+    writeAll(console_fd, line);
+}
+
+fn writeAll(fd: linux.fd_t, bytes: []const u8) void {
+    var written: usize = 0;
+    while (written < bytes.len) {
+        const rc = linux.write(fd, bytes.ptr + written, bytes.len - written);
+        if (linux.errno(rc) != .SUCCESS or rc == 0) return;
+        written += rc;
+    }
+}
+
+fn readFile(path: [*:0]const u8, buffer: []u8) ReadError![]u8 {
+    const raw_fd = linux.open(path, .{ .ACCMODE = .RDONLY }, 0);
+    const open_err = linux.errno(raw_fd);
+    if (open_err != .SUCCESS) {
+        return if (open_err == .NOENT) error.FileNotFound else error.ReadFailed;
+    }
+    const fd: linux.fd_t = @intCast(raw_fd);
+    defer _ = linux.close(fd);
+
+    var length: usize = 0;
+    while (length < buffer.len) {
+        const rc = linux.read(fd, buffer.ptr + length, buffer.len - length);
+        if (linux.errno(rc) != .SUCCESS) return error.ReadFailed;
+        if (rc == 0) return buffer[0..length];
+        length += rc;
+    }
+    // Too long to be the file we expect: never guess at a prefix of it.
+    return error.TooLong;
+}
+
+fn writeFileAtomic(final_path: [*:0]const u8, tmp_path: [*:0]const u8, bytes: []const u8) void {
+    const raw_fd = linux.open(tmp_path, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, 0o644);
+    if (linux.errno(raw_fd) != .SUCCESS) return;
+    const fd: linux.fd_t = @intCast(raw_fd);
+    writeAll(fd, bytes);
+    _ = linux.fsync(fd);
+    _ = linux.close(fd);
+
+    _ = linux.rename(tmp_path, final_path);
+
+    // fsync the directory as well, so the rename itself is durable.
+    const raw_dir = linux.open("/data", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+    if (linux.errno(raw_dir) != .SUCCESS) return;
+    const dir: linux.fd_t = @intCast(raw_dir);
+    _ = linux.fsync(dir);
+    _ = linux.close(dir);
+}
+
+fn pathExists(path: [*:0]const u8) bool {
+    const raw_fd = linux.open(path, .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+    if (linux.errno(raw_fd) != .SUCCESS) return false;
+    _ = linux.close(@intCast(raw_fd));
+    return true;
+}
+
+/// readFile's errors, plus the state file's own parse errors.
+const ReadError = error{ FileNotFound, ReadFailed, TooLong };
+const StateError = ReadError || statefile.ParseError;
 
 test {
     // Zig only analyzes what is referenced, so broken code can compile "clean"
