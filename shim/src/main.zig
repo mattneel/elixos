@@ -81,19 +81,19 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
     if (settings.invalid > 0) log("ignored {d} invalid elixos.* parameters", .{settings.invalid});
     if (settings.safe) overrides.safe = true;
 
-    // 3+4. /data and boot.state. `state_writable` is false exactly when the
-    //      plan's next_state must not touch the disk: rescue keeps whatever
-    //      evidence is there (ADR-006).
+    // 3+4. /data and boot.state. The disk is mounted and read even when the
+    //      safe override is set: rescue is "the factory with /data mounted"
+    //      (ARCHITECTURE.md §4.5), and the plan must be computed from the real
+    //      state. Persisting is a separate decision: only a plan that actually
+    //      changes the state is written, which is what leaves the safe and
+    //      generation overrides, and exhausted-rescue, untouched (ADR-006).
     var state: recovery.BootState = .{};
-    var state_writable = false;
-    if (overrides.safe) {
-        // elixos.safe or a failed base mount: state untouched.
-    } else if (mountData(settings.data_device)) {
-        if (readState(&state)) |_| {
-            state_writable = true;
-        } else |err| switch (err) {
+    var disk_mounted = false;
+    if (mountData(settings.data_device)) {
+        disk_mounted = true;
+        if (readState(&state)) |_| {} else |err| switch (err) {
             // No file yet: the defaults mean "boot the factory, count it".
-            error.FileNotFound => state_writable = true,
+            error.FileNotFound => {},
             else => {
                 log("state file unreadable ({t}), entering rescue", .{err});
                 overrides.safe = true;
@@ -124,9 +124,11 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
         plan.next_state.attempts,
     });
     // Persisted before the launch, so a crash, a hang or a power cut mid-boot
-    // still counts. A failed write only risks over-counting attempts: the boot
-    // is not held hostage by the disk.
-    if (state_writable) writeState(plan.next_state);
+    // still counts. Only a plan that changes the state is written at all: the
+    // safe and generation overrides, and an exhausted rescue, leave the file
+    // exactly as they found it (ARCHITECTURE.md §3.3). A failed write only
+    // risks over-counting attempts; the boot is not held hostage by the disk.
+    if (disk_mounted and !std.meta.eql(plan.next_state, state)) writeState(plan.next_state);
 
     // Test hooks are compiled in for QEMU test images only (ADR-018).
     if (test_hooks and settings.test_stop_before_launch) {
@@ -159,7 +161,8 @@ fn mountBase() bool {
         const err = linux.errno(linux.mount(m.fstype, m.target, m.fstype, 0, m.data));
         if (err != .SUCCESS) {
             // Not fatal in itself: losing /proc only costs us the command line.
-            log("cannot mount {s} ({t}), entering rescue", .{ m.target, err });
+            var name_buffer: [16]u8 = undefined;
+            log("cannot mount {s} ({s}), entering rescue", .{ m.target, errnoName(&name_buffer, err) });
             ok = false;
         }
     }
@@ -176,7 +179,8 @@ fn mountData(device: []const u8) bool {
     };
     const err = linux.errno(linux.mount(path.ptr, "/data", "ext4", 0, 0));
     if (err == .SUCCESS) return true;
-    log("cannot mount {s} ({t}), entering rescue", .{ device, err });
+    var name_buffer: [16]u8 = undefined;
+    log("cannot mount {s} ({s}), entering rescue", .{ device, errnoName(&name_buffer, err) });
     return false;
 }
 
@@ -225,19 +229,30 @@ fn shutdown(kind: recovery.Shutdown) noreturn {
 // Syscall helpers. Raw std.os.linux, no allocation.
 
 /// One console line: `elixos-shim: <text>\n` (PROTOCOL.md §6).
+///
+/// The buffer holds the longest message the shim can produce: the device name
+/// in a mount failure is capped at 512 bytes by mountData, and the prefix, the
+/// errno name and the trailing text fit in the rest.
 fn log(comptime fmt: []const u8, args: anytype) void {
-    var buffer: [512]u8 = undefined;
+    var buffer: [1024]u8 = undefined;
     const line = std.fmt.bufPrint(&buffer, log_prefix ++ fmt ++ "\n", args) catch return;
-    writeAll(console_fd, line);
+    _ = writeAll(console_fd, line);
 }
 
-fn writeAll(fd: linux.fd_t, bytes: []const u8) void {
+fn writeAll(fd: linux.fd_t, bytes: []const u8) bool {
     var written: usize = 0;
     while (written < bytes.len) {
         const rc = linux.write(fd, bytes.ptr + written, bytes.len - written);
-        if (linux.errno(rc) != .SUCCESS or rc == 0) return;
+        if (linux.errno(rc) != .SUCCESS or rc == 0) return false;
         written += rc;
     }
+    return true;
+}
+
+/// The conventional name of a syscall error: `.NOENT` prints as `ENOENT`, the
+/// spelling PROTOCOL.md §6 uses. Parsers report Zig error names unchanged.
+fn errnoName(buffer: []u8, err: linux.E) []const u8 {
+    return std.fmt.bufPrint(buffer, "E{t}", .{err}) catch "EUNKNOWN";
 }
 
 fn readFile(path: [*:0]const u8, buffer: []u8) ReadError![]u8 {
@@ -264,11 +279,13 @@ fn writeFileAtomic(final_path: [*:0]const u8, tmp_path: [*:0]const u8, bytes: []
     const raw_fd = linux.open(tmp_path, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, 0o644);
     if (linux.errno(raw_fd) != .SUCCESS) return;
     const fd: linux.fd_t = @intCast(raw_fd);
-    writeAll(fd, bytes);
-    _ = linux.fsync(fd);
+    const complete = writeAll(fd, bytes) and linux.errno(linux.fsync(fd)) == .SUCCESS;
     _ = linux.close(fd);
 
-    _ = linux.rename(tmp_path, final_path);
+    // Never rename an incomplete or unsynced temporary file over the real one:
+    // the whole point of the temp file is that a failure keeps the old state.
+    if (!complete) return;
+    if (linux.errno(linux.rename(tmp_path, final_path)) != .SUCCESS) return;
 
     // fsync the directory as well, so the rename itself is durable.
     const raw_dir = linux.open("/data", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);

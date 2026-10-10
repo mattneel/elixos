@@ -89,6 +89,8 @@ persist, log, and a clean power off, all without ERTS yet.
   Never return from `main`.
 - Debug interactively with `make qemu` (Ctrl-A X quits).
 
+- [x] Done (2026-10-09): `make ci` green (37/37 Zig, 76 ExUnit, 6/6 QEMU M3 tests). Reviewer subagent found five defects in the first draft — a failed write still renamed over boot.state, states the policy calls "untouched" were persisted, `elixos.safe` skipped mounting/reading `/data`, errno names printed `NOENT` instead of `ENOENT`, and an oversized device name could drop the required mount-failure line — all fixed, with the rescue and safe paths re-verified end to end on real boots.
+
 ---
 
 ## M4: Boot to IEx
