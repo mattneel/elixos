@@ -1,0 +1,45 @@
+#!/usr/bin/expect -f
+# M13: the firmware boots the kernel itself. No -kernel, no -initrd: OVMF
+# runs EFI/BOOT/BOOTX64.EFI from the ESP, which *is* the mainline kernel with
+# its initramfs and command line built in by configuration (ADR-001, ADR-014),
+# and the serial console lands at a prompt. The disk is the persistent one.
+
+set timeout 300
+set send_human {.1 .3 10 .05 2}
+
+# The ESP and the firmware, next to the kernel the other demos boot.
+set esp "[file dirname $env(ELIXOS_DEMO_KERNEL)]/esp.img"
+set ovmf "/usr/share/OVMF"
+if { ![file exists "$ovmf/OVMF_CODE_4M.fd"] } { set ovmf "/usr/share/ovmf" }
+if { ![file exists "$ovmf/OVMF_CODE_4M.fd"] } { set ovmf "/usr/share/edk2/x64" }
+set vars /tmp/elixos-m13-vars.fd
+file copy -force "$ovmf/OVMF_VARS_4M.fd" $vars
+
+spawn -noecho qemu-system-x86_64 \
+    -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -drive if=pflash,format=raw,readonly=on,file=$ovmf/OVMF_CODE_4M.fd \
+    -drive if=pflash,format=raw,file=$vars \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -drive "file=$esp,format=raw,if=virtio" \
+    -device virtio-rng-pci -nic none
+set qemu $spawn_id
+
+expect "iex(1)> "
+sleep 1
+
+# Booted by firmware, not by -kernel: the EFI runtime is there.
+send -h "File.dir?(\"/sys/firmware/efi\")\r"
+expect "iex(2)> "
+sleep 1
+
+# And the command line is the one built into this kernel, not an -append.
+send -h "String.trim(File.read!(\"/proc/cmdline\"))\r"
+expect "iex(3)> "
+sleep 2
+
+send "Elixos.poweroff()\r"
+expect "elixos-shim: shutdown poweroff"
+expect "reboot: Power down"
+expect eof
+sleep 1

@@ -1,0 +1,9 @@
+# What the M13 demo must show, in order: firmware boots the EFI-stub kernel
+# from the ESP, IEx comes up on the serial console, and the machine really is
+# running under EFI with the built-in command line.
+elixos-shim: pid 1, version
+iex(1)> File.dir?("/sys/firmware/efi")
+true
+iex(2)> String.trim(File.read!("/proc/cmdline"))
+"console=ttyS0 panic=-1 quiet"
+elixos-shim: shutdown poweroff
