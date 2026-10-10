@@ -188,8 +188,38 @@ defmodule Elixos.Agents.LLM do
     with :ok <- supported_scheme(uri),
          {:ok, socket, transport} <- connect(uri),
          :ok <- send_request(socket, transport, uri, headers, body),
-         {:ok, response} <- read_response(socket, transport, "") do
-      response
+         {:ok, status, response_headers, body} <- read_response(socket, transport, "") do
+      {:ok, status, dechunk(response_headers, body)}
+    end
+  end
+
+  # A hosted provider answers chunked as often as not: the frames are
+  # hex-length lines and the body is their concatenation.
+  defp dechunk(headers, body) do
+    if Map.get(headers, "transfer-encoding", "") =~ "chunked", do: unchunk(body, []), else: body
+  end
+
+  defp unchunk(<<>>, acc), do: IO.iodata_to_binary(Enum.reverse(acc))
+
+  defp unchunk(binary, acc) do
+    case :binary.split(binary, "\r\n") do
+      [size_line, rest] ->
+        case Integer.parse(String.trim(size_line), 16) do
+          {0, _} ->
+            IO.iodata_to_binary(Enum.reverse(acc))
+
+          {size, _} ->
+            case rest do
+              <<chunk::binary-size(^size), "\r\n", tail::binary>> -> unchunk(tail, [chunk | acc])
+              _other -> IO.iodata_to_binary(Enum.reverse([binary | acc]))
+            end
+
+          :error ->
+            IO.iodata_to_binary(Enum.reverse([binary | acc]))
+        end
+
+      [_single] ->
+        IO.iodata_to_binary(Enum.reverse(acc))
     end
   end
 
@@ -275,15 +305,24 @@ defmodule Elixos.Agents.LLM do
   defp split_response(response) do
     case String.split(response, "\r\n\r\n", parts: 2) do
       [head, body] ->
-        with [status_line | _] <- String.split(head, "\r\n"),
-             [_, code | _] <- String.split(status_line, " ") do
-          {:ok, String.to_integer(code), body}
+        [status_line | header_lines] = String.split(head, "\r\n")
+
+        with [_, code | _] <- String.split(status_line, " "),
+             headers = Map.new(header_lines, &parse_header/1) do
+          {:ok, String.to_integer(code), headers, body}
         else
           _other -> {:error, {:bad_response, head}}
         end
 
       _other ->
         {:error, {:bad_response, response}}
+    end
+  end
+
+  defp parse_header(line) do
+    case String.split(line, ":", parts: 2) do
+      [name, value] -> {String.downcase(String.trim(name)), String.trim(value)}
+      [_single] -> {"", ""}
     end
   end
 

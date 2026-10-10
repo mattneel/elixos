@@ -119,6 +119,41 @@ defmodule Elixos.AgentsTest do
     assert Agents.list() == %{}
   end
 
+  test "a rescue boot does not start agents", %{image: image} do
+    # A rescue boot is the minimum to fix a machine: user agents are not part
+    # of it (ADR-032), however loudly the record asks for them.
+    assert {:ok, %{}, {:continue, :nothing}} = Elixos.Agents.init({image, :rescue})
+
+    # A normal boot hands off to restore, which starts them.
+    assert {:ok, %{}, {:continue, {:restore, image}}} = Elixos.Agents.init({image, :normal})
+  end
+
+  test "a restarted agent is found again", %{image: image} do
+    assert {:ok, pid} = Agents.start(Counter)
+    assert Counter.bump(pid) == 1
+
+    # A crash: the supervisor restarts the child under a new pid, and the
+    # lookup follows the supervisor rather than remembering the dead one.
+    Process.exit(pid, :kill)
+
+    assert eventually(fn ->
+             case Agents.whereis("counter") do
+               new_pid when is_pid(new_pid) and new_pid != pid -> Process.alive?(new_pid)
+               _other -> false
+             end
+           end)
+
+    assert Agents.list()["counter"] == Agents.whereis("counter")
+  end
+
+  defp eventually(fun, tries \\ 50) do
+    cond do
+      fun.() -> true
+      tries == 0 -> false
+      true -> Process.sleep(10) && eventually(fun, tries - 1)
+    end
+  end
+
   test "an agent that is not recorded cannot be stopped" do
     assert Agents.stop("nothing") == {:error, :unknown_agent}
     assert Agents.snapshot("nothing") == {:error, :unknown_agent}

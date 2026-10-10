@@ -56,9 +56,13 @@ defmodule Elixos.Agents do
     :ok
   end
 
-  @doc "Supervisor child: starts every recorded agent."
-  def start_link(image \\ nil) do
-    GenServer.start_link(__MODULE__, image, name: __MODULE__)
+  @doc "Supervisor child: starts every recorded agent (normal boots only)."
+  def start_link(arg \\ nil)
+
+  def start_link(image) when is_pid(image) or is_nil(image), do: start_link({image, :normal})
+
+  def start_link({image, mode}) do
+    GenServer.start_link(__MODULE__, {image, mode}, name: __MODULE__)
   end
 
   @doc "Starts every recorded agent that is not running (boot, or after a crash)."
@@ -66,10 +70,18 @@ defmodule Elixos.Agents do
   def restore, do: GenServer.call(__MODULE__, :restore, :infinity)
 
   @impl true
-  def init(_image), do: {:ok, %{}, {:continue, :restore}}
+  def init({_image, :rescue}) do
+    # A rescue boot is the factory with /priv mounted: the minimum to get a
+    # prompt and fix the machine. User agents are not part of the minimum.
+    Logger.info("agents: rescue boot, not starting agents")
+    {:ok, %{}, {:continue, :nothing}}
+  end
+
+  def init({image, _mode}), do: {:ok, %{}, {:continue, {:restore, image}}}
 
   @impl true
-  def handle_continue(:restore, agents), do: {:noreply, restore_into(agents)}
+  def handle_continue(:nothing, agents), do: {:noreply, agents}
+  def handle_continue({:restore, _image}, agents), do: {:noreply, restore_into(agents)}
 
   # Every agent the journal knows and is not up, with what it remembered. A
   # failure is logged and the rest still start - an agent is not the system.
@@ -123,20 +135,29 @@ defmodule Elixos.Agents do
       :error ->
         {:reply, {:error, :unknown_agent}, agents}
 
-      {:ok, %{module: module, pid: pid}} ->
-        _ = write_snapshot(id, snapshot_of(module, pid))
-        if pid, do: DynamicSupervisor.terminate_child(Elixos.Agents.Supervisor, pid)
-        forget(id)
-        {:reply, :ok, Map.delete(agents, id)}
+      {:ok, %{module: module} = record} ->
+        # A snapshot that cannot be written stops the stop: nothing is lost
+        # silently, and the record stays so the next boot still starts it.
+        case write_snapshot(id, snapshot_of(module, live_pid(id, record))) do
+          :ok ->
+            if pid = live_pid(id, record),
+              do: DynamicSupervisor.terminate_child(Elixos.Agents.Supervisor, pid)
+
+            forget(id)
+            {:reply, :ok, Map.delete(agents, id)}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, agents}
+        end
     end
   end
 
   def handle_call(:list, _from, agents) do
-    {:reply, for({id, %{pid: pid}} <- agents, into: %{}, do: {id, alive(pid)}), agents}
+    {:reply, Map.new(agents, fn {id, record} -> {id, live_pid(id, record)} end), agents}
   end
 
   def handle_call({:whereis, id}, _from, agents) do
-    {:reply, agents |> Map.get(id, %{}) |> Map.get(:pid) |> alive(), agents}
+    {:reply, live_pid_of(id, agents), agents}
   end
 
   def handle_call({:snapshot, id}, _from, agents) do
@@ -144,22 +165,62 @@ defmodule Elixos.Agents do
       :error ->
         {:reply, {:error, :unknown_agent}, agents}
 
-      {:ok, %{module: module, pid: pid}} ->
-        {:reply, write_snapshot(id, snapshot_of(module, pid)), agents}
+      {:ok, %{module: module} = record} ->
+        {:reply, write_snapshot(id, snapshot_of(module, live_pid(id, record))), agents}
     end
   end
 
-  @impl true
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, agents) do
-    # The supervisor restarts a crashed agent; until it is back, the record
-    # says so rather than pointing at a dead process.
-    agents =
-      Map.new(agents, fn
-        {id, %{pid: ^pid} = entry} -> {id, %{entry | pid: nil}}
-        other -> other
-      end)
+  defp live_pid_of(id, agents) do
+    case Map.fetch(agents, id) do
+      {:ok, record} -> live_pid(id, record)
+      :error -> nil
+    end
+  end
 
-    {:noreply, agents}
+  # Where the agent with this id is, or nil. A DynamicSupervisor reports its
+  # children with an `:undefined` id, so a lookup cannot ask *it*: a plain
+  # agent registers a name of ours (on every start, including a restart - the
+  # child's start MFA is `start_agent_child/3`), and a Jido agent is in its
+  # instance's registry, which survives its restart too.
+  defp live_pid(id, %{module: module, opts: opts}) do
+    case Process.whereis(agent_name(id)) do
+      nil ->
+        if jido_agent?(module) do
+          registry = Module.concat(Keyword.get(opts, :jido, Jido), Registry)
+          apply(agent_server(), :whereis, [registry, id])
+        end
+
+      pid ->
+        pid
+    end
+  end
+
+  defp agent_name(id), do: String.to_atom("elixos.agent.#{id}")
+
+  @doc false
+  # The child spec's start MFA: the agent starts and its name is registered,
+  # which is what a lookup reads after a supervisor restart.
+  def start_agent_child(module, id, opts) do
+    if Process.whereis(agent_name(id)) do
+      {:error, {:already_started, id}}
+    else
+      case module.start_link(opts) do
+        {:ok, pid} ->
+          try do
+            Process.register(pid, agent_name(id))
+            {:ok, pid}
+          rescue
+            ArgumentError ->
+              # Lost a race with another start of the same id: that one wins,
+              # and this child does not exist.
+              Process.exit(pid, :shutdown)
+              {:error, {:already_started, id}}
+          end
+
+        error ->
+          error
+      end
+    end
   end
 
   ## Starting
@@ -168,14 +229,7 @@ defmodule Elixos.Agents do
     snapshot = read_snapshot(id)
     child = child_spec(module, id, opts, snapshot)
 
-    case DynamicSupervisor.start_child(Elixos.Agents.Supervisor, child) do
-      {:ok, pid} ->
-        Process.monitor(pid)
-        {:ok, pid}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+    DynamicSupervisor.start_child(Elixos.Agents.Supervisor, child)
   end
 
   # A Jido agent runs through Jido's AgentServer, which is what makes it a
@@ -196,7 +250,8 @@ defmodule Elixos.Agents do
     else
       %{
         id: {:elixos_agent, id},
-        start: {module, :start_link, [Keyword.put(opts, :snapshot, snapshot)]}
+        start:
+          {__MODULE__, :start_agent_child, [module, id, Keyword.put(opts, :snapshot, snapshot)]}
       }
     end
   end
@@ -268,18 +323,29 @@ defmodule Elixos.Agents do
 
   defp write_snapshot(_id, nil), do: :ok
 
+  # Temporary file, fsync, rename, fsync of the directory: the same promise
+  # every other file the image keeps makes (Elixos.Image.Generation does it
+  # the same way), so a power loss cannot leave half an agent's memory.
   defp write_snapshot(id, term) do
     path = snapshot_path(id)
     tmp = path <> ".tmp"
+    dir = Path.dirname(path)
 
-    with :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(tmp, :erlang.term_to_binary(term)),
-         :ok <- File.rename(tmp, path) do
+    with :ok <- File.mkdir_p(dir),
+         {:ok, file} <- :file.open(tmp, [:write, :raw, :binary]),
+         :ok <- :file.write(file, :erlang.term_to_binary(term)),
+         :ok <- :file.sync(file),
+         :ok <- :file.close(file),
+         :ok <- File.rename(tmp, path),
+         {:ok, dir_file} <- :file.open(dir, [:read, :directory]),
+         :ok <- :file.sync(dir_file),
+         :ok <- :file.close(dir_file) do
       :ok
     else
-      {:error, reason} ->
-        Logger.error("agents: could not write #{path}: #{inspect(reason)}")
-        {:error, reason}
+      error ->
+        File.rm(tmp)
+        Logger.error("agents: could not write #{path}: #{inspect(error)}")
+        {:error, {:snapshot_failed, id}}
     end
   end
 

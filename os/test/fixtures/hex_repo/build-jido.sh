@@ -13,7 +13,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="${ELIXOS_JIDO_BUILD:-/tmp/elixos-jido-fixture}"
 ZIG="$(find "$HOME/.cache/zig/p" -maxdepth 2 -name zig -type f 2>/dev/null |
   while read -r candidate; do
-    if [ "$("$candidate" version 2>/dev/null)" = "$(cat "$HERE/../../../.zig-version")" ]; then
+    if [ "$("$candidate" version 2>/dev/null)" = "$(cat "$HERE/../../../../.zig-version")" ]; then
       dirname "$candidate"
       break
     fi

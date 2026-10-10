@@ -29,14 +29,26 @@ defmodule Elixos.Agents.LLMTest do
       case :gen_tcp.accept(listen) do
         {:ok, socket} ->
           request = read_request(socket, "")
-          {status, body} = handler.(request)
+
+          {status, extra, body} =
+            case handler.(request) do
+              {status, %{} = extra, body} -> {status, extra, body}
+              {status, body} -> {status, %{}, body}
+            end
+
+          headers =
+            [
+              {"content-type", "application/json"},
+              {"content-length", Integer.to_string(byte_size(body))}
+            ] ++
+              Map.to_list(extra)
 
           :gen_tcp.send(socket, [
             "HTTP/1.1 ",
             Integer.to_string(status),
-            " OK\r\ncontent-type: application/json\r\ncontent-length: ",
-            Integer.to_string(byte_size(body)),
-            "\r\nconnection: close\r\n\r\n",
+            " OK\r\n",
+            Enum.map(headers, fn {name, value} -> [name, ": ", value, "\r\n"] end),
+            "connection: close\r\n\r\n",
             body
           ])
 
@@ -263,6 +275,27 @@ defmodule Elixos.Agents.LLMTest do
     written = auth_path |> File.read!() |> :json.decode()
     assert written["tokens"]["access_token"] == "fresh-token"
     assert written["tokens"]["refresh_token"] == "r2"
+  end
+
+  test "a chunked response is decoded" do
+    payload = chat_response("chunked hello")
+
+    framed =
+      payload
+      |> :binary.bin_to_list()
+      |> Enum.chunk_every(7)
+      |> Enum.map_join("", fn piece ->
+        [Integer.to_string(length(piece), 16), "\r\n", to_string(piece), "\r\n"]
+      end)
+      |> Kernel.<>("0\r\n\r\n")
+
+    port =
+      Stub.start(fn _request ->
+        {200, %{"transfer-encoding" => "chunked"}, framed}
+      end)
+
+    provider = [base_url: "http://127.0.0.1:#{port}/v1", model: "stub-model"]
+    assert {:ok, "chunked hello"} = LLM.complete([{"user", "hello"}], provider)
   end
 
   test "failures are errors, not crashes" do

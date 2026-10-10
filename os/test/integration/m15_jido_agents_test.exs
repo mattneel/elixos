@@ -109,8 +109,8 @@ defmodule Elixos.Integration.M15JidoAgentsTest do
     # By name: the closure (jido and its dependencies) installs first.
     {out, vm} = QEMU.iex(vm, "Elixos.Package.install(:jido)", 600_000)
     assert out =~ "{:ok, :jido}"
-    {out, vm} = QEMU.iex(vm, ~s{Elixos.Package.installed() |> Map.keys() |> length()})
-    assert out =~ ~r/^\d+$/m
+    {out, vm} = QEMU.iex(vm, ~s{Map.has_key?(Elixos.Package.installed(), :jido)})
+    assert out =~ ~r/^true$/m
 
     # The modules go in as *one* expression - the way the M6 test defines a
     # module at a prompt - because `QEMU.iex/3` waits for the next prompt and

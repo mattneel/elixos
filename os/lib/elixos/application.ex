@@ -101,7 +101,7 @@ defmodule Elixos.Application do
             # Agents: modules the image keeps, started under their own
             # supervisor and restored with what they remembered (M15).
             {DynamicSupervisor, name: Elixos.Agents.Supervisor, strategy: :one_for_one},
-            {Elixos.Agents, image},
+            {Elixos.Agents, {image, env.mode}},
             # Key-only SSH into the user's REPL (M12). Not boot-critical: with
             # no network, or in rescue, it logs and steps aside (the prompt
             # still comes up).

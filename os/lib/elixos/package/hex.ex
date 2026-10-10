@@ -230,19 +230,26 @@ defmodule Elixos.Package.Hex do
     requirements = if requirement, do: [requirement], else: []
 
     with {:ok, root} <- resolve_all(name, requirements),
-         {:ok, picked} <- solve(%{name => %{repo: root.repo, requirements: requirements}}),
+         {:ok, picked} <-
+           settle(
+             %{name => %{repo: root.repo, requirements: requirements}},
+             {name, requirements},
+             32
+           ),
          {:ok, ordered} <- order(picked) do
       {:ok, ordered}
     end
   end
 
-  # Fixpoint: pick every constrained name from the requirements seen so far,
-  # read what the picked release requires, add those, repeat until a pass adds
-  # nothing new.
-  defp solve(constraints) do
-    with {:ok, picked} <- pick_all(constraints) do
-      {constraints, grown?} = add_requirements(constraints, picked)
-      if grown?, do: solve(constraints), else: {:ok, picked}
+  # Fixpoint over the whole constraint map, rebuilt each pass from what the
+  # *picked* releases require: a version that changes takes its old
+  # requirements with it, so nothing a superseded release asked for survives.
+  defp settle(_constraints, _root, 0), do: {:error, :unstable_closure}
+
+  defp settle(constraints, root, passes) do
+    with {:ok, picked} <- pick_all(constraints),
+         {:ok, next} <- constraints_of(picked, root) do
+      if next == constraints, do: {:ok, picked}, else: settle(next, root, passes - 1)
     end
   end
 
@@ -263,31 +270,44 @@ defmodule Elixos.Package.Hex do
     end)
   end
 
-  defp add_requirements(constraints, picked) do
-    Enum.reduce(picked, {constraints, false}, fn {_name, entry}, {acc, grown?} ->
-      Enum.reduce(entry.deps, {acc, grown?}, fn
-        {"elixos", _requirement}, {acc, grown?} ->
-          {acc, grown?}
+  # The constraint map a pass implies: every picked name (with the root's own
+  # requirements, which came from the caller and from nowhere else), and every
+  # requirement the picked releases declare - each dependency resolved among
+  # the trusted repositories, never inherited from the package that asked
+  # (PROTOCOL.md §8).
+  defp constraints_of(picked, {root_name, root_requirements}) do
+    base = Map.new(picked, fn {name, entry} -> {name, %{repo: entry.repo, requirements: []}} end)
+    base = Map.update!(base, root_name, &%{&1 | requirements: root_requirements})
 
-        {dep, requirement}, {acc, grown?} ->
-          merge_requirement(acc, dep, entry.repo, requirement, grown?)
-      end)
+    Enum.reduce_while(picked, {:ok, base}, fn {_name, entry}, {:ok, acc} ->
+      case add_deps_from(acc, entry.deps) do
+        {:ok, acc} -> {:cont, {:ok, acc}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
     end)
   end
 
-  defp merge_requirement(constraints, dep, repo, requirement, grown?) do
-    case Map.fetch(constraints, dep) do
-      :error ->
-        {Map.put(constraints, dep, %{repo: repo, requirements: [requirement]}), true}
+  defp add_deps_from(acc, deps) do
+    Enum.reduce_while(deps, {:ok, acc}, fn
+      {"elixos", _requirement}, state ->
+        {:cont, state}
 
-      {:ok, %{requirements: requirements}} ->
-        if requirement in requirements do
-          {constraints, grown?}
+      {dep, requirement}, {:ok, acc} ->
+        with {:ok, resolved} <- resolve_all(dep, [requirement]) do
+          acc =
+            case Map.fetch(acc, dep) do
+              {:ok, %{requirements: requirements} = existing} ->
+                Map.put(acc, dep, %{existing | requirements: requirements ++ [requirement]})
+
+              :error ->
+                Map.put(acc, dep, %{repo: resolved.repo, requirements: [requirement]})
+            end
+
+          {:cont, {:ok, acc}}
         else
-          {Map.put(constraints, dep, %{repo: repo, requirements: requirements ++ [requirement]}),
-           true}
+          {:error, reason} -> {:halt, {:error, reason}}
         end
-    end
+    end)
   end
 
   defp matching_all(versions, requirements) do
