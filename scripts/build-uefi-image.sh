@@ -44,14 +44,26 @@ esac
 
 INITRAMFS="$BUILD/initramfs.cpio.gz"
 TARBALL="$BUILD/dl/linux-$KERNEL_VERSION.tar.xz"
+FRAGMENTS=("$ROOT/kernel/elixos.config" "$ROOT/kernel/config.x86_64")
 # kbuild refuses O= builds from a tree that already has in-tree artifacts, and
 # the QEMU kernel's tree does: the UEFI kernels get their own extraction. The
 # two variants share it (switching reconfigures and rebuilds, which is fine
 # for something built once per machine).
 SRC="$BUILD/linux-uefi-$KERNEL_VERSION"
 
-[ -f "$TARBALL" ] || { echo "uefi: $TARBALL missing; run scripts/build-kernel.sh" >&2; exit 1; }
-[ -f "$INITRAMFS" ] || { echo "uefi: $INITRAMFS missing; run make initramfs" >&2; exit 1; }
+# The kernel source is the pinned kernel.org tarball; the melange package that
+# builds the QEMU images downloads its own copy inside its sandbox, so this
+# path fetches and checks its own.
+if [ ! -f "$TARBALL" ]; then
+  MAJOR="${KERNEL_VERSION%%.*}"
+  URL="https://cdn.kernel.org/pub/linux/kernel/v$MAJOR.x/$(basename "$TARBALL")"
+  echo "uefi: downloading $URL"
+  mkdir -p "$BUILD/dl"
+  curl -fL --retry 3 -o "$TARBALL.part" "$URL"
+  mv "$TARBALL.part" "$TARBALL"
+fi
+echo "$KERNEL_SHA256  $TARBALL" | sha256sum -c -
+[ -f "$INITRAMFS" ] || { echo "uefi: $INITRAMFS missing; run make image" >&2; exit 1; }
 
 if [ ! -d "$SRC" ]; then
   echo "uefi: extracting $(basename "$TARBALL") into $SRC"
@@ -64,7 +76,7 @@ unset LLVM
 
 make -C "$SRC" -s x86_64_defconfig
 make -C "$SRC" -s kvm_guest.config
-"$SRC/scripts/kconfig/merge_config.sh" -m -O "$SRC" "$SRC/.config" "$ROOT/kernel/elixos.config" >/dev/null
+"$SRC/scripts/kconfig/merge_config.sh" -m -O "$SRC" "$SRC/.config" "${FRAGMENTS[@]}" >/dev/null
 
 "$SRC/scripts/config" --file "$SRC/.config" \
   --set-str INITRAMFS_SOURCE "$INITRAMFS" \
@@ -72,7 +84,7 @@ make -C "$SRC" -s kvm_guest.config
   --set-str CMDLINE "$CMDLINE" \
   --disable CMDLINE_OVERRIDE
 make -C "$SRC" -s olddefconfig
-"$ROOT/scripts/check-kernel-config.sh" "$SRC/.config" "$ROOT/kernel/elixos.config"
+"$ROOT/scripts/check-kernel-config.sh" "$SRC/.config" "${FRAGMENTS[@]}"
 
 echo "uefi: building bzImage with $JOBS jobs"
 make -C "$SRC" -s -j"$JOBS" bzImage

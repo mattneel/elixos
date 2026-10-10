@@ -5,71 +5,106 @@
 #
 # The input is apko's layer for an architecture (scripts/build-image.sh builds
 # it): a gzipped tar of the whole root filesystem, written from the packages -
-# which is where ownership lives. Reading it is why this needs no root:
-# gen_init_cpio is told every entry's uid, gid and mode explicitly, device
-# nodes are declared (mknod needs privileges, a list entry does not), and the
-# archive is extracted only for file *contents*.
+# which is where ownership lives. Reading it is why this needs no root, and why
+# it does not need the kernel tree either: the archive is written here, in the
+# kernel's newc format (initramfs is a gzipped newc cpio), so device nodes are
+# declared rather than mknod'd (privileges) and every entry carries the tar's
+# own uid, gid and mode. Timestamps are zero and the gzip header carries no
+# name, so two packings of the same layer are byte-identical.
 #
-# Env: ELIXOS_BUILD (default build/), GEN (gen_init_cpio from the kernel tree).
+# Env: ELIXOS_BUILD (default build/).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# shellcheck source=../kernel/VERSION
-. "$ROOT/kernel/VERSION"
-
 BUILD="${ELIXOS_BUILD:-$ROOT/build}"
-GEN="${GEN:-$BUILD/linux-$KERNEL_VERSION/usr/gen_init_cpio}"
 LAYER="${1:?usage: mkinitramfs.sh <rootfs.tar.gz> <initramfs.cpio.gz>}"
 OUT="${2:?usage: mkinitramfs.sh <rootfs.tar.gz> <initramfs.cpio.gz>}"
-SCRATCH="$BUILD/initramfs-scratch"
-LIST="$BUILD/initramfs.list"
 
-[ -x "$GEN" ] || { echo "mkinitramfs: $GEN missing; run: make kernel" >&2; exit 1; }
 [ -f "$LAYER" ] || { echo "mkinitramfs: no $LAYER" >&2; exit 1; }
 
-rm -rf "$SCRATCH"
-mkdir -p "$SCRATCH"
-# Device nodes cannot be extracted without root, and they do not need to be:
-# the list below declares them from the tar's own major/minor.
-tar -xzf "$LAYER" -C "$SCRATCH" --exclude 'dev/*'
+python3 - "$LAYER" "$OUT" <<'PY'
+import gzip, stat, struct, sys, tarfile
 
-python3 - "$LAYER" "$SCRATCH" > "$LIST" <<'PY'
-import sys, tarfile
+layer, out = sys.argv[1], sys.argv[2]
 
-layer, scratch = sys.argv[1], sys.argv[2]
+# newc (initramfs) records: a 110-byte ASCII header, the NUL-terminated name,
+# both padded to four bytes, then the data, padded the same way.
+HEADER = "070701" + "{:08x}" * 13
 
-# gen_init_cpio processes the list in order and expects a directory before
-# anything inside it; the tar is already parent-first, so one pass is enough.
-def emit(kind, name, mode, uid, gid, extra=""):
-    print(f"{kind} /{name.lstrip('./')} {mode:04o} {uid} {gid}{extra}", flush=True)
+
+def record(name, mode, uid, gid, data=b"", rdev=(0, 0)):
+    name_bytes = name.encode() + b"\0"
+    header = HEADER.format(
+        0,  # inode: the kernel does not need uniqueness here
+        mode,
+        uid,
+        gid,
+        1,
+        0,  # mtime: zero, for reproducibility
+        len(data),
+        0,
+        0,
+        rdev[0],
+        rdev[1],
+        len(name_bytes),
+        0,
+    ).encode()
+    body = header + name_bytes
+    # The 110-byte header is not a multiple of four, so the *record* (header
+    # plus name) is what gets padded - aligning only the name leaves a
+    # two-byte misalignment that the kernel's unpacker skips as junk.
+    body += b"\0" * ((-len(body)) % 4)
+    body += data + b"\0" * ((-len(data)) % 4)
+    return body
+
 
 with tarfile.open(layer, "r:gz") as tar:
-    for member in tar:
-        name = member.name
-        if name in (".", "./"):
-            continue
-        if name.startswith("dev/") and (member.ischr() or member.isblk()):
-            kind = "c" if member.ischr() else "b"
-            emit("nod", name, member.mode, member.uid, member.gid,
-                 f" {kind} {member.devmajor} {member.devminor}")
-        elif member.isdir():
-            emit("dir", name, member.mode, member.uid, member.gid)
-        elif member.issym():
-            print(f"slink /{name.lstrip('./')} {member.linkname} {member.mode:04o} {member.uid} {member.gid}",
-                  flush=True)
-        elif member.isfile():
-            # NB: for `file` gen_init_cpio wants the location *before* mode,
-            # uid and gid (the other entry kinds carry no location).
-            print(f"file /{name.lstrip('./')} {scratch}/{name} "
-                  f"{member.mode:04o} {member.uid} {member.gid}", flush=True)
-        elif member.islnk():
-            # A hard link: gen_init_cpio has no primitive for it, and the tar
-            # has the content elsewhere - both files carry it.
-            print(f"file /{name.lstrip('./')} {scratch}/{member.linkname.lstrip('./')} "
-                  f"{member.mode:04o} {member.uid} {member.gid}", flush=True)
-        else:
-            print(f"mkinitramfs: ignoring {name} ({member.type})", file=sys.stderr)
+    # filename="" keeps the name out of the gzip header, and mtime=0 keeps the
+    # timestamp out: two packings of one layer are byte-identical.
+    with open(out, "wb") as raw, gzip.GzipFile(
+        filename="", mode="wb", fileobj=raw, mtime=0
+    ) as cpio:
+        for member in tar:
+            name = member.name.lstrip("./")
+            if name in ("", "."):
+                continue
+
+            if member.isdir():
+                cpio.write(record(name, stat.S_IFDIR | member.mode, member.uid, member.gid))
+            elif member.issym():
+                data = member.linkname.encode()
+                cpio.write(record(name, stat.S_IFLNK | member.mode, member.uid, member.gid, data))
+            elif member.ischr() or member.isblk():
+                kind = stat.S_IFCHR if member.ischr() else stat.S_IFBLK
+                cpio.write(
+                    record(
+                        name,
+                        kind | member.mode,
+                        member.uid,
+                        member.gid,
+                        rdev=(member.devmajor, member.devminor),
+                    )
+                )
+            elif member.isfile():
+                cpio.write(
+                    record(name, stat.S_IFREG | member.mode, member.uid, member.gid,
+                           tar.extractfile(member).read())
+                )
+            elif member.islnk():
+                # A hard link: newc has no primitive for it, and both names
+                # carry the content, so the target's bytes are read here.
+                source = tar.extractfile(tar.getmember(member.linkname))
+                cpio.write(record(name, stat.S_IFREG | member.mode, member.uid, member.gid,
+                                  source.read() if source else b""))
+            else:
+                print(f"mkinitramfs: ignoring {name} ({member.type})", file=sys.stderr)
+
+        # The trailer, then zero padding to a 512-byte boundary: what the
+        # kernel's unpacker expects at the end of the archive.
+        cpio.write(record("TRAILER!!!", 0, 0, 0))
+        cpio.write(b"\0" * ((-cpio.tell()) % 512))
+
+print(f"initramfs: {out}", file=sys.stderr)
 PY
 
-"$GEN" -t 0 "$LIST" | gzip -9n > "$OUT"
-echo "initramfs: $OUT ($(du -h "$OUT" | cut -f1), $(grep -c '' "$LIST") entries)"
+echo "initramfs: $OUT ($(du -h "$OUT" | cut -f1))"

@@ -11,18 +11,11 @@ MILESTONE := $(shell cat MILESTONE)
 BUILD ?= build
 export ELIXOS_BUILD := $(abspath $(BUILD))
 
-# QEMU test images need the elixos.test.* hooks compiled into the shim.
-# Images for real hardware must use `make release-shim` instead.
-TEST_HOOKS ?= true
-
-# From M4 on, generation 0 (the factory) goes into the image.
-NEEDS_FACTORY := $(shell [ $(MILESTONE) -ge 4 ] && echo yes)
-
-.PHONY: help check-tools test test-shim test-os test-qemu ci image kernel shim release-shim \
-        factory initramfs disk uefi-image qemu format clean distclean audit demo demos
+.PHONY: help check-tools test test-shim deps test-os test-qemu test-qemu-aarch64 ci audit demo demos \
+        image reproducible uefi-image disk qemu format clean distclean
 
 help: ## List targets
-	@awk -F':.*## ' '/^[a-z-]+:.*## / { printf "  %-14s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk -F':.*## ' '/^[a-z0-9-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 	@echo "  (MILESTONE=$(MILESTONE))"
 
 check-tools: ## Report missing host tools and versions
@@ -42,6 +35,10 @@ test-os: deps ## ExUnit tests for the Elixir userland (no QEMU)
 test-qemu: deps image ## Boot real images in QEMU (slow): os/test/integration
 	cd os && ELIXOS_QEMU=1 ELIXOS_MILESTONE=$(MILESTONE) mix test test/integration
 
+test-qemu-aarch64: image ## The aarch64 smoke set, on qemu-system-aarch64 (TCG: slow)
+	cd os && ELIXOS_QEMU=1 ELIXOS_QEMU_AARCH64=1 ELIXOS_MILESTONE=$(MILESTONE) \
+	  mix test test/integration/m16_aarch64_test.exs
+
 ci: test test-qemu ## Everything for the current milestone
 
 audit: ## Fail if a shipped test, Zig test block or vector changed without an ADR
@@ -54,32 +51,19 @@ demo: ## Record and check one demo: make demo M=4 (demos/README.md)
 demos: ## Record and check every demo up to MILESTONE
 	demos/demo.sh --all
 
-kernel: $(BUILD)/bzImage ## Pinned mainline kernel: configured, never patched (ADR-001)
+image: disk ## The images QEMU boots, both architectures (M16: melange + apko, ADR-041)
+	scripts/build-image.sh
 
-$(BUILD)/bzImage: kernel/VERSION kernel/elixos.config scripts/build-kernel.sh scripts/check-kernel-config.sh
-	scripts/build-kernel.sh
+reproducible: ## Assemble the x86_64 rootfs twice from the lockfile; print the one digest
+	scripts/build-image.sh x86_64
 
-shim: ## The PID 1 shim for QEMU test images (with test hooks)
-	zig build -Drelease -Dtest-hooks=$(TEST_HOOKS)
-
-release-shim: ## The PID 1 shim for real hardware (no test hooks)
-	zig build -Drelease -Dtest-hooks=false
-
-factory: ## Generation 0 into build/rootfs (M4+)
-	scripts/build-factory.sh
-
-initramfs: kernel shim $(if $(NEEDS_FACTORY),factory) ## build/initramfs.cpio.gz
-	scripts/build-initramfs.sh
+uefi-image: image ## ESP with the EFI-stub kernel (M13)
+	scripts/build-uefi-image.sh
 
 disk: $(BUILD)/disk.img ## Pristine persistent disk (tests boot copies of it)
 
 $(BUILD)/disk.img:
 	scripts/mkdisk.sh
-
-image: kernel initramfs disk ## Everything QEMU boots
-
-uefi-image: image ## ESP with the EFI-stub kernel (M13)
-	scripts/build-uefi-image.sh
 
 qemu: image ## Boot interactively (Ctrl-A X quits). ARGS="elixos.safe" appends to the cmdline
 	scripts/run-qemu.sh $(ARGS)
@@ -88,8 +72,9 @@ format: ## Format Zig and Elixir sources
 	zig fmt build.zig shim/src
 	cd os && mix format
 
-clean: ## Remove build outputs, keeping downloads and the kernel tree
-	rm -rf zig-out .zig-cache os/_build $(BUILD)/initramfs.* $(BUILD)/disk.img $(BUILD)/rootfs $(BUILD)/esp.img
+clean: ## Remove build outputs and the locally built packages
+	rm -rf zig-out .zig-cache os/_build $(BUILD)/initramfs.* $(BUILD)/disk.img $(BUILD)/x86_64 \
+	  $(BUILD)/aarch64 $(BUILD)/melange-src $(BUILD)/initramfs-scratch $(BUILD)/apk
 
 distclean: clean ## Remove everything under build/
 	rm -rf $(BUILD)

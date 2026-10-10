@@ -16,7 +16,7 @@ UEFI firmware (hardware)            QEMU -kernel/-initrd (development)
                      │  reads cmdline + /priv/boot.state, plans, persists
                      │  fork + exec erlexec (no shell), control pipe on fd ≥ 3
                      ▼
-          ERTS (dynamic musl, ADR-008) running generation G
+          ERTS (dynamic musl, ADR-041) running generation G
                      │  Elixos.Application: Control → restore G → AutoCommit
                      ▼
           login REPL on /dev/console: IEx, erl or gsh (ADR-012)
@@ -27,16 +27,22 @@ hardware UEFI runs the kernel image itself through its EFI stub (ADR-014).
 
 ## §2 Filesystems
 
-**initramfs** (built by `scripts/build-initramfs.sh` with the kernel's own
-`usr/gen_init_cpio`, so no root is needed):
+**initramfs** (M16, ADR-041: melange builds our packages, apko assembles the
+root filesystem from the pinned set, and `scripts/mkinitramfs.sh` writes it as
+a gzipped newc cpio - ownership, modes and device numbers come from the layer
+tar, so nothing here needs root):
 
 ```
-/init                          the shim
-/dev/console, /dev/null        device nodes, so PID 1 has stdio before devtmpfs
-/proc /sys /dev /run /tmp      mount points
+/init                          the shim (elixos-shim)
+/boot/bzImage | /boot/Image    the kernel the firmware loads (elixos-kernel)
+/factory/                      generation 0: the release the shim execs; it
+                               points at the machine's OTP install (elixos-factory)
+/usr/local/lib/erlang/         OTP 29.1.1 and the ERTS (elixos-otp)
+/usr/local/lib/elixir/         Elixir 1.20.4 (elixos-elixir)
+/bin/busybox, /lib/…           Alpine's base: busybox, baselayout, musl
+/etc/ssl/certs/…               the CA bundle (ca-certificates-bundle)
+/proc /sys /dev /dev/shm /run /tmp  mount points, declared in the apko config
 /priv                          mount point for the persistent disk
-/factory/                      generation 0: ERTS + OTP apps + Elixir + Elixos (M4)
-/lib/ld-musl-x86_64.so.1       musl's dynamic loader, also its libc.so (M4)
 ```
 
 The initramfs is the immutable base: the factory image cannot be broken by

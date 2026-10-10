@@ -664,7 +664,8 @@ in the standard library); a shell script (ADR-012).
 
 ## ADR-035: The factory ships the stock OTP applications and a CA bundle
 
-**Status:** accepted (M15)
+**Status:** amended by ADR-041 (the image now installs OTP as its own package
+and takes the CA bundle from Alpine's ca-certificates-bundle)
 
 **Context.** A release carries only the applications its dependency graph
 names, so `mix release` left out what an *installed* package may need at run

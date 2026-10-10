@@ -1,4 +1,13 @@
-# Building the factory (generation 0)
+# Building the factory (pre-M16)
+
+> **Historical.** M16 (ADR-041) replaced this whole pipeline: melange builds
+> our APKs and apko assembles the image, so there is no musl.cc toolchain and
+> no hand-rolled cross-build any more. See docs/notes/melange-apko.md for what
+> the new one does. What follows is kept because it explains the constraints
+> the factory was built under (dynamic musl, ERTS layout, on-box NIFs), and
+> some of them still hold.
+
+ (generation 0)
 
 `scripts/build-factory.sh` produces `build/rootfs`: the musl loader and the
 shared libraries the ERTS needs, plus `/factory` (ERTS + OTP apps + Elixir +
