@@ -1,0 +1,76 @@
+# Elixos shim control protocol: golden vectors (docs/PROTOCOL.md §2).
+#
+# Consumed verbatim by BOTH test suites, so the Zig shim and the Elixir side
+# can never drift apart:
+#   shim/src/protocol.zig                  (zig build test)
+#   os/test/elixos/shim/protocol_test.exs  (mix test)
+#
+# Format: <wire><TAB><expected>
+#   wire      one line as sent on the pipe, WITHOUT its trailing "\n".
+#             Escapes: \xHH is any byte, \\ is a backslash. Nothing else is special.
+#   expected  heartbeat | commit <gen> | next <gen> | reboot | poweroff | halt
+#             | invalid | too_long
+# Valid lines must also round-trip: encode(parse(wire)) == wire ++ "\n".
+# Lines starting with '#' and blank lines are ignored.
+
+# --- valid ---
+HB	heartbeat
+COMMIT 0	commit 0
+COMMIT 7	commit 7
+COMMIT 10	commit 10
+COMMIT 4294967295	commit 4294967295
+NEXT 0	next 0
+NEXT 12	next 12
+NEXT 4294967295	next 4294967295
+REBOOT	reboot
+POWEROFF	poweroff
+HALT	halt
+
+# --- invalid: case, whitespace and framing are exact ---
+# (the next vector is the empty line: nothing before the tab)
+	invalid
+hb	invalid
+Hb	invalid
+reboot	invalid
+Reboot	invalid
+HB\x20	invalid
+\x20HB	invalid
+HB\x0d	invalid
+HB\x00	invalid
+HB 1	invalid
+HBHB	invalid
+REBOOT now	invalid
+POWEROFF\x20	invalid
+HALT 0	invalid
+
+# --- invalid: generation numbers are canonical decimal u32 ---
+COMMIT	invalid
+COMMIT\x20	invalid
+COMMIT  7	invalid
+COMMIT 7\x20	invalid
+COMMIT 7 8	invalid
+COMMIT\x097	invalid
+COMMIT -1	invalid
+COMMIT +1	invalid
+COMMIT 07	invalid
+COMMIT 00	invalid
+COMMIT 4294967296	invalid
+COMMIT 99999999999999999999	invalid
+COMMIT x	invalid
+COMMIT 0x10	invalid
+COMMIT 1e3	invalid
+COMMIT 1_000	invalid
+COMMIT\xc2\xa07	invalid
+NEXT	invalid
+NEXT 1.5	invalid
+NEXT -0	invalid
+
+# --- invalid: unknown verbs ---
+QUIT	invalid
+COMMITS 7	invalid
+\xff\xfe	invalid
+
+# --- too_long: more than 64 bytes before the newline; checked before anything else ---
+XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX	too_long
+COMMIT 0000000000000000000000000000000000000000000000000000000000	too_long
+XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX	invalid

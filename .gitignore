@@ -1,0 +1,10 @@
+/build/
+/zig-out/
+/.zig-cache/
+/os/_build/
+/os/deps/
+/os/test/fixtures/*/_build/
+/os/test/fixtures/*/deps/
+/os/test/fixtures/*/priv/
+erl_crash.dump
+/os/tmp/

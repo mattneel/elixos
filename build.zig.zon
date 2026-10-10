@@ -1,0 +1,14 @@
+.{
+    .name = .elixos_shim,
+    .version = "0.0.0",
+    .fingerprint = 0xfcd3912ad5b2bf07, // Changing this has security and trust implications.
+    // We track Zig master (ADR-003). Keep this equal to the nightly pinned in .zig-version.
+    .minimum_zig_version = "0.18.0-dev.131+41f885830",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "shim",
+        "spec",
+    },
+}

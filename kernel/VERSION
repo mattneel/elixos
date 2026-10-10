@@ -1,0 +1,7 @@
+# Pinned kernel.org release (ADR-001: unmodified mainline, configured but never patched).
+# Sourced by scripts/*.sh and included by the Makefile, so keep plain KEY=value lines.
+# Bump both values together. Hashes come from
+#   https://cdn.kernel.org/pub/linux/kernel/v<MAJOR>.x/sha256sums.asc
+# Pinned 2026-10-09: latest stable. Longterm alternative at that date: 6.18.55.
+KERNEL_VERSION=7.2.9
+KERNEL_SHA256=b4c5dfbe51a364a6c7f03869200f88c8e1f77403539005f14b7fc6bc91b8d8ba
