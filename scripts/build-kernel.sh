@@ -36,6 +36,10 @@ if [ ! -d "$SRC" ]; then
 fi
 
 echo "kernel: configuring (x86_64_defconfig + kvm_guest.config + kernel/elixos.config)"
+# kbuild treats a non-empty $LLVM as "build with clang" and rejects anything but
+# a path prefix, `-suffix` or 1. Hosts that source emsdk (mise does) export LLVM
+# as a bin directory, which is none of those. We build with gcc: drop it.
+unset LLVM
 make -C "$SRC" -s x86_64_defconfig
 make -C "$SRC" -s kvm_guest.config
 "$SRC/scripts/kconfig/merge_config.sh" -m -O "$SRC" "$SRC/.config" "$ROOT/kernel/elixos.config" >/dev/null
