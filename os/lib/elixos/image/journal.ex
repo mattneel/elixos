@@ -30,22 +30,150 @@ defmodule Elixos.Image.Journal do
 
   @doc "Opens (creating if needed) the journal at `path`, linked to the caller."
   @spec open(Path.t()) :: {:ok, t()} | {:error, term()}
-  def open(path), do: Elixos.NotImplemented.raise!(6, "Elixos.Image.Journal.open/1 #{path}")
+  def open(path) do
+    case scan(path) do
+      {:ok, records, _offset, :clean} ->
+        start(path, length(records) + 1)
+
+      {:ok, records, offset, :torn} ->
+        # A torn tail is a crash mid-append: cut it off, so the next append
+        # continues from the last whole record.
+        with :ok <- truncate(path, offset) do
+          start(path, length(records) + 1)
+        end
+
+      {:error, {:corrupt, seq}} ->
+        # Damage in the middle is not ours to repair: leave the evidence.
+        {:error, {:corrupt, seq}}
+
+      # No journal yet: the first append creates it.
+      {:error, :enoent} ->
+        start(path, 1)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
   @spec append(t(), term()) :: {:ok, seq()} | {:error, term()}
   def append(journal, entry) do
-    _ = {journal, entry}
-    Elixos.NotImplemented.raise!(6, "Elixos.Image.Journal.append/2")
+    GenServer.call(journal, {:append, entry})
   end
 
   @doc "Reads every complete record. Does not need the journal to be open."
   @spec read(Path.t()) ::
           {:ok, [{seq(), term()}], :clean | :torn} | {:error, {:corrupt, seq()} | :enoent}
-  def read(path), do: Elixos.NotImplemented.raise!(6, "Elixos.Image.Journal.read/1 #{path}")
+  def read(path) do
+    case scan(path) do
+      {:ok, records, _offset, status} -> {:ok, records, status}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   @spec close(t()) :: :ok
   def close(journal) do
-    _ = journal
-    Elixos.NotImplemented.raise!(6, "Elixos.Image.Journal.close/1")
+    GenServer.stop(journal)
+  end
+
+  ## GenServer
+
+  @impl true
+  def init({path, seq}) do
+    # Append mode: the journal is only ever added to, and only by us.
+    case :file.open(path, [:append, :raw, :binary]) do
+      {:ok, file} -> {:ok, %{file: file, seq: seq}}
+      {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  @impl true
+  def handle_call({:append, entry}, _from, state) do
+    payload = :erlang.term_to_binary({state.seq, entry})
+    record = <<byte_size(payload)::32-big, :erlang.crc32(payload)::32-big, payload::binary>>
+
+    with :ok <- :file.write(state.file, record),
+         :ok <- :file.sync(state.file) do
+      # Only after the fsync: a record that was not durable never happened.
+      {:reply, {:ok, state.seq}, %{state | seq: state.seq + 1}}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  defp start(path, seq), do: GenServer.start_link(__MODULE__, {path, seq})
+
+  defp truncate(path, offset) do
+    with {:ok, file} <- :file.open(path, [:read, :write, :raw, :binary]) do
+      # :file.position/2 answers {:ok, new_position}, not :ok.
+      with {:ok, _position} <- :file.position(file, offset),
+           :ok <- :file.truncate(file),
+           :ok <- :file.sync(file) do
+        :file.close(file)
+      end
+    end
+  end
+
+  # Walks the records. Returns the records, the offset just past the last whole
+  # one, and whether the remainder is a torn tail or damage in the middle.
+  defp scan(path) do
+    case File.read(path) do
+      {:ok, bytes} -> scan_bytes(bytes, 0, 0, [])
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp scan_bytes(bytes, offset, index, acc) do
+    size = byte_size(bytes)
+
+    cond do
+      offset == size ->
+        {:ok, Enum.reverse(acc), offset, :clean}
+
+      # A header that does not fit is a torn tail, always: nothing follows it
+      # but the end of the file.
+      offset + 8 > size ->
+        {:ok, Enum.reverse(acc), offset, :torn}
+
+      true ->
+        <<_::binary-size(offset), declared::32-big, crc::32-big, _::binary>> = bytes
+
+        if offset + 8 + declared > size do
+          {:ok, Enum.reverse(acc), offset, :torn}
+        else
+          payload = binary_part(bytes, offset + 8, declared)
+          whole_record = offset + 8 + declared
+
+          case decode(payload, crc) do
+            {:ok, record} ->
+              scan_bytes(bytes, whole_record, index + 1, [record | acc])
+
+            :damage ->
+              # Damage with nothing after it is a torn tail; damage followed by
+              # further records is corruption, and the caller is told where.
+              if whole_record == size do
+                {:ok, Enum.reverse(acc), offset, :torn}
+              else
+                {:error, {:corrupt, index + 1}}
+              end
+          end
+        end
+    end
+  end
+
+  defp decode(payload, crc) do
+    if :erlang.crc32(payload) == crc do
+      case safe_binary_to_term(payload) do
+        {:ok, record} -> {:ok, record}
+        :error -> :damage
+      end
+    else
+      :damage
+    end
+  end
+
+  defp safe_binary_to_term(payload) do
+    {:ok, :erlang.binary_to_term(payload, [:safe])}
+  rescue
+    ArgumentError -> :error
   end
 end
