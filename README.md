@@ -30,6 +30,8 @@ See the [roadmap and acceptance criteria](docs/ROADMAP.md).
 - [Nerves](https://nerves-project.org/) and its
   [erlinit](https://github.com/nerves-project/erlinit): a minimal PID 1 handling
   boot, mounts and shutdown while the BEAM owns application supervision.
+- [AtomVM](https://github.com/atomvm/AtomVM): a lightweight VM bringing Erlang
+  and Elixir to microcontrollers and other constrained devices.
 - **Smalltalk and Lisp machine images:** a live world and a changes log.
   Elixos rebuilds from code and data rather than saving the BEAM heap
   ([ADR-005](docs/DECISIONS.md)).
