@@ -263,7 +263,10 @@ that.
 
 - A FAT ESP whose `EFI/BOOT/BOOTX64.EFI` is the kernel itself, with the
   initramfs and command line built in (`CONFIG_INITRAMFS_SOURCE`,
-  `CONFIG_CMDLINE`: configuration, never a patch).
+  `CONFIG_CMDLINE`: configuration, never a patch). The built-in line is the
+  default - what the firmware passes when it passes nothing - and an owner who
+  needs other arguments (`elixos.data=/dev/nvme0n1p2`, say) supplies their own
+  at the firmware level, which then takes over.
 - Console on the panel: `console=tty0 fbcon=font:TER16x32` (Terminus 16x32 is
   built into the kernel), simpledrm on the firmware framebuffer.
 - Generation fallback lives in the shim, so the firmware needs no A/B logic.

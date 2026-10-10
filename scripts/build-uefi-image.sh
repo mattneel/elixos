@@ -10,6 +10,12 @@
 #   scripts/build-uefi-image.sh --hardware   the panel -> build/esp-hardware.img
 #                                           (console=tty0 fbcon=font:TER16x32)
 #
+# The built-in command line is what the kernel uses when the firmware passes
+# none, which is how a machine boots `\EFI\BOOT\BOOTX64.EFI`. It is *not*
+# CONFIG_CMDLINE_OVERRIDE: an owner who needs other arguments - the hardware
+# checklist's `elixos.data=/dev/nvme0n1p2`, say - passes their own line at the
+# firmware level, and theirs is the one that counts (x86 has no EXTEND).
+#
 # The kernel is built out-of-tree (O=), so the QEMU kernel in build/ is left
 # alone; both share the same pinned source and the same fragment.
 set -euo pipefail
@@ -64,7 +70,7 @@ make -C "$SRC" -s kvm_guest.config
   --set-str INITRAMFS_SOURCE "$INITRAMFS" \
   --enable CMDLINE_BOOL \
   --set-str CMDLINE "$CMDLINE" \
-  --enable CMDLINE_OVERRIDE
+  --disable CMDLINE_OVERRIDE
 make -C "$SRC" -s olddefconfig
 "$ROOT/scripts/check-kernel-config.sh" "$SRC/.config" "$ROOT/kernel/elixos.config"
 
