@@ -364,6 +364,129 @@ docs/notes/jido.md.
 
 ---
 
+## M16: The system database (Postgres)
+
+**Goal.** A real PostgreSQL runs on Elixos as a system service: reachable from
+the prompt, its data on the persistent disk, and a power-off is a *clean*
+shutdown, not crash recovery. The heavy services stop living in the factory:
+they move to a read-only system image on `/priv`, mounted and started only in
+normal mode.
+
+**Acceptance.** `test/integration/m16_postgres_test.exs`: Postgres answers a
+query from the prompt; it runs as its own uid, never root; `/etc/passwd` has
+that uid and the data directory is owned by it, mode 0700; pgvector and
+TimescaleDB's Apache-only build load and answer; the binaries come from the
+read-only `/system` mount; `elixos.safe` starts none of it; and the boot after
+a power cycle logs a clean shutdown (`database system was shut down at`), not
+recovery.
+
+**Notes.** Postgres refuses to run as root, and ADR-013's single user is one
+*person*, not one uid: a tiny static Zig helper (`zig-out/bin/exec-as`, built
+by `build.zig`, no shell) setuid/setgids to `postgres` and execs `initdb` or
+`postgres`; the BEAM starts it as a port. `initdb` looks its own uid up with
+`getpwuid` and refuses to run without a passwd entry, so `/etc/passwd` and
+`/etc/group` carry `postgres` (a few bytes, built into the initramfs), and the
+data directory is owned by that uid, mode 0700. `CONFIG_SYSVIPC=y` is named in
+`kernel/elixos.config` - `x86_64_defconfig` enables it, but the fragment names
+it so `check-kernel-config.sh` guards it: Postgres always creates a small
+System V shared-memory segment as a lock, and its dynamic shared memory wants
+`/dev/shm`, which the shim mounts as a tmpfs (mode 1777) beside `/run` and
+`/tmp`. The service - cross-compiled with the same musl
+toolchain as the rest - is packed into a read-only image (squashfs or erofs: a
+kernel config option, never a patch) by `scripts/build-system-image.sh`, from
+a pinned version + sha256, mounted at `/system` in normal mode only; versions
+and hashes are pins like the kernel's (ADR-001), and nothing is ever fetched
+on the box (ADR-009, M14's verification). Licensing: pgvector is
+PostgreSQL-licensed; TimescaleDB's Apache-only build gives hypertables and
+`time_bucket` without a question. Compression and continuous aggregates are
+under the Timescale License and get their own ADR - read the license before
+publishing images. `Elixos.Postgres` starts the server once the prompt's
+machinery is up and *not* in rescue; a failure is logged and the prompt still
+comes up. `Elixos.poweroff` and `halt` stop it (a `fast` shutdown, the
+`pg_ctl` meaning, exec'd directly) before the VM stops, so every power-off is
+clean. Generations vs migrations: a generation may only ship migrations the
+*previous* generation can ignore; drops and renames run after the commit.
+ADRs to write when this starts: the system image, the uid helper, the shutdown
+hook, and the disk layout PROTOCOL.md §7 gains - the cluster at
+`/priv/postgres/data`, the postmaster log at `/priv/postgres/log/`.
+
+**Done when.** `make ci` is green with `MILESTONE=16`, the QEMU test passes,
+the three ADRs above are written (system image, uid helper, shutdown hook),
+and PROTOCOL.md §7 carries the layout the ADR decides.
+
+- [ ] Demo recorded: `demos/m16-postgres.mp4` (`make demo M=16`).
+
+---
+
+## M17: Jobs that survive reboots (Oban)
+
+**Goal.** Oban is Elixos's scheduler: a job enqueued at the prompt runs, a
+failed one is retried, and a machine that powers off mid-queue still has the
+job next boot. Apps declare their queues and cron the way they declare
+services.
+
+**Acceptance.** `test/elixos/oban_test.exs` (the `elixos:` key gains
+`oban: [queues: ..., cron: ...]`, validated like `services:`, and a
+declaration becomes Oban options) and
+`test/integration/m17_oban_test.exs`: a worker defined at the prompt writes a
+line to `/priv`, a job scheduled for later survives a power cycle and runs on
+the next boot, and `elixos.safe` runs no Oban.
+
+**Notes.** `oban`, `ecto_sql` and `postgrex` become OS dependencies (ADR; pure
+BEAM, no NIFs), with a Repo against M16's Postgres; Oban's migrations run
+before it starts, once, before any queue. `Elixos.Oban` owns the child spec:
+queues with their concurrency and `Oban.Plugins.Cron` entries collected from
+every installed app's `elixos:` declaration (M11's spec machinery, extended),
+the system's own jobs under a reserved prefix. Not boot-critical and not in
+rescue, like Postgres - but it *is* stopped by the same shutdown hook, or a
+power-off would cost a retry. A worker is an ordinary user module: the M6
+image journals it and M15's agents already wrote the pattern down.
+
+**Done when.** `make ci` is green with `MILESTONE=17`, both test files pass,
+and the ADR for the dependencies is written.
+
+- [ ] Demo recorded: `demos/m17-oban.mp4` (`make demo M=17`).
+
+---
+
+## M18: A browser to call from the prompt
+
+**Goal.** A headless browser, shipped with the system, callable from IEx and
+from agents: navigate, extract, evaluate JavaScript, screenshot - with no
+download at run time.
+
+**Acceptance.** `test/elixos/browser_test.exs` (the pinned manifest decides
+the argv: a musl-clean adapter is exec'd directly, a glibc one through its
+private loader) and `test/integration/m18_browser_test.exs`: the adapter comes
+up from the read-only `/system`, navigates to a stub HTTP server on the
+loopback, returns the page's text, evaluates JavaScript, produces a PNG, and
+`elixos.safe` starts none of it.
+
+**Notes. The gate first.** Run `ldd` on the pinned Lightpanda binary at build
+time. If it needs glibc, carry a private glibc in the system image and start
+Lightpanda through glibc's own loader
+(`ld-linux-x86-64.so.2 --library-path <dir> lightpanda serve`), exec'd
+directly as a port: a few MB, no rebuild. Building V8 for musl is the last
+resort, and **abandoning M18 is an allowed outcome**; the ADR records which
+arm was taken and why. `agent-browser` is not a portable fallback - it drives
+Chrome for Testing (glibc) or another browser over CDP, so the libc question
+only moves. jido_browser 2.3's adapter is optional and limited (navigation,
+clicks, typing, screenshots, extraction, JS evaluation; no element refs, saved
+state, tabs or console capture): the milestone is the adapter, its pin and its
+service, not the full surface. Binaries are pinned and verified when the image
+is built (M14's verification, ADR-009's rule: nothing is fetched on the box),
+never by jido_browser's own downloader. `jido_browser` becomes an OS
+dependency (ADR); `Elixos.Browser` starts the adapter only in normal mode,
+stops it on poweroff, and never lets it block the prompt.
+
+**Done when.** `make ci` is green with `MILESTONE=18`, both test files pass,
+and the ADR records the loader decision - or M18 is explicitly abandoned in
+the roadmap with the reason.
+
+- [ ] Demo recorded: `demos/m18-browser.mp4` (`make demo M=18`).
+
+---
+
 ## Later (not yet scheduled)
 
 Wi-Fi (Q3), a DHCP client in Elixir, power-button handling from input events,

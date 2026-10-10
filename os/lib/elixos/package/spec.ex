@@ -22,6 +22,8 @@ defmodule Elixos.Package.Spec do
 
     * `:services` - modules or `{module, arg}` started under the system
       supervision tree when the app is installed
+    * `:oban` - `queues:` and `cron:` the app wants the system's scheduler to
+      run (M17, docs/ROADMAP.md)
     * `:persist` - relative paths (no `..`, not absolute) under the app's data dir
     * `:min_os` - `Version` requirement on the running Elixos
     * `:boot` - `:auto` (start at boot) or `:manual`
@@ -31,16 +33,18 @@ defmodule Elixos.Package.Spec do
 
     * `{:elixos, :not_a_keyword_list}`
     * `{:services, :invalid}`
+    * `{:oban, :invalid}`
     * `{:persist, :invalid | :absolute_path | :parent_path}`
     * `{:min_os, :invalid_requirement}`
     * `{:boot, :invalid}`
     * `{key, :unknown_key}`
   """
 
-  defstruct services: [], persist: [], min_os: nil, boot: :auto
+  defstruct services: [], oban: [], persist: [], min_os: nil, boot: :auto
 
   @type t :: %__MODULE__{
           services: [module() | {module(), term()}],
+          oban: keyword(),
           persist: [String.t()],
           min_os: String.t() | nil,
           boot: :auto | :manual
@@ -87,6 +91,11 @@ defmodule Elixos.Package.Spec do
   end
 
   defp check({:services, _other}), do: [services: :invalid]
+
+  # TODO(M17): validate queues (name => positive concurrency) and cron
+  # ({crontab, module}); until the milestone implements it, no declaration is
+  # accepted.
+  defp check({:oban, _value}), do: [oban: :invalid]
 
   defp check({:persist, paths}) when is_list(paths) do
     Enum.flat_map(paths, fn
