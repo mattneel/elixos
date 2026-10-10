@@ -80,6 +80,26 @@ defmodule Elixos.SSHTest do
     :ssh.close(conn)
   end
 
+  test "a pristine disk still gets a daemon: the user's .ssh need not exist yet", ctx do
+    # The machine owner may drop the key in later (the demo does exactly
+    # that); ssh_file reads authorized_keys at authentication time, so the
+    # directory only has to exist when the daemon starts.
+    system = Path.join(ctx.dir, "system")
+    user_dir = Path.join(ctx.dir, "home/.ssh")
+    port = 20_000 + :rand.uniform(20_000)
+
+    assert {:ok, daemon} = SSH.start(port: port, system_dir: system, user_dir: user_dir)
+    on_exit(fn -> :ssh.stop_daemon(daemon) end)
+
+    {key_dir, pub} = keypair!(ctx.dir, "id_ed25519")
+    File.mkdir_p!(user_dir)
+    File.write!(Path.join(user_dir, "authorized_keys"), pub)
+
+    # The key written after the daemon started logs in.
+    assert {:ok, conn} = connect(port, key_dir, ~c"publickey")
+    :ssh.close(conn)
+  end
+
   test "a key that is not in authorized_keys is refused", ctx do
     system = Path.join(ctx.dir, "system")
     user_dir = Path.join(ctx.dir, "home/.ssh")

@@ -48,7 +48,11 @@ defmodule Elixos.SSH do
 
   @spec start(keyword()) :: {:ok, pid()} | {:error, term()}
   def start(opts \\ []) do
+    # ssh refuses to start when user_dir is missing, but authorized_keys is
+    # read when a client authenticates, so the machine owner may drop a key
+    # in long after boot: only the directory has to be there.
     with {:ok, _apps} <- Application.ensure_all_started(:ssh),
+         :ok <- File.mkdir_p(user_dir(opts)),
          {:ok, _path} <- host_key(system_dir(opts)),
          {:ok, daemon} <- :ssh.daemon(port(opts), daemon_options(opts)) do
       {:ok, daemon}

@@ -14,7 +14,7 @@ catch {exec rm -f $key $key.pub}
 exec ssh-keygen -q -t ed25519 -N "" -f $key
 set pub [string trim [exec cat $key.pub]]
 
-set qemu [spawn -noecho qemu-system-x86_64 \
+spawn -noecho qemu-system-x86_64 \
     -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
     -nographic -no-reboot \
     -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
@@ -22,6 +22,9 @@ set qemu [spawn -noecho qemu-system-x86_64 \
     -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
     -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:$port-:22" \
     -device virtio-net-pci,netdev=n0
+# Remember the console's spawn id: after the ssh spawn below, `send` goes to
+# the ssh client until we switch back explicitly.
+set qemu $spawn_id
 
 expect "iex(1)> "
 sleep 1
