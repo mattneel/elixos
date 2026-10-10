@@ -28,11 +28,48 @@ defmodule Elixos.Boot.Env do
           ctl_fd: non_neg_integer()
         }
 
+  # Table order is the contract: the first name reported is the first one here.
+  @names ["ELIXOS_GENERATION", "ELIXOS_MODE", "ELIXOS_ATTEMPT", "ELIXOS_CTL_FD"]
+
   @spec parse(%{optional(String.t()) => String.t()}) ::
           {:ok, t() | :host} | {:error, {:missing | :invalid, String.t()}}
   def parse(env) when is_map(env) do
-    Elixos.NotImplemented.raise!(2, "Elixos.Boot.Env.parse/1")
+    present = Enum.filter(@names, &Map.has_key?(env, &1))
+
+    cond do
+      # Rule 1: no ELIXOS_* at all means we are not running under the shim.
+      present == [] ->
+        {:ok, :host}
+
+      # Rule 2: absence is decided for every name before any value is looked at.
+      (missing = @names -- present) != [] ->
+        {:error, {:missing, hd(missing)}}
+
+      # Rule 3: the first malformed value, in table order.
+      true ->
+        parsed(env)
+    end
   end
+
+  defp parsed(env) do
+    with {:ok, generation} <- number(env, "ELIXOS_GENERATION"),
+         {:ok, mode} <- mode(env["ELIXOS_MODE"]),
+         {:ok, attempt} <- number(env, "ELIXOS_ATTEMPT"),
+         {:ok, ctl_fd} <- number(env, "ELIXOS_CTL_FD") do
+      {:ok, %__MODULE__{generation: generation, mode: mode, attempt: attempt, ctl_fd: ctl_fd}}
+    end
+  end
+
+  defp number(env, name) do
+    case Elixos.Decimal.parse_u32(env[name]) do
+      {:ok, value} -> {:ok, value}
+      :error -> {:error, {:invalid, name}}
+    end
+  end
+
+  defp mode("normal"), do: {:ok, :normal}
+  defp mode("rescue"), do: {:ok, :rescue}
+  defp mode(_other), do: {:error, {:invalid, "ELIXOS_MODE"}}
 
   @doc "Parses the running VM's environment."
   @spec current() :: {:ok, t() | :host} | {:error, {:missing | :invalid, String.t()}}

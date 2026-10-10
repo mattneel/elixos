@@ -41,7 +41,27 @@ defmodule Elixos.Shim.Protocol do
   """
   @spec decode(binary()) :: {:ok, message()} | {:error, :invalid | :too_long}
   def decode(line) when is_binary(line) do
-    Elixos.NotImplemented.raise!(2, "Elixos.Shim.Protocol.decode/1")
+    # The length limit is checked before anything else (PROTOCOL.md §2).
+    if byte_size(line) > @max_line do
+      {:error, :too_long}
+    else
+      case line do
+        "HB" -> {:ok, :heartbeat}
+        "REBOOT" -> {:ok, :reboot}
+        "POWEROFF" -> {:ok, :poweroff}
+        "HALT" -> {:ok, :halt}
+        "COMMIT " <> rest -> numbered(:commit, rest)
+        "NEXT " <> rest -> numbered(:next, rest)
+        _ -> {:error, :invalid}
+      end
+    end
+  end
+
+  defp numbered(kind, rest) do
+    case Elixos.Decimal.parse_u32(rest) do
+      {:ok, generation} -> {:ok, {kind, generation}}
+      :error -> {:error, :invalid}
+    end
   end
 
   @doc """
@@ -50,7 +70,17 @@ defmodule Elixos.Shim.Protocol do
   Raises `ArgumentError` for anything that is not a valid `t:message/0`.
   """
   @spec encode(message()) :: binary()
-  def encode(message) do
-    Elixos.NotImplemented.raise!(2, "Elixos.Shim.Protocol.encode/1 #{inspect(message)}")
-  end
+  def encode(:heartbeat), do: "HB\n"
+  def encode({:commit, generation}), do: "COMMIT #{generation!(generation)}\n"
+  def encode({:next, generation}), do: "NEXT #{generation!(generation)}\n"
+  def encode(:reboot), do: "REBOOT\n"
+  def encode(:poweroff), do: "POWEROFF\n"
+  def encode(:halt), do: "HALT\n"
+  def encode(other), do: raise(ArgumentError, "not a control message: #{inspect(other)}")
+
+  defp generation!(generation)
+       when is_integer(generation) and generation >= 0 and generation <= 4_294_967_295,
+       do: generation
+
+  defp generation!(other), do: raise(ArgumentError, "not a generation: #{inspect(other)}")
 end
