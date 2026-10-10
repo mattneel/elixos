@@ -144,7 +144,7 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
         shutdown(.poweroff);
     }
 
-    launch(plan, settings, disk_mounted);
+    launch(plan, settings, overrides, disk_mounted);
 }
 
 // ---------------------------------------------------------------------------
@@ -224,31 +224,12 @@ fn writeState(state: recovery.BootState) void {
 /// 6. Launch the planned generation: the factory's ERTS, as our child, with
 ///    the control pipe and the environment contract of PROTOCOL.md §3. PID 1
 ///    stays PID 1, so a crashed or hung BEAM stays observable (ADR-002).
-fn launch(plan: recovery.Plan, settings: cmdline.Settings, disk_mounted: bool) noreturn {
+fn launch(plan: recovery.Plan, settings: cmdline.Settings, overrides: recovery.Overrides, disk_mounted: bool) noreturn {
     if (!pathExists(factory_path)) {
         log("factory missing, powering off", .{});
         shutdown(.poweroff);
     }
-
-    // The control channel (PROTOCOL.md §2). The BEAM holds the write end, we
-    // hold the read end: the write end must survive exec, the read end must
-    // not, or EOF would never arrive when the BEAM exits.
-    var pipe_fds: [2]linux.fd_t = undefined;
-    if (linux.errno(linux.pipe2(&pipe_fds, .{})) != .SUCCESS) {
-        log("cannot create the control pipe, powering off", .{});
-        shutdown(.poweroff);
-    }
-    _ = linux.fcntl(pipe_fds[0], linux.F.SETFD, linux.FD_CLOEXEC);
-
-    const child = linux.fork();
-    if (linux.errno(child) != .SUCCESS) {
-        log("cannot fork, powering off", .{});
-        shutdown(.poweroff);
-    }
-    if (child == 0) execErts(plan, pipe_fds[1]);
-
-    _ = linux.close(pipe_fds[1]);
-    supervise(@intCast(child), pipe_fds[0], plan, settings, disk_mounted);
+    supervise(plan, settings, overrides, disk_mounted);
 }
 
 /// The child's half of the launch: log, set up argv/envp, exec. Only returns
@@ -307,101 +288,296 @@ fn zeroed(buffer: []u8, comptime fmt: []const u8, args: anytype) [*:0]const u8 {
     return text.ptr;
 }
 
-/// Watches the BEAM: its control lines, and its exit. M5 adds the heartbeat
-/// deadline, signals and the relaunch policy; M4 can only carry out a
-/// requested shutdown.
-fn supervise(
-    beam: linux.pid_t,
-    ctl_fd: linux.fd_t,
-    plan: recovery.Plan,
+/// The backoff before a crashed BEAM is relaunched: long enough that a crash
+/// loop cannot spin the machine, short enough that a restart feels immediate.
+const relaunch_backoff_ms = 1_000;
+
+/// rt_sigprocmask's SIG_BLOCK. The kernel ABI fixes these values: SIG_BLOCK 0,
+/// SIG_UNBLOCK 1, SIG_SETMASK 2 (x86_64 only, ADR-014).
+const sig_block: u32 = 0;
+
+/// One supervision session: the BEAM we launched, the control channel to it,
+/// and the decisions that follow from its exit (ARCHITECTURE.md §3.3).
+const Session = struct {
     settings: cmdline.Settings,
+    policy: recovery.Policy,
+    overrides: recovery.Overrides,
     disk_mounted: bool,
-) noreturn {
-    _ = settings; // the heartbeat deadline arrives with M5
-    var state = plan.next_state;
-    var requested: ?recovery.Shutdown = null;
-    var buffer: [protocol.max_line_len * 2]u8 = undefined;
-    var pending: usize = 0;
-    var control_open = true;
-    var exit_status: ?u32 = null;
 
-    while (true) {
-        if (control_open) {
-            const rc = linux.read(ctl_fd, buffer[0..].ptr + pending, buffer.len - pending);
-            const err = linux.errno(rc);
-            if (err == .SUCCESS) {
-                if (rc == 0) {
-                    // EOF: every write end is closed, so the BEAM is gone.
-                    control_open = false;
-                } else {
-                    pending += rc;
-                    if (consumeLines(&state, &buffer, &pending, &requested) and disk_mounted) {
-                        writeState(state);
-                    }
-                    if (pending == buffer.len) {
-                        // A line that does not fit cannot be valid
-                        // (PROTOCOL.md §2): discard it and keep reading.
-                        log("ignored control line (TooLong)", .{});
-                        pending = 0;
-                    }
-                }
-            } else if (err != .INTR) {
-                control_open = false;
-            }
-        }
+    epfd: linux.fd_t,
+    sigfd: linux.fd_t,
+    timerfd: linux.fd_t,
 
-        if (exit_status == null) {
-            var status: i32 = 0;
-            const rc = linux.wait4(beam, &status, linux.W.NOHANG, null);
-            if (linux.errno(rc) == .SUCCESS and rc != 0) exit_status = @bitCast(status);
+    plan: recovery.Plan,
+    /// What the running plan was made from: control messages apply to this.
+    state: recovery.BootState,
+    beam: linux.pid_t = 0,
+    ctl_fd: linux.fd_t = -1,
+    requested: ?recovery.Shutdown = null,
+    first_heartbeat_pending: bool = true,
+    buffer: [protocol.max_line_len * 2]u8 = undefined,
+    pending: usize = 0,
+
+    /// Forks and execs `plan` with a fresh control pipe, then arms the
+    /// heartbeat deadline with the boot grace (PROTOCOL.md §2 and §3).
+    fn spawn(self: *Session, plan: recovery.Plan) void {
+        var pipe_fds: [2]linux.fd_t = undefined;
+        if (linux.errno(linux.pipe2(&pipe_fds, .{})) != .SUCCESS) {
+            log("cannot create the control pipe, powering off", .{});
+            shutdown(.poweroff);
         }
-        if (exit_status != null and !control_open) break;
+        // The BEAM keeps the write end across exec; the read end must not
+        // survive it, or EOF would never arrive when the BEAM exits.
+        _ = linux.fcntl(pipe_fds[0], linux.F.SETFD, linux.FD_CLOEXEC);
+
+        const child = linux.fork();
+        if (linux.errno(child) != .SUCCESS) {
+            log("cannot fork, powering off", .{});
+            shutdown(.poweroff);
+        }
+        if (child == 0) execErts(plan, pipe_fds[1]);
+
+        _ = linux.close(pipe_fds[1]);
+        self.beam = @intCast(child);
+        self.ctl_fd = pipe_fds[0];
+        self.pending = 0;
+        self.first_heartbeat_pending = true;
+        self.plan = plan;
+        self.state = plan.next_state;
+        watch(self.epfd, pipe_fds[0]);
+        armTimer(self.timerfd, self.settings.boot_grace_s);
     }
 
-    if (exit_status) |status| logBeamExit(status);
-    if (requested) |kind| shutdown(kind);
+    /// The control pipe has data, or its write end closed.
+    fn readControl(self: *Session) void {
+        const space = self.buffer.len - self.pending;
+        const rc = linux.read(self.ctl_fd, self.buffer[self.pending..].ptr, space);
+        const err = linux.errno(rc);
+        if (err != .SUCCESS) {
+            if (err == .INTR or err == .AGAIN) return;
+            self.forgetControl();
+            return;
+        }
+        if (rc == 0) {
+            // EOF: every write end is closed. The BEAM may still be alive for
+            // a moment (a requested shutdown); its exit decides what follows.
+            self.forgetControl();
+            return;
+        }
 
-    // An exit nobody asked for cannot be recovered yet: M5 relaunches through
-    // recovery.onBeamExit with a backoff (ADR-007). Until then, power off
-    // cleanly rather than limp on.
-    shutdown(.poweroff);
-}
+        self.pending += rc;
+        var start: usize = 0;
+        while (std.mem.indexOfScalarPos(u8, self.buffer[0..self.pending], start, '\n')) |newline| {
+            self.applyLine(self.buffer[start..newline]);
+            start = newline + 1;
+        }
+        const remaining = self.pending - start;
+        if (remaining > 0) {
+            std.mem.copyForwards(u8, self.buffer[0..remaining], self.buffer[start..self.pending]);
+        }
+        self.pending = remaining;
 
-/// Applies every complete control line in `buffer`, keeps any unfinished tail,
-/// and returns whether the state changed (so the caller persists it).
-fn consumeLines(
-    state: *recovery.BootState,
-    buffer: []u8,
-    pending: *usize,
-    requested: *?recovery.Shutdown,
-) bool {
-    var changed = false;
-    var start: usize = 0;
-    while (std.mem.indexOfScalarPos(u8, buffer[0..pending.*], start, '\n')) |newline| {
-        const line = buffer[start..newline];
-        start = newline + 1;
+        if (self.pending == self.buffer.len) {
+            // A line that does not fit cannot be valid (PROTOCOL.md §2).
+            log("ignored control line (TooLong)", .{});
+            self.pending = 0;
+        }
+    }
 
-        // PROTOCOL.md §2: a line that is not exactly a message is logged and
-        // ignored, never fatal.
+    fn forgetControl(self: *Session) void {
+        if (self.ctl_fd >= 0) {
+            _ = linux.close(self.ctl_fd);
+            self.ctl_fd = -1;
+        }
+    }
+
+    /// One control line (PROTOCOL.md §2). Not a message is not fatal.
+    fn applyLine(self: *Session, line: []const u8) void {
         const message = protocol.parse(line) catch |err| {
             log("ignored control line ({t})", .{err});
-            continue;
+            return;
         };
-        const outcome = recovery.applyMessage(state.*, message);
-        if (!std.meta.eql(outcome.state, state.*)) {
-            state.* = outcome.state;
-            changed = true;
+
+        if (message == .heartbeat) {
+            // The first heartbeat ends the boot grace (ARCHITECTURE.md §3.2).
+            self.first_heartbeat_pending = false;
+            armTimer(self.timerfd, self.settings.heartbeat_timeout_s);
+            return;
         }
-        if (outcome.shutdown) |kind| requested.* = kind;
+
+        const outcome = recovery.applyMessage(self.state, message);
+        if (!std.meta.eql(outcome.state, self.state)) {
+            self.state = outcome.state;
+            if (self.disk_mounted) writeState(self.state);
+            switch (message) {
+                .commit => |generation| log("commit generation={d}", .{generation}),
+                .next => |generation| log("next generation={d}", .{generation}),
+                else => {},
+            }
+        }
+        if (outcome.shutdown) |kind| self.requested = kind;
     }
 
-    const remaining = pending.* - start;
-    if (remaining > 0) std.mem.copyForwards(u8, buffer[0..remaining], buffer[start..pending.*]);
-    pending.* = remaining;
-    return changed;
+    /// A signal arrived: SIGCHLD means a child exited (perhaps the BEAM);
+    /// SIGTERM, SIGINT and SIGPWR are shutdown requests from outside.
+    fn handleSignals(self: *Session) void {
+        while (true) {
+            var info: linux.signalfd_siginfo = undefined;
+            const rc = linux.read(self.sigfd, @ptrCast(&info), @sizeOf(linux.signalfd_siginfo));
+            const err = linux.errno(rc);
+            if (err != .SUCCESS or rc == 0) return;
+
+            switch (@as(linux.SIG, @fromBackingInt(@intCast(info.signo)))) {
+                .CHLD => self.reap(),
+                .INT => self.outsideShutdown(.reboot),
+                .TERM, .PWR => self.outsideShutdown(.poweroff),
+                else => {},
+            }
+        }
+    }
+
+    /// A shutdown request from outside: ask the BEAM to stop, and let the
+    /// heartbeat deadline deal with it if it does not.
+    fn outsideShutdown(self: *Session, kind: recovery.Shutdown) void {
+        self.requested = kind;
+        if (self.beam != 0) _ = linux.kill(self.beam, .TERM);
+    }
+
+    /// Reaps every child that has exited. PID 1 inherits orphans, so this runs
+    /// for every child, not only the BEAM.
+    fn reap(self: *Session) void {
+        while (true) {
+            var status: i32 = 0;
+            const rc = linux.wait4(-1, &status, linux.W.NOHANG, null);
+            if (linux.errno(rc) != .SUCCESS or rc == 0) return;
+            const pid: linux.pid_t = @intCast(rc);
+            if (pid == self.beam) self.beamExited(@bitCast(status));
+            // Anything else was an orphan we inherited, now reaped.
+        }
+    }
+
+    fn beamExited(self: *Session, status: u32) void {
+        logBeamExit(status);
+        self.forgetControl();
+        self.beam = 0;
+
+        switch (recovery.onBeamExit(self.state, self.policy, self.overrides, self.requested)) {
+            .shutdown => |kind| shutdown(kind),
+            .relaunch => |next| {
+                // Persist before launching, so this attempt counts too. A
+                // generation override does not survive a crash: onBeamExit
+                // drops it and keeps a safe override (ARCHITECTURE.md §3.3).
+                if (self.disk_mounted and !std.meta.eql(next.next_state, self.state)) {
+                    writeState(next.next_state);
+                }
+                log("plan generation={d} mode={t} attempt={d}", .{
+                    next.launch.generation,
+                    next.launch.mode,
+                    next.next_state.attempts,
+                });
+                sleepMs(relaunch_backoff_ms);
+                self.spawn(next);
+            },
+        }
+    }
+
+    /// The heartbeat deadline passed: to the shim a hang and a crash are the
+    /// same event, so the BEAM is killed and its exit decides what follows.
+    fn handleTimer(self: *Session) void {
+        var expirations: u64 = undefined;
+        _ = linux.read(self.timerfd, @ptrCast(&expirations), @sizeOf(u64));
+        if (self.beam == 0) return;
+
+        const seconds = if (self.first_heartbeat_pending)
+            self.settings.boot_grace_s
+        else
+            self.settings.heartbeat_timeout_s;
+        log("heartbeat timeout after {d}s, killing beam", .{seconds});
+        _ = linux.kill(self.beam, .KILL);
+    }
+};
+
+/// Watches the BEAM (ARCHITECTURE.md §3.1): an epoll loop over a signalfd, the
+/// control pipe and a timerfd, reaping children and re-planning through
+/// recovery.onBeamExit when the BEAM goes away. A crash and a hang are the
+/// same event (ADR-007).
+fn supervise(
+    plan: recovery.Plan,
+    settings: cmdline.Settings,
+    overrides: recovery.Overrides,
+    disk_mounted: bool,
+) noreturn {
+    // Signals arrive through a signalfd: PID 1 must not die of SIGTERM, and
+    // blocking them is exactly what signalfd needs.
+    var mask = linux.sigemptyset();
+    linux.sigaddset(&mask, .CHLD);
+    linux.sigaddset(&mask, .TERM);
+    linux.sigaddset(&mask, .INT);
+    linux.sigaddset(&mask, .PWR);
+    _ = linux.sigprocmask(sig_block, &mask, null);
+
+    const sigfd = must(linux.signalfd(-1, &mask, linux.SFD.CLOEXEC | linux.SFD.NONBLOCK), "the signal fd");
+    const timerfd = must(linux.timerfd_create(.MONOTONIC, .{ .CLOEXEC = true, .NONBLOCK = true }), "the timer");
+    const epfd = must(linux.epoll_create1(linux.EPOLL.CLOEXEC), "the event loop");
+    watch(epfd, sigfd);
+    watch(epfd, timerfd);
+
+    var session = Session{
+        .settings = settings,
+        .policy = .{ .max_attempts = settings.max_attempts },
+        .overrides = overrides,
+        .disk_mounted = disk_mounted,
+        .epfd = epfd,
+        .sigfd = sigfd,
+        .timerfd = timerfd,
+        .plan = plan,
+        .state = plan.next_state,
+    };
+    session.spawn(plan);
+
+    while (true) {
+        var events: [4]linux.epoll_event = undefined;
+        const ready = linux.epoll_wait(epfd, &events, events.len, -1);
+        if (linux.errno(ready) != .SUCCESS) continue; // EINTR: look again
+        for (events[0..ready]) |event| {
+            const fd = event.data.fd;
+            if (fd == sigfd) {
+                session.handleSignals();
+            } else if (fd == timerfd) {
+                session.handleTimer();
+            } else if (fd == session.ctl_fd) {
+                session.readControl();
+            }
+        }
+    }
 }
 
-/// PROTOCOL.md §6: how the BEAM went away.
+/// A syscall that creates something PID 1 cannot run without. Failing it is
+/// not a panic: say so and power off.
+fn must(raw: usize, what: []const u8) linux.fd_t {
+    if (linux.errno(raw) != .SUCCESS) {
+        log("cannot create {s}, powering off", .{what});
+        shutdown(.poweroff);
+    }
+    return @intCast(raw);
+}
+
+/// Registers `fd` in the event loop.
+fn watch(epfd: linux.fd_t, fd: linux.fd_t) void {
+    var event = linux.epoll_event{ .events = linux.EPOLL.IN, .data = .{ .fd = fd } };
+    _ = linux.epoll_ctl(epfd, linux.EPOLL.CTL_ADD, fd, &event);
+}
+
+/// Arms the heartbeat deadline `seconds` from now: a one-shot, relative timer.
+fn armTimer(timerfd: linux.fd_t, seconds: u32) void {
+    const spec = linux.itimerspec{
+        .it_interval = .{ .sec = 0, .nsec = 0 },
+        .it_value = .{ .sec = @intCast(seconds), .nsec = 0 },
+    };
+    _ = linux.timerfd_settime(timerfd, .{}, &spec, null);
+}
+
+/// PROTOCOL.md §6: how the BEAM went away, exit status or signal.
 fn logBeamExit(status: u32) void {
     if (linux.W.IFEXITED(status)) {
         log("beam exited status={d}", .{linux.W.EXITSTATUS(status)});
@@ -413,6 +589,11 @@ fn logBeamExit(status: u32) void {
 /// 9. Shutdown. PID 1 does not exit (ADR-002); the kernel powers the machine
 /// off, reboots or halts, and if it refuses we idle forever.
 fn shutdown(kind: recovery.Shutdown) noreturn {
+    // Stragglers first (ARCHITECTURE.md §3.1): ask, then insist. -1 means
+    // every process except us, which is what PID 1 is for.
+    _ = linux.kill(-1, .TERM);
+    sleepMs(50);
+    _ = linux.kill(-1, .KILL);
     linux.sync();
     _ = linux.umount2("/data", 0);
     log("shutdown {t}", .{kind});

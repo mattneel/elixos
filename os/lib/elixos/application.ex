@@ -30,7 +30,11 @@ defmodule Elixos.Application do
           {Elixos.Shim.Control,
            sink: {Elixos.Shim.Sink.Fd, env.ctl_fd},
            heartbeat_ms: Application.get_env(:elixos, :heartbeat_ms, 1_000)},
-          {Elixos.Boot.Login, env}
+          {Elixos.Boot.Login, env},
+          # Commits the generation once it has been healthy for a while; in
+          # rescue mode the child is skipped (:ignore), so a rescue boot never
+          # makes itself last_good (ADR-007).
+          {Elixos.Boot.AutoCommit, env: env}
         ]
 
         Supervisor.start_link(children, strategy: :one_for_one, name: Elixos.Supervisor)

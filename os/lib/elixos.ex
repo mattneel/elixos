@@ -36,7 +36,13 @@ defmodule Elixos do
   end
 
   @doc "Mark the running generation healthy now instead of waiting for auto-commit. (M5)"
-  def commit, do: Elixos.NotImplemented.raise!(5, "Elixos.commit/0")
+  def commit do
+    case Elixos.Boot.Env.current() do
+      {:ok, %Elixos.Boot.Env{generation: generation}} -> Elixos.Shim.Control.commit(generation)
+      {:ok, :host} -> {:error, :not_under_the_shim}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   @doc """
   Save the live image as a new generation and select it for the next boot. (M6)
