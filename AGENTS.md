@@ -43,6 +43,12 @@ The roadmap already exists as tests, gated by the `MILESTONE` file
   (docs/PROTOCOL.md). Tests match them byte for byte.
 - **`spec/` vectors are shared** by the Zig and Elixir suites; change both
   sides together.
+- **Programs are packages, commands are functions** (ADR-019). Hex repositories
+  are the package sources and `/data/hex/repos.exs` is the whole trust
+  decision; nothing is installed from a repo whose key was not added first.
+- **Each REPL session has its own working directory** (ADR-020), keyed by its
+  group leader. Nothing changes the VM's cwd (ADR-016); native tools are exec'd
+  with `cd:` set to the session's directory.
 - x86_64 only (ADR-014). Single user (ADR-013). No runtime deps in `os/`
   without an ADR.
 - Decisions marked OPEN in docs/DECISIONS.md belong to the human. Follow the
@@ -107,8 +113,11 @@ kernel/              VERSION (pinned kernel.org release + sha256), elixos.config
 build.zig            the shim's build; shim/src/*.zig is PID 1
 spec/                golden vectors shared by both test suites
 os/                  the Mix project: the Elixos userland (lib/) and every ExUnit test (test/)
+hex/                 the official Hex repository (packages, signing key) and its README
+.github/workflows/   CI: the Hex repository's build and Pages deployment
 os/test/integration/ QEMU acceptance tests, one file per milestone
-scripts/             kernel, initramfs, disk, QEMU, factory (M4), UEFI image (M13)
+scripts/             kernel, initramfs, disk, QEMU, factory (M4), UEFI image (M13),
+                     and `make audit`, the tripwire for the shipped tests
 build/               outputs (gitignored)
 ```
 

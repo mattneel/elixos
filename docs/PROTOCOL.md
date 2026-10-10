@@ -170,4 +170,47 @@ ext4, label `ELIXOS`, mounted on `/data`:
 /data/ssh/              SSH host keys (M12)
 /data/cache/zig/        ZIG_GLOBAL_CACHE_DIR for on-box builds (M11)
 /data/apps/             installed apps (M11)
+/data/hex/repos.exs     trusted Hex repositories (M14, ADR-019)
+/data/hex/keys/         each repo's public key, `<name>.pub`
+/data/hex/cache/        fetched registries and tarballs
 ```
+
+## §8 Trusted Hex repositories (M14)
+
+Software comes from Hex repositories (ADR-019). `/data/hex/repos.exs` is a
+keyword list, one entry per repository, and **it is the whole trust decision**:
+a repository is trusted exactly when it appears here, so an install can never
+trust one implicitly.
+
+```elixir
+[
+  elixos: [url: "https://repo.example/elixos", key: "-----BEGIN PUBLIC KEY-----\n..."],
+  team: [url: "/data/mirrors/team", key: "-----BEGIN PUBLIC KEY-----\n..."]
+]
+```
+
+  * `url` is `http(s)://` or a local path (`/data/mirrors/team`), so an offline
+    mirror is a directory.
+  * `key` is the repository's public key, PEM, RSA: the same bytes the repo
+    serves as `public_key`, and what every resource it serves is verified
+    against. The same key is written to `/data/hex/keys/<name>.pub`.
+  * A repository name and a package name may contain lowercase letters,
+    digits, `_` and `-`; a package name belongs to exactly one trusted
+    repository, and a clash is an error naming both.
+  * `:elixos` is not a package: a dependency on it is satisfied by the running
+    OS, and a package that bundles it is refused.
+
+The factory ships the official repository preconfigured — its key in
+`/factory/hex/keys/elixos.pub` and the entry
+
+```elixir
+[elixos: [url: "https://mattneel.github.io/elixos", key: "<the shipped key>"]]
+```
+
+in `/factory/hex/repos.exs` — so it is trusted without any consent step; the
+box's `/data/hex/repos.exs` wins once it exists. The file is the machine
+owner's (single user, ADR-013), and it is the one configuration file Elixos
+reads by evaluating it (`Code.eval_file/1`), because it holds PEM keys.
+
+Reads and writes of `repos.exs` are atomic (temporary file, fsync, rename,
+fsync of each directory), like every other file Elixos keeps.

@@ -182,10 +182,20 @@ control fd; the new shim adopts the running BEAM instead of launching one.
 **Goal.** IEx, erl (and gsh when installed) as login shells sharing one world.
 
 **Acceptance.** `test/elixos/repl_test.exs`, `test/elixos/user_test.exs`,
-`test/integration/m09_repl_login_test.exs`.
+`test/integration/m09_repl_login_test.exs`, `test/elixos/session_test.exs`,
+`test/integration/m09_session_dir_test.exs`.
 
 **Notes.** The console login reads `/data/user.exs` (`Elixos.User`) and starts
 `Elixos.REPL.mfa(repl)`. Parse the user file, never evaluate it.
+
+**Session directories (ADR-020).** Each REPL session has its own working
+directory, starting at `/data/home`, keyed by the session's process-group
+leader (which everything spawned from that REPL inherits). The login REPLs
+replace `cd/1`, `pwd/0` and `ls/0,1` with session-aware versions: for IEx they
+are the helpers imported into its evaluation environment, for erl they come
+from `user_default`. Relative paths typed at a prompt resolve against the
+session directory, native tools run with `cd:` set to it, and nothing changes
+the VM's working directory (ADR-016).
 
 ---
 
@@ -253,6 +263,47 @@ that path.
 - [ ] The internal disk works as `/data` (`elixos.data=/dev/nvme0n1p2` or similar).
 - [ ] Keyboard, including Ctrl-G job control.
 - [ ] `Elixos.poweroff()` really powers the machine off.
+
+---
+
+## M14: Packages by name
+
+**Goal.** Hex is the package manager (ADR-019): trusted repositories, install
+by name, and commands are functions rather than CLIs.
+
+**Acceptance.** `test/elixos/package/repo_test.exs`,
+`test/elixos/package/install_by_name_test.exs`,
+`test/integration/m14_packages_test.exs`, and, for the toolchain half,
+`test/integration/m11_toolchain_test.exs`.
+
+**Notes.**
+- Repo configuration and trusted keys live under `/data/hex/` (PROTOCOL.md §7).
+  A repo is added with its public key or a verified fingerprint, and an install
+  never trusts a repository implicitly: adding it is the consent step.
+- `Elixos.Package.install/1` by name: find the package among the trusted repos
+  (a name in two repos is an error naming both), fetch and unpack its tarball,
+  then hand the directory to the M11 path. `install/1` with a path keeps its
+  M11 meaning.
+- The apt verbs are functions on `Elixos.Package`: `add_repo/3`, `remove_repo/1`,
+  `repos/0`, `search/1`, `info/1`, `upgrade/0,1`, `remove/1`. A static repo has
+  no search API, so `search/1` matches against the registry's names index.
+- `:elixos` is always satisfied by the running OS and is never fetched; a
+  package that bundles it is refused (M10).
+- `os/test/fixtures/hex_repo/` is a real static Hex repo (built with
+  `mix hex.registry build`, see its README): the tests add it with its public
+  key and install `hello_pkg` from it. The official `elixos` repository is a
+  static repo on GitHub Pages, built and published by
+  `.github/workflows/hex-repo.yml` from `hex/packages/`; the factory ships its
+  public key (`hex/keys/elixos.pub`) and presets the entry in `/factory/hex/`.
+- Native tools are exec'd directly with `cd:` set to the caller's session
+  directory — never through a shell (ADR-012), never by changing the VM's cwd
+  (ADR-016). The M11 toolchain package's first instance is `Zig.init/1` and
+  `Zig.build/2`.
+
+**Done when.** `make ci` is green with `MILESTONE=14`, both QEMU files pass, and
+the repo/install unit tests cover trust (a repo without a trusted key is
+refused), the one-name-per-repo clash, and an install by name from the fixture
+repo.
 
 ---
 

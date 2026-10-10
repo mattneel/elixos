@@ -31,6 +31,15 @@ boot in seconds, and program while it runs.
 - **Self-hosting.** `mix`, Hex and a C toolchain (`zig cc`) run on the box.
   You can build and install a regular Elixir project, NIFs included, from the
   prompt.
+- **Programs are packages, commands are functions.** Software comes from Hex
+  repositories, the way other systems take packages from apt: add a repository
+  with its public key, then `Elixos.Package.install(:name)`. A package does not
+  ship a CLI — it exposes an Elixir API, and anything native it runs is exec'd
+  directly with the session's working directory. Nothing is trusted because a
+  URL was typed: adding a repository's key is the consent step.
+- **Every session has its own working directory.** Two consoles, or a console
+  and an SSH channel, can sit in different directories at the same time, while
+  the VM's own working directory never moves (ADR-016).
 - **Regular Elixir apps opt in.** A normal `mix.exs` can carry an `elixos:`
   key saying how it wants to be installed, and `config/elixos.exs` says how it
   behaves there (`MIX_TARGET=elixos`). The same project still builds anywhere.

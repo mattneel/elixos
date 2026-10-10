@@ -45,5 +45,5 @@ git init && git add -A && git commit -m "Elixos scaffold"   # the agent commits 
 - [ARCHITECTURE](docs/ARCHITECTURE.md): boot chain, shim, live image, REPLs, apps, toolchain
 - [PROTOCOL](docs/PROTOCOL.md): every interface that is API (tests match it byte for byte)
 - [DECISIONS](docs/DECISIONS.md): ADRs and open questions
-- [ROADMAP](docs/ROADMAP.md): milestones M1-M13 and their acceptance tests
+- [ROADMAP](docs/ROADMAP.md): milestones M1-M14 and their acceptance tests
 - [TESTING](docs/TESTING.md): how the test layers, gating and QEMU harness work

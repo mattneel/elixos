@@ -220,6 +220,108 @@ test means missing code, not a broken test.
 **Decision.** `elixos.test.*` parameters are compiled in only with
 `-Dtest-hooks=true` (`make shim`). `make release-shim` builds without them.
 
+## ADR-019: Hex is the package manager; commands are functions
+
+**Status:** accepted (M14)
+
+**Context.** Elixos runs every app in one VM (ADR-015), so "install an app"
+means "make its modules loadable here", not "set up another release". Mix is
+already on the box, Hex is already the Elixir ecosystem's package format, and
+`mix release`-style workflows are wrong for a machine you live inside.
+
+**Decision.** Package sources are **Hex repositories**, used the way apt uses
+its sources: a repo is a name, a URL and a **public key**, and nothing from it
+is installed until that key was trusted. `elixos` is official and ships
+configured in the factory with its public key; `elixos-community` and anyone
+else's repo are opt-in. The official repository is hosted on GitHub Pages
+(`https://mattneel.github.io/elixos`), built and published by
+`.github/workflows/hex-repo.yml` from the projects under `hex/packages/`; the
+factory ships the matching public key, and the build refuses to sign with any
+other key, because every shipped box would refuse the result. A repo is added with its public key or a verified
+fingerprint (like `mix hex.repo add --public-key/--fetch-public-key`), and an
+install never trusts a repo implicitly: adding it is the consent step, and on a
+single-user machine (ADR-013) there is no sudo in the way. Repositories are
+self-hosted static Hex repos built with `mix hex.registry build`.
+
+`Elixos.Package.install/1` takes a **name**: the package is found in the
+trusted repos, its tarball fetched and unpacked, and the directory handed to
+the M11 path (build in a child ERTS, load, start services, record in the
+image). `install/1` with a path keeps its M11 meaning ("install this
+directory"). The apt verbs are functions, not commands: `add_repo/3`,
+`remove_repo/1`, `repos/0`, `search/1` (a static repo has no search API, so a
+name is matched against the registry's names index), `info/1`, `upgrade/0,1`,
+`remove/1`.
+
+Across every trusted repo a package **name** belongs to exactly one repo, so
+ADR-015's one-version-per-package rule holds; a clash is an error naming both
+repos. `:elixos` is never fetched: a dependency on it is satisfied by the
+running OS, and a package that bundles it is refused (M10).
+
+**Programs are packages, commands are functions.** A package exposes an Elixir
+API; it does not ship a CLI. When a package must run a native tool it execs it
+directly (`System.cmd/3` or a `Port`) with `cd:` set to the caller's session
+directory — never through a shell (ADR-012), never by changing the VM's working
+directory (ADR-016). The first instance is the M11 toolchain's `Zig` module
+(`Zig.init/1`, `Zig.build/2`, ...).
+
+`Mix.install/2` is not the mechanism: it raises when called a second time with
+different dependencies, and while installing it changes the whole VM's working
+directory with `File.cd!` (verified on Elixir 1.20.4). Both are exactly what
+one shared VM cannot have.
+
+**Consequences.** Package installation is a function call that fetches from a
+trusted repo; a repo is trusted by its key and nothing else; curated snapshots
+and prebuilt binary caches are out of scope for now. `mix.exs` keeps its
+`elixos:` key (ADR-011) for how an app wants to be installed; Hex carries it as
+package metadata.
+
+**Alternatives considered.** (a) Git-URL installs (`mix deps.get`): no
+registry, so no search, no versions, no signatures, and every user's URL is a
+different dependency identity. (b) `Mix.install/2`: see above — one-shot deps
+and a global `File.cd!`. (c) A custom package format: reinventing Hex's
+signing, registry and tarball format for no gain, and cutting apps off from the
+Hex ecosystem. (d) Trusting a repo on first use (TOFU): makes the first
+install the attack, and a single-user machine has no second line of defence.
+(e) Curated snapshot repositories: nice for appliances, wrong for a machine you
+program while it runs, and out of scope.
+
+## ADR-020: Each REPL session has its own working directory
+
+**Status:** accepted (M9)
+
+**Context.** Every process on Elixos shares one VM, and its working directory
+is global (ADR-016). A shell that must not change it therefore cannot use the
+VM's cwd as its own. Meanwhile IEx's `cd/1`, `pwd/0` and `ls/0,1` are built on
+`File.cd/1` and `File.cwd/0` (verified on Elixir 1.20.4: `IEx.Helpers.cd/1`
+calls `File.cd/1`), and the erl shell's `cd/1` comes from `user_default` and
+calls `file:set_cwd/1`: both change the world for everyone.
+
+**Decision.** A **REPL session** has its own working directory, starting at
+`/data/home`. The directory is keyed by the session's process-group leader,
+which every process spawned from that REPL inherits, so console jobs, SSH
+channels and anything they start each have one. Relative paths typed at a
+prompt expand against the session's directory.
+
+The login REPLs carry session-aware `cd/1`, `pwd/0` and `ls/0,1`: for IEx, the
+Elixos helpers are imported into the evaluation environment instead of
+`IEx.Helpers`; for erl, `user_default` provides them; gsh follows when it
+lands. Native tools run with `cd:` set to it (ADR-019), and nothing any of them
+does changes the VM's working directory.
+
+**Consequences.** Two consoles can sit in different directories while
+`File.cwd!/0` stays `/` for every process; a `cd` is local to the session and
+does not survive a power cycle (the directory is not persisted). Anything that
+must resolve a relative path for a process needs the session it belongs to,
+which is why the key is the group leader rather than the calling pid.
+
+**Alternatives considered.** (a) Change the VM's cwd and restore it around each
+command: racy the moment anything is concurrent, and forbidden by ADR-016.
+(b) One working directory for all sessions: what the shells do today, and
+useless as soon as two sessions exist. (c) A process dictionary per process: a
+spawned process would lose the directory, so `System.cmd(cd: ...)` would break
+for anything started from a task. (d) An explicit session handle passed to
+every function: infects every API, and the shells' built-ins cannot take it.
+
 ---
 
 ## Open questions
@@ -236,3 +338,21 @@ Decide these with the human. Until then, follow the proposed default.
 - **Q5: Kernel and factory upgrades on hardware.** Two ESP entries with
   `BootNext`, or something simpler?
 - **Q6: gsh.** Packaging the `gleam` compiler that gsh drives.
+- **Q7: On-disk layout of repo configuration and trusted keys.** Proposed
+  default: `/data/hex/repos.exs` (a keyword list of `name: [url:, key:]`, the
+  key being the PEM text) and `/data/hex/keys/<repo>.pub` for the key files, so
+  trust survives power cycles and a repo can be inspected by hand. The factory
+  ships the default in `/factory/hex/`, and `/data/hex/repos.exs` is what a
+  session reads: seeded from the factory the first time, then the machine
+  owner's. It is read by evaluating it (`Code.eval_file/1`), because PEM keys
+  do not fit a line format; that single exception is why it is worth a
+  decision. The root is `Application.get_env(:elixos, :hex_dir, "/data/hex")`,
+  so the host unit tests can point it at a temporary directory. PROTOCOL.md §7
+  and §8 document the paths and the format.
+- **Q8: Repo URLs beyond http(s).** Proposed default: a repo URL may be an
+  `http(s)://` URL or a local path (the tests use a local path, and an offline
+  mirror is just a directory). No other schemes.
+- **Q9: Module names for package-provided APIs.** ADR-019 says a package
+  exposes an Elixir API. Proposed default: the package's own top-level name,
+  as Hex packages normally do — the M11 toolchain package provides `Zig`, so
+  `Zig.init/1` is how a session initializes it.

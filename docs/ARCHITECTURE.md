@@ -190,6 +190,14 @@ All of them see one world. There is no uid between them, and OTP's restricted
 shell only vets what is typed at the prompt, so it is a guardrail, not a
 security boundary. That is fine for a single-user machine (ADR-013).
 
+**Session directories (ADR-020).** Each session has its own working directory,
+starting at `/data/home`, keyed by its process-group leader — which everything
+spawned from that REPL inherits. The login REPLs therefore carry session-aware
+`cd/1`, `pwd/0` and `ls/0,1` (IEx by importing Elixos's helpers into its
+evaluation environment, erl through `user_default`), relative paths resolve
+against the session's directory, and native tools run with `cd:` set to it.
+The VM's working directory never moves (ADR-016).
+
 ## §7 Apps on Elixos (ADR-010, ADR-011, ADR-015)
 
 - **Target, not environment.** `MIX_TARGET=elixos` keeps dev/test/prod intact.
@@ -209,6 +217,30 @@ security boundary. That is fine for a single-user machine (ADR-013).
   builds (`Mix.Project.in_project/4` cd's), and on Elixos that would move it
   for every program (ADR-016). `Elixos.Package.install/1` therefore execs a
   second ERTS (erlexec directly, no shell) to compile, then loads the result.
+
+## §7a Packages by name (ADR-019, M14)
+
+Software is installed from **Hex repositories**: a repository is a name, a URL
+and a public key, and `/data/hex/repos.exs` is the entire trust decision
+(PROTOCOL.md §8). The official `elixos` repository is a static repository on
+GitHub Pages, built and published by CI (`.github/workflows/hex-repo.yml`); the
+factory ships its public key and presets the entry in `/factory/hex/`, so it is
+trusted out of the box. Adding a repository with its key is the consent step; an
+install never trusts one implicitly, and on a single-user machine there is
+nothing else to consent to (no sudo).
+
+`Elixos.Package.install/1` by name finds the package among the trusted repos
+(a name in two repos is an error naming both), fetches and unpacks the tarball
+into `/data/apps/`, and hands the directory to the M11 path below. The apt
+verbs are functions: `add_repo/3`, `remove_repo/1`, `repos/0`, `search/1`,
+`info/1`, `upgrade/0,1`, `remove/1`.
+
+**Programs are packages, commands are functions.** A package exposes an Elixir
+API and no CLI; when it must run a native tool it execs it directly with `cd:`
+set to the caller's session directory (ADR-020), never through a shell
+(ADR-012) and never by changing the VM's working directory (ADR-016). The M11
+toolchain's `Zig` module (`Zig.init/1`, `Zig.build/2`) is the first instance of
+that.
 
 ## §8 The toolchain on the box (ADR-008, ADR-009)
 
