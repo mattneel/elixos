@@ -8,6 +8,17 @@ means a failing test first, then the fix).
 | demo | milestone | shows |
 |------|-----------|-------|
 | `m03-first-boot.mp4` | M3 | PID 1 mounts, plans the factory, persists the attempt and powers off; the second power-on counts another attempt |
+| `m04-boot-to-iex.mp4` | M4 | the shim's lines and the banner to the first prompt |
+| `m05-beam-supervision.mp4` | M5 | the BEAM exits; the shim plans another attempt and boots it again |
+| `m06-live-image.mp4` | M6 | a module defined at the prompt is there after a power cycle |
+| `m07-recovery.mp4` | M7 | a boot that raises comes up in rescue instead of looping |
+| `m08-shim-self-recovery.mp4` | M8 | the shim comes back without losing the running BEAM |
+| `m09-repl-login.mp4` | M9 | a session's directory moves, the VM's never does, and a second shell is the same world |
+| `m11-self-hosting.mp4` | M11 | the toolchain is on the box, a Mix project builds in a child ERTS, its service runs in this VM |
+| `m12-ssh.mp4` | M12 | a key in `authorized_keys` logs the host into the user's REPL, the same VM as the console |
+| `m13-uefi.mp4` | M13 | firmware boots the EFI-stub kernel from the ESP, under EFI, with the built-in command line |
+| `m14-packages.mp4` | M14 | the official repository is trusted out of the box; adding one with its key is consent; install by name |
+| `m15-jido-agents.mp4` | M15 | jido is part of the OS, an agent is defined and started at the prompt, an action talks to a stub model, and a power cycle keeps its state |
 
 ## Play, record, check
 
@@ -55,3 +66,21 @@ differ, so the 3.x static binaries go in `build/tools`:
   `demos/render.sh` draws the frames with `agg` and encodes H.264 with `ffmpeg`.
 * From M4 on a demo ends with `Elixos.poweroff()`; M12 records the host's ssh
   session instead and keeps QEMU's console out of it.
+
+## Traps
+
+* A pasted multi-line expression needs **its own Return**: `send {...}` types
+  the text, and `send "\r"` completes it. Without the Return the guest's
+  reader keeps buffering, the *next* command is appended to the same
+  expression, and it fails to parse at a line far past the paste - the M15
+  demo wasted an hour on this before it was recorded.
+* Expect on what this Elixir *prints*, not on what you remember: 1.18+ inspects
+  a charlist as `~c"..."`, so `Application.spec(:jido, :vsn)` shows
+  `~c"2.4.0"` and an `expect "'2.4.0'"` waits forever.
+* `set timeout 900` turns one wrong `expect` into fifteen minutes per step, so
+  a wedged demo looks like a slow one. Pace on `expect -re {iex\([0-9]+\)> }`
+  or on content that follows from the command, never on a hard-coded prompt
+  number: the numbers move when the paste count changes.
+* Before recording a demo that defines modules, extract the block and parse it
+  on the host (`Code.string_to_quoted/1` on the braced literal); a syntax error
+  found here costs seconds, the same error in a recording costs a boot.

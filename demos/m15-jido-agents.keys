@@ -1,26 +1,30 @@
-# What the M15 demo must show, in order: jido installs by name, an agent is
+# What the M15 demo must show, in order: jido is part of the OS, an agent is
 # defined and started at the prompt, an action talks to a stub model over the
 # loopback, and after a power cycle the agent is running with what it
 # remembered.
 elixos-shim: pid 1, version
-iex(1)> Elixos.Package.add_repo(:fixture, "/priv/hex-repo", key: File.read!("/priv/hex-repo/public_key"))
-:ok
-iex(2)> Elixos.Package.install(:jido)
-{:ok, :jido}
+iex(1)> IEx.configure(colors: [enabled: false])
+iex(2)> Application.spec(:jido, :vsn)
+~c"2.4.0"
 iex(3)> (defmodule Demo.Jido do
-iex(5)> Elixos.Agents.start(Demo.Agent, id: "greeter", jido: Demo.Jido)
+iex(4)> Elixos.Agents.start(Demo.Agent, id: "greeter", jido: Demo.Jido)
 {:ok, #PID<
-Demo.ask("greeter", "note", %{note: "remember me"})
-last: "remember me"
-iex(7)> Demo.Stub.start(4040, "a model said hello")
+iex(5)> Demo.ask("greeter", "note", %{note: "remember me"})
+%{last: "remember me", answer: ""}
+iex(6)> Demo.Stub.start(4040, "a model said hello")
 :ok
-Demo.ask("scribe", "ask", %{prompt: "say hello"})
-answer: "a model said hello"
+iex(7)> Elixos.Agents.start(Demo.Agent, id: "scribe", jido: Demo.Jido)
+{:ok, #PID<
+iex(8)> Demo.ask("scribe", "ask", %{prompt: "say hello"})
+%{last: "", answer: "a model said hello"}
+iex(9)> Elixos.Agents.list() |> Map.keys() |> Enum.sort()
 ["greeter", "scribe"]
-Elixos.save()
+iex(10)> Elixos.save()
 {:ok, 1}
 elixos-shim: shutdown poweroff
+iex(1)> IEx.configure(colors: [enabled: false])
+iex(2)> Elixos.Agents.list() |> Map.keys() |> Enum.sort()
 ["greeter", "scribe"]
-Demo.state("greeter")
-last: "remember me"
+iex(3)> Demo.state("greeter")
+%{last: "remember me", answer: ""}
 elixos-shim: shutdown poweroff

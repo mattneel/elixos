@@ -1,24 +1,24 @@
 #!/usr/bin/expect -f
-# M15: agents are ordinary Elixos code. A Jido agent - installed from a
-# repository by name, with its whole dependency closure - is defined at the
-# prompt and started under the system's own supervisor; one of its actions
-# calls a model (a stub on the loopback here). Then the machine is saved,
-# powered off, and powered on again: the next boot starts the agent with what
-# it remembered.
+# M15: agents are ordinary Elixos code. Jido is part of the OS itself
+# (ADR-036) - a Jido agent is defined at the prompt and started under the
+# system's own supervisor; one of its actions calls a model (a stub on the
+# loopback here). Then the machine is saved, powered off, and powered on
+# again: the next boot starts the agent with what it remembered.
 
-set timeout 900
+set timeout 60
+
+# Fail fast and loud. A timeout means the console is not where the script
+# thinks it is; continuing only desynchronizes the rest of the demo and burns
+# another timeout. (The shim sets TERM=linux, so IEx colours its output -
+# colour escapes sit inside the very strings a pattern waits for, which is why
+# the demo turns them off with IEx.configure before doing anything else.)
+expect_after {
+    timeout {
+        puts stderr "\nDEMO ABORTED waiting for a pattern. Last output:\n$expect_out(buffer)"
+        exit 1
+    }
+}
 set send_human {.1 .3 10 .05 2}
-
-# The repository the box installs from, on the demo disk (which mounts at
-# /priv): an offline mirror, exactly what the tests use.
-set disk $env(ELIXOS_DEMO_DISK)
-set repo "[pwd]/os/test/fixtures/hex_repo/public"
-foreach dir {hex-repo hex-repo/packages hex-repo/tarballs} {
-    catch {exec -ignorestderr debugfs -w -R "mkdir $dir" $disk}
-}
-foreach file [split [exec sh -c "cd $repo && find . -type f | sed 's|^\./||'"]] {
-    exec -ignorestderr debugfs -w -R "write $repo/$file hex-repo/$file" $disk
-}
 
 spawn -noecho qemu-system-x86_64 \
     -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
@@ -32,14 +32,19 @@ set qemu $spawn_id
 expect "iex(1)> "
 sleep 1
 
-# Trusting a repository is the consent step; installing by name pulls jido and
-# its dependencies.
-send "Elixos.Package.add_repo(:fixture, \"/priv/hex-repo\", key: File.read!(\"/priv/hex-repo/public_key\"))\r"
-expect "iex(2)> "
+# A recording is easier to read - and to drive - without colour: the escapes
+# land inside the very strings the script waits for.
+send {IEx.configure(colors: [enabled: false])}
+send "\r"
+expect -re {iex\([0-9]+\)> }
 sleep 1
-send "Elixos.Package.install(:jido)\r"
-expect "{:ok, :jido}"
-sleep 2
+
+# Jido is a dependency of Elixos itself (ADR-036): it is already running
+# before this prompt exists. Nothing to add, nothing to install.
+send {Application.spec(:jido, :vsn)}
+send "\r"
+expect {~c"2.4.0"}
+sleep 1
 
 # An agent is a module, and a prompt defines it - one expression, the way a
 # defmodule is typed.
@@ -93,29 +98,33 @@ defmodule Demo do
     {:ok, state} = Jido.AgentServer.state(Elixos.Agents.whereis(id))
     state.agent.state
   end
-end)}
+end
+
+:ok)}
+send "\r"
+expect -re {iex\([0-9]+\)> }
 sleep 2
 
 send "Elixos.Agents.start(Demo.Agent, id: \"greeter\", jido: Demo.Jido)\r"
 expect "{:ok, #PID<"
 sleep 1
 send "Demo.ask(\"greeter\", \"note\", %{note: \"remember me\"})\r"
-expect "iex(6)> "
+expect {last: "remember me"}
 sleep 1
 
 # An action that asks a model - the stub answers over the loopback.
 send "Demo.Stub.start(4040, \"a model said hello\")\r"
-expect "iex(7)> "
+expect -re {iex\([0-9]+\)> }
 sleep 1
 send "Elixos.Agents.start(Demo.Agent, id: \"scribe\", jido: Demo.Jido)\r"
 expect "{:ok, #PID<"
 sleep 1
 send "Demo.ask(\"scribe\", \"ask\", %{prompt: \"say hello\"})\r"
-expect ~|answer: "a model said hello"|
+expect {answer: "a model said hello"}
 sleep 2
 
 send "Elixos.Agents.list() |> Map.keys() |> Enum.sort()\r"
-expect ~|\["greeter", "scribe"\]|
+expect -exact {["greeter", "scribe"]}
 sleep 1
 
 # The live image saves what was typed and what the agents remember; then the
@@ -142,11 +151,16 @@ set second $spawn_id
 
 expect "iex(1)> "
 sleep 1
+# A fresh IEx: the first boot's colours-off was session state, not saved.
+send {IEx.configure(colors: [enabled: false])}
+send "\r"
+expect -re {iex\([0-9]+\)> }
+sleep 1
 send "Elixos.Agents.list() |> Map.keys() |> Enum.sort()\r"
-expect ~|\["greeter", "scribe"\]|
+expect -exact {["greeter", "scribe"]}
 sleep 1
 send "Demo.state(\"greeter\")\r"
-expect ~|last: "remember me"|
+expect {last: "remember me"}
 sleep 2
 
 send "Elixos.poweroff()\r"
