@@ -225,6 +225,13 @@ ln -sfn "$RELEASE_VSN" "$ROOTFS/factory/releases/current"
 # No shells, no release scripts: the shim execs erlexec itself (ADR-012).
 rm -rf "$ROOTFS/factory/bin"
 
+# An escript execs `erl` from beside itself, and OTP's `erl` is a shell
+# script - unusable in an image that has no /bin/sh (ADR-012). erlexec *is*
+# the emulator launcher: it reads ROOTDIR/BINDIR from the environment the shim
+# sets and every child inherits. So `erl` is a symlink to it, and escripts -
+# the toolchain package's programs, (M14) - run directly.
+ln -sfn erlexec "$ROOTFS/factory/erts/bin/erl"
+
 # The official Hex repository: the factory ships its public key and the
 # preconfigured entry, so a box trusts it without anyone adding a repository
 # first (ADR-019). `/priv/hex/` is the box's own copy and wins once it exists.

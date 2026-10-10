@@ -103,7 +103,20 @@ defmodule Elixos.Integration.M14PackagesTest do
     # One expression per call: QEMU.iex/3 sends a single line and waits for the
     # *next* prompt, so a multi-line paste makes it lose track of which prompt
     # it is waiting for (ADR-030).
-    escript = "#!/factory/erts/bin/escript\\nmain(_) ->\\n  {ok, Dir} = file:get_cwd(),\\n  io:format(\\"~s~n\\", [Dir]).\\n"
+    # The escript's bytes: "\n" and '\"' as the *guest* must see them, one
+    # level of escaping before the string this test sends. Spelled as numbers
+    # so neither this file's quoting nor the guest's is in the way.
+    newline = <<92, 110>>
+    quote = <<92, 34>>
+
+    escript =
+      "#!/factory/erts/bin/escript" <>
+        newline <>
+        "main(_) ->" <>
+        newline <>
+        "  {ok, Dir} = file:get_cwd()," <>
+        newline <>
+        "  io:format(" <> quote <> "~s~n" <> quote <> ", [Dir])." <> newline
 
     {out, vm} = QEMU.iex(vm, ~s{File.mkdir_p!("/priv/toolchain/bin")})
     assert out =~ ":ok"
