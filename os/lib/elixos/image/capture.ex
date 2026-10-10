@@ -41,7 +41,8 @@ defmodule Elixos.Image.Capture do
     Process.put(key, [])
 
     try do
-      {value, new_binding} = Code.eval_quoted_with_env(quoted, binding, env, opts)
+      # /4 returns the updated env as well, so a shell can keep looping.
+      {value, new_binding, _env} = Code.eval_quoted_with_env(quoted, binding, env, opts)
       {value, new_binding, Process.get(key) |> Enum.reverse()}
     after
       Process.delete(key)
