@@ -3,7 +3,7 @@ defmodule Elixos do
   Elixos: the Elixir operating system. This module is the API you use at the prompt.
 
       iex(1)> Elixos.info()
-      %{generation: 3, mode: :normal, attempt: 1, version: "0.1.0"}
+      %{arch: "x86_64", attempt: 1, generation: 3, mode: :normal, version: "0.1.0"}
       iex(2)> defmodule Hello, do: def(hi, do: :persisted)
       iex(3)> Elixos.save()
       {:ok, 4}
@@ -13,7 +13,7 @@ defmodule Elixos do
   the milestone that builds it (docs/ROADMAP.md).
   """
 
-  @doc "Boot facts: generation, mode (:normal | :rescue), attempt, OS version. (M4)"
+  @doc "Boot facts: arch, generation, mode (:normal | :rescue), attempt, OS version. (M4; arch M16)"
   def info, do: Elixos.Boot.info()
 
   @doc "Ask the shim to reboot once the VM has stopped. (M4)"

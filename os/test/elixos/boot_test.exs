@@ -10,7 +10,21 @@ defmodule Elixos.BootTest do
   alias Elixos.Boot
 
   test "on the dev host the mode is :host and there is no generation" do
-    assert Boot.info() == %{generation: nil, mode: :host, attempt: nil, version: Boot.version()}
+    assert Boot.info() ==
+             %{
+               arch: Boot.arch(),
+               generation: nil,
+               mode: :host,
+               attempt: nil,
+               version: Boot.version()
+             }
+  end
+
+  test "the arch is the short marker of ERTS's target triple" do
+    [short | _] = String.split(to_string(:erlang.system_info(:system_architecture)), "-")
+
+    assert Boot.arch() == short
+    assert Boot.info().arch == short
   end
 
   test "the version is the :elixos application's" do

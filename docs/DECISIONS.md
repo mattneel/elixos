@@ -1057,3 +1057,25 @@ call's result, then `:ok` from the second - on a console whose state it now
 tracks. The anchor's cost is a five-second window per call for multi-line
 expressions, whose redraws split the echoed text so the echo never matches;
 those fall back to the prompt-number wait.
+
+## ADR-043: Elixos.info carries the architecture
+
+**Status:** accepted (M16)
+
+**Context.** M16 builds for two architectures, and the aarch64 acceptance asks
+the running box what it is through the same API the x86_64 tests already read
+facts from. `Elixos.Boot.info/0` had generation, mode, attempt and version -
+no architecture. The information exists: ERTS knows the target it was built
+for. Nothing surfaced it.
+
+**Decision.** `Elixos.Boot.info/0` gains `arch`: the part of
+`:erlang.system_info(:system_architecture)` before the first dash, so
+`"x86_64"` and `"aarch64"` rather than the full target triple.
+`Elixos.Boot.arch/0` is public for callers that want just that. The value
+comes from the VM, not from the shim's launch contract (PROTOCOL.md §3): on
+the console what matters is what the BEAM is running on.
+
+**Consequences.** The unit test that asserted the map exactly, and the
+moduledoc examples in `Elixos.Boot` and `Elixos` (documentation - this repo
+runs no doctests), change with it. The aarch64 smoke test's assertion - the
+console output contains the architecture - is the acceptance.
