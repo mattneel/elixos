@@ -39,7 +39,11 @@ defmodule Elixos.Integration.M09SessionDirTest do
     # an erl shell, and it starts in /priv/home too.
     vm = QEMU.send_raw(vm, @ctrl_g)
     {_, vm} = QEMU.expect(vm, ~r/User switch command/)
+    {_, vm} = QEMU.expect(vm, ~r/-->/)
     vm = QEMU.send_line(vm, "s")
+    # OTP's job-control parser discards the rest of a received input chunk.
+    # Wait for the next command prompt rather than batching `s` and `c`.
+    {_, vm} = QEMU.expect(vm, ~r/-->/)
     vm = QEMU.send_line(vm, "c 2")
     {_, vm} = QEMU.expect(vm, ~r/Eshell V/, 60_000)
     {_, vm} = QEMU.expect(vm, ~r/1> /, 60_000)
@@ -59,7 +63,9 @@ defmodule Elixos.Integration.M09SessionDirTest do
     # Back to the first session: its directory is what it was.
     vm = QEMU.send_raw(vm, @ctrl_g)
     {_, vm} = QEMU.expect(vm, ~r/User switch command/)
+    {_, vm} = QEMU.expect(vm, ~r/-->/)
     vm = QEMU.send_line(vm, "c 1")
+    {_, vm} = QEMU.expect(vm, QEMU.iex_prompt())
     {out, vm} = QEMU.iex(vm, "pwd()")
     assert out =~ ~s("/tmp")
     {out, vm} = QEMU.iex(vm, "File.cwd!()")

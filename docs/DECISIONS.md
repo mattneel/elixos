@@ -1079,3 +1079,26 @@ the console what matters is what the BEAM is running on.
 moduledoc examples in `Elixos.Boot` and `Elixos` (documentation - this repo
 runs no doctests), change with it. The aarch64 smoke test's assertion - the
 console output contains the architecture - is the acceptance.
+
+## ADR-044: Console job-control tests wait for each ready prompt
+
+**Status:** accepted (M16; M9 acceptance synchronization)
+
+**Context.** The full x86_64 QEMU suite on the packaged image passed 40 of
+41 tests. M9's two-session test sent `s` and `c 2` back-to-back after Ctrl-G;
+the console showed `s` and another `-->`, but never the connected Erlang
+shell. OTP 29.1.1's `lib/kernel/src/user_drv.erl`, `switch_loop/3`, parses one
+line with `edlin:edit_line/2` and explicitly discards `_Rest` from that input
+chunk. A second command in the same chunk is lost. The other M9 console-job
+test already waits for the command prompt and passes.
+
+**Decision.** `m09_session_dir_test.exs` consumes the initial `-->` before a
+command, the next `-->` after starting the shell, and the IEx prompt after
+reconnecting to the first job. Each command now reaches a driver ready for
+that line. This is synchronization, not pacing: no sleeps, retries, widened
+regexes, changed assertions or raised timeouts.
+
+**Consequences.** The acceptance still proves two independent session
+directories and an unchanged VM cwd. OTP and the OS remain unmodified for
+this issue. This ADR covers the protected test change in its own commit;
+`make audit` must still report zero violations.
