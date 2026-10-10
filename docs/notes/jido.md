@@ -88,3 +88,21 @@ so `:ssl` has to be appended (`Code.append_path/1` at
 `~/.local/share/mise/installs/erlang/29.1.1/lib/ssl-*/ebin`, and its
 `public_key`/`asn1` siblings) before a hosted provider can be called from a
 script; the guest gets the same applications from the factory.
+
+**Finding a running agent.** `DynamicSupervisor.which_children/1` reports its
+children with an `:undefined` id - a dynamic child has no stable identity to
+report - so a lookup cannot be built on it, and a record that caches the pid
+points at the dead one after a crash anyway. Two ways out, one per agent kind:
+a plain agent starts through `Elixos.Agents.start_agent_child/3`, whose MFA is
+the child spec's `start`, so every start (a supervisor restart included)
+registers the process under `:"elixos.agent.<id>"`; a Jido agent is in its
+instance's `Registry`, whose name is `Jido.registry_name/1`
+(`Module.concat(instance, Registry)`), and `Jido.AgentServer.whereis/2` reads
+it. Derive the registry name with `Module.concat` rather than calling
+`Jido.registry_name/1` directly: jido is a *package*, not a Mix dependency, so
+a direct call is a compile-time reference to a module that need not exist.
+
+**Provider responses.** A hosted provider answers `Transfer-Encoding: chunked`
+as often as not, and the body assembles from hex-size lines -
+`Elixos.Agents.LLM` dechunks when the header says so. A stub that always
+answers with `Content-Length` will never catch this.
