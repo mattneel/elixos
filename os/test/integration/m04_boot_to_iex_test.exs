@@ -26,7 +26,7 @@ defmodule Elixos.Integration.M04BootToIExTest do
     QEMU.stop(vm)
   end
 
-  test "PID 1 is the shim, the BEAM is its child, and there is no sh", ctx do
+  test "PID 1 is the shim, the BEAM is its child, and shells are only tools", ctx do
     vm = QEMU.boot_to_iex(ctx, disk: Disk.fresh!(ctx.tmp_dir))
 
     {out, vm} = QEMU.iex(vm, ~s|File.read!("/proc/1/comm")|)
@@ -35,8 +35,12 @@ defmodule Elixos.Integration.M04BootToIExTest do
     {out, vm} = QEMU.iex(vm, ~s{File.read!("/proc/self/stat") |> String.split() |> Enum.at(3)})
     assert out =~ ~s|"1"|, "the BEAM's parent must be PID 1 (the shim)"
 
-    {out, vm} = QEMU.iex(vm, ~s|Enum.any?(["/bin/sh", "/bin/bash", "/sbin/sh"], &File.exists?/1)|)
-    assert out =~ ~r/^false$/m
+    # ADR-041 amends ADR-012: Alpine's BusyBox sh exists, for *tooling*, and a
+    # tool runs it directly. No shell is in the boot path - PID 1 execs ERTS
+    # itself (the parent check above) and the console is IEx (the first test).
+    {out, vm} = QEMU.iex(vm, ~s|System.cmd("/bin/sh", ["-c", "echo tool-ok"])|)
+    assert out =~ ~s|{"tool-ok\\n", 0}|
+
     QEMU.stop(vm)
   end
 
