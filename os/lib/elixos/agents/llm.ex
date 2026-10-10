@@ -194,7 +194,6 @@ defmodule Elixos.Agents.LLM do
   end
 
   defp supported_scheme(%URI{scheme: "http"}), do: :ok
-  defp supported_scheme(_uri), do: {:error, :bad_url}
 
   defp supported_scheme(%URI{scheme: "https"}) do
     # The image ships no TLS today (M15 scope): a local provider works, a
@@ -208,6 +207,8 @@ defmodule Elixos.Agents.LLM do
       _other -> {:error, :no_tls}
     end
   end
+
+  defp supported_scheme(_uri), do: {:error, :bad_url}
 
   # `:public_key.cacerts_get/0` reads the OS trust store; a machine without
   # one cannot verify a hosted provider, and that is the honest answer.
