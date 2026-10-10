@@ -62,9 +62,13 @@ stage() {
 }
 
 build_packages() { # build_packages <arch>
-  local arch="$1" repo="$BUILD/apk/$arch" pkg pname
-  for pkg in "$ROOT"/melange/*.yaml; do
-    pname="elixos-$(basename "$pkg" .yaml)"
+  local arch="$1" repo="$BUILD/apk/$arch" pkg pname file
+  # Dependency order, not glob order: OTP before Elixir and the factory (they
+  # build against it), the kernel and the shim independent.
+  for pkg in kernel otp elixir factory shim; do
+    file="$ROOT/melange/$pkg.yaml"
+    [ -f "$file" ] || continue
+    pname="elixos-$pkg"
     # An architecture's OTP build is expensive (aarch64 runs emulated on an
     # x86_64 host), so a built APK is kept: delete build/apk (or the one APK)
     # to rebuild from source, the way the old toolchain cache worked.
@@ -72,10 +76,10 @@ build_packages() { # build_packages <arch>
       echo "build-image: [$arch] $pname already built (FORCE=1 rebuilds)"
       continue
     fi
-    echo "build-image: [$arch] melange $(basename "$pkg")"
+    echo "build-image: [$arch] melange $(basename "$file")"
     # -r/-k let a package build against the ones built before it (the factory
     # needs OTP and Elixir; melange would otherwise only see Alpine).
-    "$MELANGE" build "$pkg" --arch "$arch" --source-dir "$SRC" \
+    "$MELANGE" build "$file" --arch "$arch" --source-dir "$SRC" \
       --out-dir "$repo" --signing-key "$KEY" \
       -r "$repo" -k "$KEY.pub" >/dev/null
   done

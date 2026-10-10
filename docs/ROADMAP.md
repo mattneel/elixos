@@ -405,8 +405,11 @@ scope here: OCI images and the shim's container mode - the next milestone,
 which the human writes up separately.
 
 **Image size.** Before (hand-built, x86_64): initramfs 44M, rootfs 108M
-(factory 82M, libs 27M), kernel 14.3MiB. After: recorded here when the
-pipeline builds.
+(factory 82M, libs 27M), kernel 14.3MiB. After (x86_64, 2026-10-10): initramfs
+91M, root filesystem tar 114M, kernel 14.5MiB - bigger, because the initramfs
+now carries Alpine's base, the kernel, a full OTP install and the release;
+the release no longer duplicates the ERTS (that change removed 18M). aarch64
+recorded when its build lands.
 
 **Done when.** `make ci` is green with `MILESTONE=16` on the new x86_64
 image, `make test-qemu-aarch64` passes its smoke set, `make reproducible`
