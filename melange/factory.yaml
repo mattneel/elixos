@@ -84,3 +84,22 @@ pipeline:
       # The box builds Mix projects itself (M11), and `mix release` leaves the
       # mix application out.
       cp -a /usr/local/lib/elixir/lib/mix "$dest/lib/"
+
+      # No shell scripts (ADR-012), but *escript* starts its erl with
+      # `-boot no_dot_erlang`, which ERTS looks up under $ROOTDIR/bin: that
+      # compiled boot script is the one file an escript needs from the removed
+      # bin/. It lives in the OTP install.
+      mkdir -p "$dest/bin"
+      ln -sfn "$lib/bin/no_dot_erlang.boot" "$dest/bin/no_dot_erlang.boot"
+
+      # The official Hex repository: the factory ships its public key and the
+      # preconfigured entry, so a box trusts it without anyone adding a
+      # repository first (ADR-019). /priv/hex/ is the box's own copy and wins
+      # once it exists.
+      mkdir -p "$dest/hex/keys"
+      cp /home/build/hex/keys/elixos.pub "$dest/hex/keys/elixos.pub"
+      {
+        printf '[\n  elixos: [\n    url: "https://mattneel.github.io/elixos",\n    key: """\n'
+        cat /home/build/hex/keys/elixos.pub
+        printf '"""\n  ]\n]\n'
+      } > "$dest/hex/repos.exs"

@@ -57,8 +57,8 @@ stage() {
   rm -rf "$SRC"
   mkdir -p "$SRC/os"
   cp -r "$ROOT/build.zig" "$ROOT/build.zig.zon" "$ROOT/.zig-version" "$ROOT/.tool-versions" \
-        "$ROOT/shim" "$ROOT/spec" "$ROOT/kernel" "$ROOT/scripts" "$SRC/"
-  cp -r "$ROOT/os/mix.exs" "$ROOT/os/mix.lock" "$ROOT/os/lib" "$ROOT/os/config" "$SRC/os/"
+        "$ROOT/shim" "$ROOT/spec" "$ROOT/kernel" "$ROOT/scripts" "$ROOT/hex" "$SRC/"
+  cp -r "$ROOT/os/mix.exs" "$ROOT/os/mix.lock" "$ROOT/os/lib" "$ROOT/os/config" "$ROOT/os/priv" "$SRC/os/"
 }
 
 build_packages() { # build_packages <arch>
