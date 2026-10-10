@@ -1,0 +1,9 @@
+# Elixos kernel config: x86_64 (ADR-041).
+#
+# Applied over x86_64_defconfig + kvm_guest.config, on top of the common
+# fragment (kernel/elixos.config); the guard checks all three files together.
+# Everything here is a symbol arm64 does not have (or spells differently).
+
+# --- guest niceties, x86 only: the KVM guest bits are x86 symbols ---
+CONFIG_HYPERVISOR_GUEST=y
+CONFIG_KVM_GUEST=y

@@ -35,16 +35,20 @@ if [ ! -d "$SRC" ]; then
   tar -C "$BUILD" -xJf "$DL/$TARBALL"
 fi
 
-echo "kernel: configuring (x86_64_defconfig + kvm_guest.config + kernel/elixos.config)"
+echo "kernel: configuring (x86_64_defconfig + kvm_guest.config + both fragments)"
 # kbuild treats a non-empty $LLVM as "build with clang" and rejects anything but
 # a path prefix, `-suffix` or 1. Hosts that source emsdk (mise does) export LLVM
 # as a bin directory, which is none of those. We build with gcc: drop it.
 unset LLVM
+# Since M16 the fragment is common + one per architecture (ADR-041); this
+# script builds x86_64 (the melange kernel package builds each arch), and the
+# guard covers both files so the common half stays honest.
+FRAGMENTS=("$ROOT/kernel/elixos.config" "$ROOT/kernel/config.x86_64")
 make -C "$SRC" -s x86_64_defconfig
 make -C "$SRC" -s kvm_guest.config
-"$SRC/scripts/kconfig/merge_config.sh" -m -O "$SRC" "$SRC/.config" "$ROOT/kernel/elixos.config" >/dev/null
+"$SRC/scripts/kconfig/merge_config.sh" -m -O "$SRC" "$SRC/.config" "${FRAGMENTS[@]}" >/dev/null
 make -C "$SRC" -s olddefconfig
-"$ROOT/scripts/check-kernel-config.sh" "$SRC/.config" "$ROOT/kernel/elixos.config"
+"$ROOT/scripts/check-kernel-config.sh" "$SRC/.config" "${FRAGMENTS[@]}"
 
 echo "kernel: building bzImage with $JOBS jobs"
 make -C "$SRC" -s -j"$JOBS" bzImage

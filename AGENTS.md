@@ -49,7 +49,7 @@ The roadmap already exists as tests, gated by the `MILESTONE` file
 - **Each REPL session has its own working directory** (ADR-020), keyed by its
   group leader. Nothing changes the VM's cwd (ADR-016); native tools are exec'd
   with `cd:` set to the session's directory.
-- x86_64 only (ADR-014). Single user (ADR-013). No runtime deps in `os/`
+- x86_64 and aarch64 (ADR-041). Single user (ADR-013). No runtime deps in `os/`
   without an ADR.
 - Decisions marked OPEN in docs/DECISIONS.md belong to the human. Follow the
   proposed default and keep going; mention it in your summary.

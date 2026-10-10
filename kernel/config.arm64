@@ -1,0 +1,12 @@
+# Elixos kernel config: arm64 (ADR-041).
+#
+# Applied over arm64's defconfig, on top of the common fragment
+# (kernel/elixos.config); the guard checks both files together.
+#
+# The common fragment is deliberately quiet about consoles: x86 has 8250 UARTs
+# and arm64's `virt` machine has an ARM PL011, so each arch names its own way
+# to put `console=` somewhere.
+
+# --- the serial console the aarch64 tests and the deck use ---
+CONFIG_SERIAL_AMBA_PL011=y
+CONFIG_SERIAL_AMBA_PL011_CONSOLE=y

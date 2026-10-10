@@ -15,9 +15,12 @@ defmodule Elixos.Test.QEMU do
       {out, vm} = QEMU.iex(vm, "1 + 1")
       assert out =~ "2"
 
-  Artifacts default to build/bzImage and build/initramfs.cpio.gz (override with
-  ELIXOS_KERNEL / ELIXOS_INITRAMFS). Timeouts scale with ELIXOS_QEMU_SLOWDOWN
-  (default 1; raise it without KVM).
+  Artifacts default to build/bzImage and build/initramfs.cpio.gz on x86_64,
+  and build/aarch64/Image and build/aarch64/initramfs.cpio.gz on aarch64
+  (`:arch`), each overridable with its environment variable
+  (ELIXOS_KERNEL / ELIXOS_INITRAMFS, ELIXOS_AARCH64_IMAGE /
+  ELIXOS_AARCH64_INITRAMFS). Timeouts scale with ELIXOS_QEMU_SLOWDOWN
+  (default 1; raise it without KVM, and for aarch64 under TCG).
   """
 
   import ExUnit.Assertions
@@ -42,22 +45,26 @@ defmodule Elixos.Test.QEMU do
     * `:append` - extra kernel command line words, e.g. `["elixos.safe"]`
     * `:memory_mb` - default 1024
     * `:ssh_port` - forward host 127.0.0.1:<port> to guest port 22 (virtio-net, ip=dhcp)
+    * `:arch` - `:x86_64` (default) or `:aarch64`: which QEMU binary, machine,
+      console and artifacts the guest gets
     * `:uefi` - `{esp_image, ovmf_code, ovmf_vars_copy}`: boot through firmware
       instead of `-kernel`/`-initrd`
   """
   @spec boot(map(), keyword()) :: t()
   def boot(_context, opts) do
     disk = Keyword.fetch!(opts, :disk)
-    qemu = System.find_executable("qemu-system-x86_64") || flunk("qemu-system-x86_64 not found")
+    arch = Keyword.get(opts, :arch, :x86_64)
+    binary = qemu_binary(arch)
+    qemu = System.find_executable(binary) || flunk("#{binary} not found")
 
     args =
       [
-        ["-machine", "q35", "-accel", "kvm", "-accel", "tcg", "-cpu", "max"],
+        machine_args(arch),
         ["-m", to_string(Keyword.get(opts, :memory_mb, 1024)), "-smp", "2"],
         ["-display", "none", "-monitor", "none", "-serial", "stdio", "-no-reboot"],
         ["-drive", "file=#{drive_path(disk)},if=virtio,format=raw"],
         ["-device", "virtio-rng-pci"],
-        boot_args(opts),
+        boot_args(arch, opts),
         net_args(opts)
       ]
       |> Enum.concat()
@@ -70,7 +77,7 @@ defmodule Elixos.Test.QEMU do
     %__MODULE__{port: port, os_pid: os_pid}
   end
 
-  defp boot_args(opts) do
+  defp boot_args(arch, opts) do
     case Keyword.get(opts, :uefi) do
       nil ->
         # `quiet`: the kernel log is noise on a console whose lines the tests
@@ -79,15 +86,18 @@ defmodule Elixos.Test.QEMU do
         # still print, which is what the tests that check them need.
         append =
           Enum.join(
-            ["console=ttyS0", "panic=-1", "quiet" | Keyword.get(opts, :append, [])],
+            [console(arch), "panic=-1", "quiet" | Keyword.get(opts, :append, [])],
             " "
           )
 
+        {kernel_env, kernel_name} = kernel_artifact(arch)
+        {initramfs_env, initramfs_name} = initramfs_artifact(arch)
+
         [
           "-kernel",
-          artifact("ELIXOS_KERNEL", "bzImage"),
+          artifact(kernel_env, kernel_name),
           "-initrd",
-          artifact("ELIXOS_INITRAMFS", "initramfs.cpio.gz"),
+          artifact(initramfs_env, initramfs_name),
           "-append",
           append
         ]
@@ -108,6 +118,31 @@ defmodule Elixos.Test.QEMU do
   # option parser treats a comma in `file=` as a separator. Doubling it is
   # QEMU's escape (verified: `-drive file=/a,,b,if=none` opens "/a,b").
   defp drive_path(path), do: String.replace(path, ",", ",,")
+
+  # The two architectures ADR-041 builds for. aarch64 under TCG on an x86_64
+  # host is slow and needs no KVM: QEMU tries each -accel in order and falls
+  # back to the next.
+  defp qemu_binary(:x86_64), do: "qemu-system-x86_64"
+  defp qemu_binary(:aarch64), do: "qemu-system-aarch64"
+
+  defp machine_args(:x86_64) do
+    ["-machine", "q35", "-accel", "kvm", "-accel", "tcg", "-cpu", "max"]
+  end
+
+  defp machine_args(:aarch64) do
+    ["-machine", "virt", "-accel", "kvm", "-accel", "tcg", "-cpu", "cortex-a72"]
+  end
+
+  defp console(:x86_64), do: "console=ttyS0"
+  defp console(:aarch64), do: "console=ttyAMA0"
+
+  defp kernel_artifact(:x86_64), do: {"ELIXOS_KERNEL", "bzImage"}
+  defp kernel_artifact(:aarch64), do: {"ELIXOS_AARCH64_IMAGE", "aarch64/Image"}
+
+  defp initramfs_artifact(:x86_64), do: {"ELIXOS_INITRAMFS", "initramfs.cpio.gz"}
+
+  defp initramfs_artifact(:aarch64),
+    do: {"ELIXOS_AARCH64_INITRAMFS", "aarch64/initramfs.cpio.gz"}
 
   defp net_args(opts) do
     case Keyword.get(opts, :ssh_port) do
