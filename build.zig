@@ -1,15 +1,20 @@
 //! Builds the Elixos PID 1 shim (`zig-out/bin/init`) and runs its unit tests.
 //!
-//!   zig build -Doptimize=ReleaseSafe          the static x86_64 /init for the initramfs
+//!   zig build -Doptimize=ReleaseSafe          the static /init for the initramfs
 //!   zig build test -Dmilestone=$(cat MILESTONE)   host unit tests, gated by milestone
 //!
 //! The Makefile passes -Dmilestone for you; see docs/TESTING.md.
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    // ADR-014: x86_64 only for now. The shim is static and libc-free (ADR-003).
+    // ADR-041: x86_64 and aarch64 both. The shim is static and libc-free
+    // (ADR-003), so the target changes only the instruction set. The default
+    // follows the host this build runs on - each architecture's melange
+    // package runs inside that architecture's build environment - and
+    // `-Dtarget=<arch>-linux-none` overrides it explicitly.
+    const host = b.graph.host.result;
     const target = b.standardTargetOptions(.{
-        .default_target = .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .none },
+        .default_target = .{ .cpu_arch = host.cpu.arch, .os_tag = .linux, .abi = .none },
     });
     const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseSafe });
 
