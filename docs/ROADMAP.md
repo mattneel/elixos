@@ -159,7 +159,7 @@ normal mode and commits once.
   generation from `ELIXOS_GENERATION` before starting the REPL.
 - The shim applies `NEXT` and logs `next generation=<g>`.
 
-- [ ] Demo recorded: `demos/m06-live-image.mp4` (`make demo M=6`).
+- [x] Demo recorded: `demos/m06-live-image.mp4` (`make demo M=6`).
 
 ---
 

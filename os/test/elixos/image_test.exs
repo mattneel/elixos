@@ -26,6 +26,39 @@ defmodule Elixos.ImageTest do
     :code.purge(mod)
   end
 
+  # A full or read-only disk must be an error the caller can report, not the
+  # death of the image service (the recorder would lose every queued capture
+  # with it, and a later save would still claim success).
+  test "a write that fails is an error to the caller, not the image's death", %{
+    image: image,
+    root: root
+  } do
+    {mod, bytecode} = define("def hi, do: :ok")
+    store = Path.join(root, "store")
+    File.chmod!(store, 0o500)
+
+    try do
+      assert {:error, reason} = Image.record(image, mod, bytecode)
+      assert reason in [:eacces, :eperm]
+    after
+      File.chmod!(store, 0o700)
+    end
+
+    # Still alive, still usable.
+    assert {:ok, _hash} = Image.record(image, mod, bytecode)
+  end
+
+  # Stored bytecode that will not load (an `@on_load` failure, a bad blob) is
+  # named in the error; the image service survives to report it.
+  test "bytecode that will not load is reported with its module", %{image: image} do
+    mod = Module.concat([Elixos.ImageTest.Unloadable, "M#{System.unique_integer([:positive])}"])
+    # The store hashes what it is given, so this stores a blob with a valid
+    # hash that is not a beam (an `@on_load` failure would report the same way).
+    assert {:ok, _hash} = Image.record(image, mod, "not a beam file")
+
+    assert Image.recover(image, [mod]) == {:error, {:load_failed, mod, :badfile}}
+  end
+
   test "a recorded module survives being unloaded: save, then restore", %{image: image} do
     {mod, bytecode} = define("def hi, do: :persisted")
     assert {:ok, hash} = Image.record(image, mod, bytecode)

@@ -14,29 +14,48 @@ defmodule Elixos.Image do
   the working set into a new generation.
   """
 
+  use GenServer
+
+  alias Elixos.Image.{Generation, Journal, Store}
+
   @type t :: pid()
 
   @spec open(Path.t()) :: {:ok, t()} | {:error, term()}
-  def open(root), do: Elixos.NotImplemented.raise!(6, "Elixos.Image.open/1 #{root}")
+  def open(root) do
+    with {:ok, store} <- Store.open(store_dir(root)),
+         {:ok, journal} <- Journal.open(journal_path(root)) do
+      # The working set is the journal replayed: every definition, in order,
+      # with the ones that were forgotten left out.
+      case Journal.read(journal_path(root)) do
+        {:ok, entries, _status} ->
+          state = %{root: root, store: store, journal: journal, modules: working_set(entries)}
+          GenServer.start_link(__MODULE__, state)
+
+        {:error, reason} ->
+          :ok = Journal.close(journal)
+          {:error, reason}
+      end
+    end
+  end
 
   @doc "Stores `bytecode`, journals `{:module, module, hash}`, updates the working set."
   @spec record(t(), module(), binary()) :: {:ok, Elixos.Image.Store.hash()} | {:error, term()}
   def record(image, module, bytecode) do
-    _ = {image, module, bytecode}
-    Elixos.NotImplemented.raise!(6, "Elixos.Image.record/3")
+    # Durable recording is the one boundary that must not time out: a slow fsync
+    # is still a successful record, and the caller (the recorder) would lose
+    # queued captures if this call exited.
+    GenServer.call(image, {:record, module, bytecode}, :infinity)
   end
 
   @doc "Journals `{:forget, module}` and drops it from the working set."
   @spec forget(t(), module()) :: :ok | {:error, term()}
   def forget(image, module) do
-    _ = {image, module}
-    Elixos.NotImplemented.raise!(6, "Elixos.Image.forget/2")
+    GenServer.call(image, {:forget, module})
   end
 
   @spec modules(t()) :: %{module() => Elixos.Image.Store.hash()}
   def modules(image) do
-    _ = image
-    Elixos.NotImplemented.raise!(6, "Elixos.Image.modules/1")
+    GenServer.call(image, :modules)
   end
 
   @doc """
@@ -46,16 +65,14 @@ defmodule Elixos.Image do
   """
   @spec save(t(), keyword()) :: {:ok, pos_integer()} | {:error, term()}
   def save(image, opts \\ []) do
-    _ = {image, opts}
-    Elixos.NotImplemented.raise!(6, "Elixos.Image.save/2")
+    GenServer.call(image, {:save, opts})
   end
 
   @doc "Loads every module of generation `n` into the VM."
   @spec restore(t(), non_neg_integer()) ::
           {:ok, [module()]} | {:error, :not_found | {:missing_blob, module()} | term()}
   def restore(image, n) do
-    _ = {image, n}
-    Elixos.NotImplemented.raise!(6, "Elixos.Image.restore/2")
+    GenServer.call(image, {:restore, n})
   end
 
   @doc """
@@ -65,20 +82,162 @@ defmodule Elixos.Image do
   """
   @spec unsaved(t(), non_neg_integer()) :: [module()]
   def unsaved(image, n) do
-    _ = {image, n}
-    Elixos.NotImplemented.raise!(7, "Elixos.Image.unsaved/2")
+    GenServer.call(image, {:unsaved, n})
   end
 
   @doc "Loads the working-set versions of `modules` into the VM."
   @spec recover(t(), [module()]) :: {:ok, [module()]} | {:error, term()}
   def recover(image, modules) do
-    _ = {image, modules}
-    Elixos.NotImplemented.raise!(7, "Elixos.Image.recover/2")
+    GenServer.call(image, {:recover, modules})
+  end
+
+  @doc "The manifest of generation `n`, or `{:error, :not_found}`."
+  @spec generation(t(), non_neg_integer()) ::
+          {:ok, Generation.t()} | {:error, :not_found | :corrupt}
+  def generation(image, n) do
+    GenServer.call(image, {:generation, n})
+  end
+
+  @doc "Saved generation numbers, oldest first."
+  @spec generations(t()) :: [pos_integer()]
+  def generations(image) do
+    GenServer.call(image, :generations)
   end
 
   @spec close(t()) :: :ok
   def close(image) do
-    _ = image
-    Elixos.NotImplemented.raise!(6, "Elixos.Image.close/1")
+    GenServer.stop(image)
   end
+
+  ## GenServer
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call({:record, module, bytecode}, _from, state) do
+    # A full or read-only disk is an error to report, not a reason to take the
+    # image service down (the caller would lose every queued capture with it).
+    with {:ok, hash} <- Store.put(state.store, bytecode),
+         {:ok, _seq} <- Journal.append(state.journal, {:module, module, hash}) do
+      {:reply, {:ok, hash}, %{state | modules: Map.put(state.modules, module, hash)}}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:forget, module}, _from, state) do
+    with {:ok, _seq} <- Journal.append(state.journal, {:forget, module}) do
+      {:reply, :ok, %{state | modules: Map.delete(state.modules, module)}}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call(:modules, _from, state), do: {:reply, state.modules, state}
+
+  def handle_call({:generation, number}, _from, state) do
+    {:reply, Generation.read(generations_dir(state.root), number), state}
+  end
+
+  def handle_call(:generations, _from, state) do
+    {:reply, Generation.list(generations_dir(state.root)), state}
+  end
+
+  def handle_call({:save, opts}, _from, state) do
+    dir = generations_dir(state.root)
+    saved = Generation.list(dir)
+
+    generation = %Generation{
+      number: Generation.next_number(dir),
+      parent: if(saved == [], do: 0, else: Enum.max(saved)),
+      modules: state.modules,
+      boot: Keyword.get(opts, :boot, []),
+      created_at: DateTime.utc_now()
+    }
+
+    with :ok <- Generation.write(dir, generation),
+         {:ok, _seq} <- Journal.append(state.journal, {:generation, generation.number}) do
+      {:reply, {:ok, generation.number}, state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:restore, number}, _from, state) do
+    case Generation.read(generations_dir(state.root), number) do
+      {:ok, generation} -> {:reply, load_all(state.store, generation.modules), state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:unsaved, number}, _from, state) do
+    modules =
+      case Generation.read(generations_dir(state.root), number) do
+        {:ok, generation} ->
+          Enum.sort(
+            for {module, hash} <- state.modules,
+                Map.get(generation.modules, module) != hash,
+                do: module
+          )
+
+        {:error, _reason} ->
+          Enum.sort(Map.keys(state.modules))
+      end
+
+    {:reply, modules, state}
+  end
+
+  def handle_call({:recover, modules}, _from, state) do
+    hashes = Map.take(state.modules, modules)
+    {:reply, load_all(state.store, hashes), state}
+  end
+
+  @impl true
+  def terminate(_reason, state) do
+    :ok = Journal.close(state.journal)
+    :ok
+  end
+
+  ## The image on disk
+
+  defp working_set(entries) do
+    Enum.reduce(entries, %{}, fn {_seq, entry}, modules ->
+      case entry do
+        {:module, module, hash} -> Map.put(modules, module, hash)
+        {:forget, module} -> Map.delete(modules, module)
+        # A generation is a marker in the journal, not a change to the set.
+        _other -> modules
+      end
+    end)
+  end
+
+  # Loads a {module => hash} map from the store, in module order so a restore
+  # is deterministic. The first missing blob names itself.
+  defp load_all(store, modules) do
+    modules
+    |> Enum.sort_by(fn {module, _hash} -> module end)
+    |> Enum.reduce_while([], fn {module, hash}, loaded ->
+      case Store.get(store, hash) do
+        {:ok, bytecode} ->
+          # An `@on_load` hook that fails is the module's business to report,
+          # not the image's reason to die: name it and let the caller decide.
+          case :code.load_binary(module, ~c"elixos", bytecode) do
+            {:module, ^module} -> {:cont, [module | loaded]}
+            {:error, reason} -> {:halt, {:error, {:load_failed, module, reason}}}
+          end
+
+        {:error, _reason} ->
+          {:halt, {:error, {:missing_blob, module}}}
+      end
+    end)
+    |> case do
+      {:error, _reason} = error -> error
+      loaded -> {:ok, Enum.reverse(loaded)}
+    end
+  end
+
+  defp store_dir(root), do: Path.join(root, "store")
+  defp generations_dir(root), do: Path.join(root, "generations")
+  defp journal_path(root), do: Path.join(root, "journal.log")
 end

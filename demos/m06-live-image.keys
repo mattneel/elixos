@@ -1,0 +1,12 @@
+# What the M6 demo must show, in order.
+elixos-shim: launching generation=0 mode=normal
+iex(1)> defmodule Hello do
+iex(2)> Elixos.save()
+# The shim's line lands on the fresh prompt: IEx prints iex(3)> as soon as
+# save returns, before the shim has read NEXT off the control pipe.
+iex(3)> elixos-shim: next generation=1
+elixos-shim: shutdown poweroff
+elixos-shim: plan generation=1 mode=normal attempt=1
+iex(1)> Hello.hi()
+:persisted
+elixos-shim: shutdown poweroff

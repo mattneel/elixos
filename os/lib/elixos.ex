@@ -49,10 +49,41 @@ defmodule Elixos do
 
   Options: `boot: [{module, function, args}]` to run at boot in that generation.
   """
-  def save(opts \\ []), do: Elixos.NotImplemented.raise!(6, "Elixos.save/1 #{inspect(opts)}")
+  def save(opts \\ []) do
+    # Everything traced so far is recorded before the working set is written.
+    :ok = sync_recorder()
+
+    with {:ok, image} <- image(),
+         {:ok, number} <- Elixos.Image.save(image, opts),
+         :ok <- Elixos.Shim.Control.next(number) do
+      # The shim boots this generation next time, provisionally, until it
+      # commits (ADR-007).
+      {:ok, number}
+    end
+  end
 
   @doc "Saved generation numbers, oldest first. (M6)"
-  def generations, do: Elixos.NotImplemented.raise!(6, "Elixos.generations/0")
+  def generations do
+    case image() do
+      {:ok, image} -> Elixos.Image.generations(image)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp sync_recorder do
+    case Process.whereis(Elixos.Boot.Recorder) do
+      nil -> :ok
+      _recorder -> Elixos.Boot.Recorder.sync()
+    end
+  end
+
+  # The image is registered by Elixos.Application when the shim runs us.
+  defp image do
+    case Process.whereis(Elixos.Image) do
+      nil -> {:error, :no_image}
+      image -> {:ok, image}
+    end
+  end
 
   @doc "Modules defined since generation `n` that were never saved. (M7)"
   def unsaved(n), do: Elixos.NotImplemented.raise!(7, "Elixos.unsaved/1 #{n}")

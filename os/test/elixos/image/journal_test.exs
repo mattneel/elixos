@@ -89,11 +89,54 @@ defmodule Elixos.Image.JournalTest do
     assert File.read!(path) == <<head::binary, Bitwise.bxor(byte, 0xFF), rest::binary>>
   end
 
+  # A CRC-valid term of the wrong shape is damage, never a record: otherwise a
+  # malformed payload would reach the working-set replay and raise there.
+  test "a CRC-valid record that is not a {seq, entry} pair is damage", %{path: path} do
+    append_all(path, [:fine])
+
+    for payload <- [:erlang.term_to_binary(:not_a_pair), :erlang.term_to_binary({2, :tail})] do
+      File.write!(
+        path,
+        <<byte_size(payload)::32-big, :erlang.crc32(payload)::32-big, payload::binary>>,
+        [:append]
+      )
+    end
+
+    assert Journal.read(path) == {:error, {:corrupt, 2}}
+  end
+
   test "the on-disk format is the documented one", %{path: path} do
     append_all(path, [:hello])
     payload = :erlang.term_to_binary({1, :hello})
 
     assert File.read!(path) ==
              <<byte_size(payload)::32-big, :erlang.crc32(payload)::32-big, payload::binary>>
+  end
+
+  # Atoms are per-VM, so this runs the reader in a child VM: that is exactly
+  # the real reader, the next boot. Every module record names its module, and
+  # the reader has not loaded it yet. Decoding with `:safe` refuses to create
+  # the atom and reports damage, which made a saved generation unreadable by
+  # the boot that needs it (found by the M6 integration test). The CRC gate,
+  # not the atom table, is what guards the decoder.
+  test "a record naming a module this VM has never loaded is not damage", %{path: path} do
+    module = :"Elixir.Elixos.JournalTest.Unloaded#{System.unique_integer([:positive])}"
+    append_all(path, [{:module, module, "abc"}, {:generation, 1}])
+
+    script = """
+    case Elixos.Image.Journal.read(#{inspect(path)}) do
+      {:ok, records, :clean} -> IO.puts("records=\#{length(records)}")
+      other -> IO.puts("bad \#{inspect(other)}")
+    end
+    """
+
+    {out, 0} = System.cmd(elixir(), ["-pa", ebin_dir(), "-e", script])
+    assert String.trim(out) == "records=2"
+  end
+
+  defp elixir, do: System.find_executable("elixir")
+
+  defp ebin_dir do
+    Elixos.Image.Journal |> :code.which() |> to_string() |> Path.dirname()
   end
 end

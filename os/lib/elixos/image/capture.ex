@@ -49,10 +49,22 @@ defmodule Elixos.Image.Capture do
     end
   end
 
+  @doc """
+  The module a `{:on_module, bytecode, _}` event defines.
+
+  The event carries the bytecode but not the name, so it comes from the
+  bytecode's attributes.
+  """
+  @spec module_of(binary()) :: {:ok, module()} | :error
+  def module_of(bytecode) do
+    case :beam_lib.chunks(bytecode, [:attributes]) do
+      {:ok, {module, _chunks}} when is_atom(module) -> {:ok, module}
+      _ -> :error
+    end
+  end
+
   @doc false
-  # A compilation tracer (Elixir calls back into this module). The event
-  # carries the bytecode but not the module it defines, so the name comes from
-  # the bytecode's attributes.
+  # A compilation tracer (Elixir calls back into this module).
   def trace({:on_module, bytecode, _ignore}, _env) do
     case module_of(bytecode) do
       {:ok, module} -> Process.put(capture_key(), [{module, bytecode} | Process.get(capture_key(), [])])
@@ -68,10 +80,4 @@ defmodule Elixos.Image.Capture do
   # the accumulator lives in the evaluating process.
   defp capture_key, do: {__MODULE__, :captured}
 
-  defp module_of(bytecode) do
-    case :beam_lib.chunks(bytecode, [:attributes]) do
-      {:ok, {module, _chunks}} when is_atom(module) -> {:ok, module}
-      _ -> :error
-    end
-  end
 end

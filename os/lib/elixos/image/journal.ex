@@ -164,7 +164,7 @@ defmodule Elixos.Image.Journal do
 
   defp decode(payload, crc) do
     if :erlang.crc32(payload) == crc do
-      case safe_binary_to_term(payload) do
+      case decode_term(payload) do
         {:ok, record} -> {:ok, record}
         :error -> :damage
       end
@@ -173,8 +173,14 @@ defmodule Elixos.Image.Journal do
     end
   end
 
-  defp safe_binary_to_term(payload) do
-    {:ok, :erlang.binary_to_term(payload, [:safe])}
+  # Not `binary_to_term/2` with `:safe`: these records name modules, and the
+  # reader is a fresh boot, where those atoms do not exist yet — `:safe`
+  # refuses to create atoms, so every module record would read as damage and a
+  # saved generation could never be loaded by the boot that needs it (M6).
+  # What guards the decoder is the CRC (journal) or the shape check
+  # (generation), not the atom table; those bytes are ours.
+  defp decode_term(payload) do
+    {:ok, :erlang.binary_to_term(payload)}
   rescue
     ArgumentError -> :error
   end

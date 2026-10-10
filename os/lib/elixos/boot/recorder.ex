@@ -57,7 +57,7 @@ defmodule Elixos.Boot.Recorder do
   slow the compiler down), so without it a `defmodule` and a `save` typed in
   quick succession could race.
   """
-  def sync, do: GenServer.call(__MODULE__, :sync)
+  def sync, do: GenServer.call(__MODULE__, :sync, :infinity)
 
   @impl true
   def init(image), do: {:ok, image}

@@ -16,6 +16,21 @@ defmodule Elixos.Application do
   """
   use Application
 
+  # The image lives on the persistent disk, and answers to its module name so
+  # the prompt can save and list generations without a handle.
+  defp open_image do
+    root = Application.get_env(:elixos, :priv_dir, "/priv")
+
+    case Elixos.Image.open(root) do
+      {:ok, image} ->
+        Process.register(image, Elixos.Image)
+        {:ok, image}
+
+      {:error, reason} ->
+        {:error, {:image_unavailable, reason}}
+    end
+  end
+
   @impl true
   def start(_type, _args) do
     case Elixos.Boot.Env.current() do
@@ -24,13 +39,18 @@ defmodule Elixos.Application do
         Supervisor.start_link([], strategy: :one_for_one, name: Elixos.Supervisor)
 
       {:ok, env} ->
-        children = [
+        with {:ok, image} <- open_image() do
+          children = [
           # The control channel first: heartbeats start before anything can
           # hang, and the shim's boot grace is running until the first one.
           {Elixos.Shim.Control,
            sink: {Elixos.Shim.Sink.Fd, env.ctl_fd},
            heartbeat_ms: Application.get_env(:elixos, :heartbeat_ms, 1_000)},
-          {Elixos.Boot.Login, env},
+          # The generation the shim launched, loaded before anything can use
+          # it; a failure here stops the tree on purpose (ADR-007).
+          {Elixos.Boot.Restore, {image, env}},
+          {Elixos.Boot.Recorder, image},
+          {Elixos.Boot.Login, {env, image}},
           # Commits the generation once it has been healthy for a while; in
           # rescue mode the child is skipped (:ignore), so a rescue boot never
           # makes itself last_good (ADR-007).
@@ -38,6 +58,7 @@ defmodule Elixos.Application do
         ]
 
         Supervisor.start_link(children, strategy: :one_for_one, name: Elixos.Supervisor)
+        end
 
       {:error, {kind, name}} ->
         # A partial launch contract means the boot is broken: returning an

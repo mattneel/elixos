@@ -1,0 +1,57 @@
+#!/usr/bin/expect -f
+# M6: the live image. Define a module at the prompt, save, power off; the next
+# power-on boots that generation and the module is there — a Lisp machine's
+# image, rebuilt from the store, the journal and a generation manifest
+# (docs/ROADMAP.md M6, ADR-005).
+#
+# Two power-ons of one pristine disk copy, inside one recording: -no-reboot
+# ends QEMU when the guest reboots, so the second boot is a second spawn.
+
+set timeout 300
+set send_human {.1 .3 10 .05 2}
+
+# Boot 1: define a module, save it as generation 1, power off.
+spawn -noecho qemu-system-x86_64 \
+    -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+
+expect "iex(1)> "
+sleep 1
+send -h "defmodule Hello do\n  def hi, do: :persisted\nend\r"
+expect "iex(2)> "
+sleep 2
+
+send -h "Elixos.save()\r"
+expect "elixos-shim: next generation=1"
+sleep 2
+
+send -h "Elixos.poweroff()\r"
+expect "elixos-shim: shutdown poweroff"
+expect "reboot: Power down"
+expect eof
+sleep 2
+
+# Boot 2: the shim boots generation 1, and the module answers.
+spawn -noecho qemu-system-x86_64 \
+    -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+
+expect "iex(1)> "
+sleep 1
+send -h "Hello.hi()\r"
+expect "iex(2)> "
+sleep 2
+
+send -h "Elixos.poweroff()\r"
+expect "elixos-shim: shutdown poweroff"
+expect "reboot: Power down"
+expect eof
+sleep 1

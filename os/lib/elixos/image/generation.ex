@@ -98,14 +98,20 @@ defmodule Elixos.Image.Generation do
   end
 
   defp decode(bytes) do
-    case safe_binary_to_term(bytes) do
+    case decode_term(bytes) do
       {:ok, {:elixos_generation, 1, map}} when is_map(map) -> {:ok, struct(__MODULE__, map)}
       _ -> {:error, :corrupt}
     end
   end
 
-  defp safe_binary_to_term(bytes) do
-    {:ok, :erlang.binary_to_term(bytes, [:safe])}
+  # Not `binary_to_term/2` with `:safe`: these records name modules, and the
+  # reader is a fresh boot, where those atoms do not exist yet — `:safe`
+  # refuses to create atoms, so every module record would read as damage and a
+  # saved generation could never be loaded by the boot that needs it (M6).
+  # What guards the decoder is the CRC (journal) or the shape check
+  # (generation), not the atom table; those bytes are ours.
+  defp decode_term(bytes) do
+    {:ok, :erlang.binary_to_term(bytes)}
   rescue
     ArgumentError -> :error
   end
