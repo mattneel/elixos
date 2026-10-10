@@ -49,11 +49,22 @@ defmodule Elixos.Agents do
   @spec snapshot(String.t()) :: :ok | {:error, term()}
   def snapshot(id), do: GenServer.call(__MODULE__, {:snapshot, id}, :infinity)
 
-  @doc "Writes what every running agent remembers (`Elixos.save/1` calls this)."
-  @spec snapshot_all() :: :ok
+  @doc """
+  Writes what every running agent remembers (`Elixos.save/1` calls this).
+
+  Every failure is named: a memory that could not be written is the live
+  image's promise broken, and the callers refuse to call the save (or the
+  power-off) done.
+  """
+  @spec snapshot_all() :: :ok | {:error, {:snapshot_failed, [String.t()]}}
   def snapshot_all do
-    for {id, pid} <- list(), pid != nil, do: snapshot(id)
-    :ok
+    failures =
+      for {id, pid} <- list(), pid != nil, {:error, _reason} <- [snapshot(id)], do: id
+
+    case failures do
+      [] -> :ok
+      ids -> {:error, {:snapshot_failed, ids}}
+    end
   end
 
   @doc "Supervisor child: starts every recorded agent (normal boots only)."
@@ -143,8 +154,14 @@ defmodule Elixos.Agents do
             if pid = live_pid(id, record),
               do: DynamicSupervisor.terminate_child(Elixos.Agents.Supervisor, pid)
 
-            forget(id)
-            {:reply, :ok, Map.delete(agents, id)}
+            # Forgetting is written down too (the journal, like the record).
+            # If that write fails, the durable record stays - which is what
+            # the next boot reads - and the stop is not done: a second stop
+            # retries the forgetting instead of lying to the caller.
+            case forget(id) do
+              :ok -> {:reply, :ok, Map.delete(agents, id)}
+              {:error, reason} -> {:reply, {:error, reason}, agents}
+            end
 
           {:error, reason} ->
             {:reply, {:error, reason}, agents}

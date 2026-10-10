@@ -49,8 +49,8 @@ defmodule Elixos.Agents.LLM do
   def complete(messages, opts \\ []) do
     with {:ok, provider} <- provider(opts),
          {:ok, body} <- request_body(messages, provider),
-         {:ok, status, response} <- request(provider, body),
-         {:ok, text} <- parse(status, response) do
+         {:ok, status, headers, response} <- request(provider, body),
+         {:ok, text} <- parse(status, headers, response) do
       {:ok, text}
     end
   end
@@ -189,7 +189,7 @@ defmodule Elixos.Agents.LLM do
          {:ok, socket, transport} <- connect(uri),
          :ok <- send_request(socket, transport, uri, headers, body),
          {:ok, status, response_headers, body} <- read_response(socket, transport, "") do
-      {:ok, status, dechunk(response_headers, body)}
+      {:ok, status, response_headers, dechunk(response_headers, body)}
     end
   end
 
@@ -328,8 +328,8 @@ defmodule Elixos.Agents.LLM do
 
   ## The response
 
-  defp parse(status, body) when status in 200..299 do
-    decoded = decode_body(body)
+  defp parse(status, headers, body) when status in 200..299 do
+    decoded = decode_body(headers, body)
 
     case text_of(decoded) do
       nil -> {:error, {:no_text, decoded}}
@@ -337,12 +337,15 @@ defmodule Elixos.Agents.LLM do
     end
   end
 
-  defp parse(status, body), do: {:error, {:http, status, body}}
+  defp parse(status, _headers, body), do: {:error, {:http, status, body}}
 
-  # A streaming response arrives as `data: {...}` lines even with stream:
-  # false on some backends; the last JSON that carries text wins.
-  defp decode_body(body) do
-    if String.contains?(body, "data:") do
+  # How a body is framed is the server's business, and the Content-Type is
+  # where it says so: `text/event-stream` is server-sent events (the ChatGPT
+  # backend streams even when it was asked not to), anything else is one JSON
+  # document. Sniffing the bytes for "data:" misreads a JSON body that happens
+  # to contain the word.
+  defp decode_body(headers, body) do
+    if Map.get(headers, "content-type", "") =~ "text/event-stream" do
       body
       |> String.split("\n")
       |> Enum.filter(&String.starts_with?(&1, "data:"))
@@ -438,7 +441,7 @@ defmodule Elixos.Agents.LLM do
         "client_id" => @codex_client_id
       })
 
-    with {:ok, status, body} <-
+    with {:ok, status, _headers, body} <-
            http(
              provider[:auth_url] || @auth_url,
              [{"content-type", "application/x-www-form-urlencoded"}],

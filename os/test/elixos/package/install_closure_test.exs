@@ -65,6 +65,18 @@ defmodule Elixos.Package.InstallClosureTest do
     assert Enum.sort([repo_a, repo_b]) == [:fixture, :mirror]
   end
 
+  test "a release the graph no longer reaches takes its constraints with it" do
+    # orphan_root needs a and b; the newest a needs c; b pins a down to 1.0.0,
+    # which needs nothing. c must fall out of the closure - not installed, and
+    # not vetoing it with its own requirement on a >= 2.0.0.
+    assert {:ok, closure} = Hex.closure("orphan_root")
+
+    assert Enum.map(closure, &{&1.name, &1.version}) ==
+             [{"orphan_a", "1.0.0"}, {"orphan_b", "1.0.0"}, {"orphan_root", "0.1.0"}]
+
+    refute Enum.any?(closure, &(&1.name == "orphan_c"))
+  end
+
   test "the closure is what the resolver plans over (ADR-015)" do
     assert {:ok, closure} = Hex.closure("hello_app")
 

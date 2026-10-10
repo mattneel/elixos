@@ -37,11 +37,13 @@ defmodule Elixos.Agents.LLMTest do
             end
 
           headers =
-            [
-              {"content-type", "application/json"},
-              {"content-length", Integer.to_string(byte_size(body))}
-            ] ++
-              Map.to_list(extra)
+            Map.merge(
+              %{
+                "content-type" => "application/json",
+                "content-length" => Integer.to_string(byte_size(body))
+              },
+              Map.new(extra)
+            )
 
           :gen_tcp.send(socket, [
             "HTTP/1.1 ",
@@ -176,10 +178,25 @@ defmodule Elixos.Agents.LLMTest do
         ) <>
         "\n\ndata: [DONE]\n\n"
 
-    port = Stub.start(fn _request -> {200, stream} end)
+    port = Stub.start(fn _request -> {200, %{"content-type" => "text/event-stream"}, stream} end)
 
     provider = [base_url: "http://127.0.0.1:#{port}/v1", model: "stub-model", path: "/responses"]
     assert {:ok, "streamed"} = LLM.complete([{"user", "hello"}], provider)
+  end
+
+  test "a JSON body that contains \"data:\" is still JSON" do
+    # The framing decision belongs to the Content-Type, not to a word in the
+    # body: a completion whose text happens to contain "data:" is not an
+    # event stream, and must not be filtered down to nothing.
+    body =
+      IO.iodata_to_binary(
+        :json.encode(%{"choices" => [%{"message" => %{"content" => "data: not an event"}}]})
+      )
+
+    port = Stub.start(fn _request -> {200, body} end)
+
+    provider = [base_url: "http://127.0.0.1:#{port}/v1", model: "stub-model"]
+    assert {:ok, "data: not an event"} = LLM.complete([{"user", "hello"}], provider)
   end
 
   test "the Codex sign-in: account id, bearer, and the Responses path", %{tmp_dir: tmp_dir} do

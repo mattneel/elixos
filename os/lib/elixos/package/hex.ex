@@ -270,21 +270,45 @@ defmodule Elixos.Package.Hex do
     end)
   end
 
-  # The constraint map a pass implies: every picked name (with the root's own
-  # requirements, which came from the caller and from nowhere else), and every
-  # requirement the picked releases declare - each dependency resolved among
-  # the trusted repositories, never inherited from the package that asked
-  # (PROTOCOL.md §8).
+  # The constraint map a pass implies: what the *root can reach* - the root's
+  # own requirements, and every requirement of a release the graph actually
+  # keeps - each dependency resolved among the trusted repositories, never
+  # inherited from the package that asked (PROTOCOL.md §8). A release the
+  # previous pass picked to satisfy a constraint a later pick took away is not
+  # part of the closure: neither it nor its requirements survive.
   defp constraints_of(picked, {root_name, root_requirements}) do
-    base = Map.new(picked, fn {name, entry} -> {name, %{repo: entry.repo, requirements: []}} end)
+    reachable = Map.take(picked, MapSet.to_list(reachable_names(picked, root_name)))
+
+    base =
+      Map.new(reachable, fn {name, entry} -> {name, %{repo: entry.repo, requirements: []}} end)
+
     base = Map.update!(base, root_name, &%{&1 | requirements: root_requirements})
 
-    Enum.reduce_while(picked, {:ok, base}, fn {_name, entry}, {:ok, acc} ->
+    Enum.reduce_while(reachable, {:ok, base}, fn {_name, entry}, {:ok, acc} ->
       case add_deps_from(acc, entry.deps) do
         {:ok, acc} -> {:cont, {:ok, acc}}
         {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
+  end
+
+  # Breadth-first from the root over the picked releases' own dependencies.
+  defp reachable_names(picked, root), do: reach(picked, [root], MapSet.new())
+
+  defp reach(_picked, [], seen), do: seen
+
+  defp reach(picked, [name | rest], seen) do
+    if MapSet.member?(seen, name) do
+      reach(picked, rest, seen)
+    else
+      deps =
+        case Map.fetch(picked, name) do
+          {:ok, entry} -> Enum.map(entry.deps, &elem(&1, 0))
+          :error -> []
+        end
+
+      reach(picked, rest ++ deps, MapSet.put(seen, name))
+    end
   end
 
   defp add_deps_from(acc, deps) do

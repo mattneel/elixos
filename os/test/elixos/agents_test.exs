@@ -31,8 +31,25 @@ defmodule Elixos.AgentsTest do
   defmodule Quiet do
     use GenServer
     def start_link(_opts), do: GenServer.start_link(__MODULE__, :ok)
+
     @impl true
     def init(:ok), do: {:ok, :ok}
+  end
+
+  # An image that refuses to write a forgetting down: the stop must surface
+  # it, not shrug (the journal is what the next boot reads).
+  defmodule RefusingImage do
+    use GenServer
+
+    def start_link(_opts), do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok), do: {:ok, :ok}
+
+    @impl true
+    def handle_call({:forget_agent, _id}, _from, state) do
+      {:reply, {:error, :journal_full}, state}
+    end
   end
 
   setup %{tmp_dir: tmp_dir} do
@@ -117,6 +134,43 @@ defmodule Elixos.AgentsTest do
 
     assert :ok = Agents.restore()
     assert Agents.list() == %{}
+  end
+
+  test "a memory that cannot be written is an error, never a shrug", %{priv: priv} do
+    assert {:ok, _pid} = Agents.start(Counter)
+
+    # A file where the agents directory should be: what a full disk, a broken
+    # mount, or a clobbered path looks like to the write.
+    File.rm_rf!(Path.join(priv, "agents"))
+    File.write!(Path.join(priv, "agents"), "not a directory")
+
+    assert {:error, {:snapshot_failed, ["counter"]}} = Agents.snapshot_all()
+    assert {:error, {:snapshot_failed, "counter"}} = Agents.snapshot("counter")
+  end
+
+  test "a stop that cannot be written down is not a stop", %{image: image} do
+    assert {:ok, pid} = Agents.start(Counter)
+    assert Counter.bump(pid) == 1
+
+    # The forgetting is written to the journal; this image refuses it.
+    Process.unregister(Elixos.Image)
+    refusing = start_supervised!(RefusingImage)
+    Process.register(refusing, Elixos.Image)
+
+    # The snapshot was written and the process stopped, but the record - what
+    # the next boot reads - was not removed: the caller is told, and the
+    # record stays so the next boot still starts it.
+    assert Agents.stop("counter") == {:error, :journal_full}
+    refute Process.alive?(pid)
+    assert Agents.list() == %{"counter" => nil}
+
+    # With the journal back, the same stop finishes the job.
+    Process.unregister(Elixos.Image)
+    Process.register(image, Elixos.Image)
+
+    assert :ok = Agents.stop("counter")
+    assert Agents.list() == %{}
+    assert Elixos.Image.agents(image) == %{}
   end
 
   test "a rescue boot does not start agents", %{image: image} do

@@ -731,6 +731,117 @@ pre-seeding the fixture (the slow, two-step path this replaces); building rebar
 packages on the box (ADR-033's alternative - still not possible, and no longer
 on the critical path).
 
+## ADR-037: A memory that cannot be written fails the save (and the stop)
+
+**Status:** accepted (M15)
+
+**Context.** `Elixos.save/1` and `Elixos.poweroff/0` are the live image's one
+durable moment: everything typed is recorded, and every agent's memory is
+written with it. `Elixos.Agents.snapshot_all/0` walked the agents and threw
+each write's error away, and `stop/1` ignored the journal write that removes
+the record. A full disk could therefore make `Elixos.save()` answer `{:ok, n}`
+with stale memory in the generation, or make a power-off lose what an agent
+remembered - the one promise this system makes, failing silently.
+
+**Decision.** Every write that is part of that moment is checked. A snapshot
+failure makes `snapshot_all/0` return `{:error, {:snapshot_failed, ids}}`, and
+`save/1` and the shutdown path propagate it instead of proceeding; a
+power-off that cannot write an agent's memory is refused and the caller sees
+the error. `stop/1` surfaces a failed forgetting too, keeps the record (which
+is what the next boot reads) and answers `{:error, reason}`, so a second stop
+finishes the job instead of lying to the caller.
+
+**Consequences.** A broken or full store now costs an error at the prompt -
+and a retry - instead of silently losing work. The tests inject the failure
+both ways: a file where the agents directory should be, and an image that
+refuses to write forgetting down.
+
+**Alternatives.** Logging and continuing (the silent loss this replaces);
+writing the generation anyway with a warning (a generation recorded as good
+with stale memory is worse than no save at all).
+
+## ADR-038: The Content-Type decides whether a body is an event stream
+
+**Status:** accepted (M15)
+
+**Context.** `Elixos.Agents.LLM` decided how to decode a response by looking
+for the substring `data:` anywhere in the body. A perfectly ordinary JSON
+completion whose *text* contains `data:` - a question about Kafka, an SSE
+example - was then read as server-sent events: no line of the JSON document
+starts with `data:`, the list of payloads came back empty, and `complete/2`
+answered `{:error, {:no_text, nil}}` for a response that plainly had text.
+
+**Decision.** The headers decide. `http/3` returns the response headers with
+the body, and the body is decoded as server-sent events only when the
+Content-Type says `text/event-stream`; anything else is one JSON document.
+
+**Consequences.** The one backend that streams (the ChatGPT Responses API,
+which insists on `stream: true`) declares it and still works; a JSON body is
+JSON no matter what words are in it. A server that streamed bytes while
+declaring JSON would no longer be read - none does, and the header is the
+protocol.
+
+**Alternatives.** Sniffing for `data:` at a line start (still guesses);
+trying both decodings and taking the first that yields text (two code paths
+for one truth).
+
+## ADR-039: The closure keeps only what the root can reach
+
+**Status:** accepted (M15)
+
+**Context.** The Hex name resolver rebuilt each pass's constraint map from
+every name it had picked *before*, so a release picked for a constraint that
+a later pick invalidated stayed in the map and kept contributing its own
+requirements. With root -> {a >= 1.0.0, b ~> 1.0}, a 2.0.0 -> {c ~> 1.0},
+b 1.0.0 -> {a ~> 1.0} and c 1.0.0 -> {a >= 2.0.0}, the valid closure
+a 1.0.0 + b 1.0.0 + root was rejected - c's requirement on a outlived the
+version of a that wanted c - and an orphan could be installed besides.
+
+**Decision.** Each pass's constraint map is rebuilt from what the root can
+*reach* over the picked releases' own dependencies (breadth-first from the
+root); anything unreachable is dropped, its requirements included.
+
+**Consequences.** The fixpoint is over the real closure: a version change
+takes its old world with it. The test is a four-package fixture graph
+(`orphan_*` in the fixture repository) where the old code answered
+`{:error, {:no_matching_version, ...}}` and the new one installs a 1.0.0, b
+and root - never c.
+
+**Alternatives.** Keeping orphans but ignoring their constraints (they would
+still be installed: the install path would carry a package nothing depends
+on); iterating over the full graph including unreached names (the bug).
+
+## ADR-040: Mnesia's directory is pinned under /priv
+
+**Status:** accepted (M15)
+
+**Context.** Mnesia defaults to `Mnesia.<node>` relative to the VM's working
+directory. Elixos never changes that directory (ADR-016) and the root is the
+RAM-backed initramfs, so a schema - the moment anything uses a disc copy, as
+Jido's mnesia journal does when asked - would quietly live in memory and die
+with the boot. Nothing used disc copies yet, which is exactly why the default
+was a trap for whoever touched it next.
+
+**Decision.** `config/config.exs` pins `config :mnesia, dir: ~c"/priv/mnesia"`
+for every build. It is pinned there, not in `config/elixos.exs`, because that
+file layers only when a build names `MIX_TARGET=elixos` - and the factory's
+release does not; the setting is part of the running system's disk layout, so
+it must hold wherever the OS is built. Where Jido keeps its state, and whether
+that is Mnesia at all, stays an M17 decision.
+
+**Consequences.** Mnesia resolves `/priv/mnesia` before any schema exists; a
+unit test asserts the directory is absolute and under `/priv`, and that
+Mnesia resolves what was pinned. One gap this does not close and does not
+pretend to: because the factory's release is built without
+`MIX_TARGET=elixos`, nothing in `config/elixos.exs` reaches the guest today -
+`priv_dir` and `heartbeat_ms` ride their code defaults instead (same values,
+or the gap would have shown).
+
+**Alternatives.** Leaving it to whoever first creates a schema (the trap);
+pinning it in the target config only (inert in the guest, see above); building
+the factory as the target (a build change with its own verification, and not
+this finding's business).
+
 ## Open questions
 
 ## ADR-024: Ctrl+C rides with a newline on the console

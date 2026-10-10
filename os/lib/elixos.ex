@@ -32,13 +32,15 @@ defmodule Elixos do
     # Recording is asynchronous and the journal is what the next boot replays:
     # like save/1, a graceful exit waits for everything typed so far, so a
     # defmodule entered just before Elixos.poweroff() cannot be lost in a cast
-    # that never ran (M7: nothing typed is ever lost).
-    :ok = sync_recorder()
-    :ok = snapshot_agents()
-
-    case request.() do
-      :ok -> :init.stop()
-      {:error, reason} -> {:error, reason}
+    # that never ran (M7: nothing typed is ever lost). If that wait, or an
+    # agent's memory, cannot be written down, the power-off is refused: the
+    # caller sees the error instead of a boot that quietly lost work.
+    with :ok <- sync_recorder(),
+         :ok <- snapshot_agents() do
+      case request.() do
+        :ok -> :init.stop()
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
@@ -59,10 +61,11 @@ defmodule Elixos do
   def save(opts \\ []) do
     # Everything traced so far is recorded before the working set is written,
     # and every agent's memory is written with it: one durable moment (M15).
-    :ok = sync_recorder()
-    :ok = snapshot_agents()
-
-    with {:ok, image} <- image(),
+    # Anything that cannot be written down fails the save - a generation with
+    # stale memory must not be recorded as the good one.
+    with :ok <- sync_recorder(),
+         :ok <- snapshot_agents(),
+         {:ok, image} <- image(),
          {:ok, number} <- Elixos.Image.save(image, opts),
          :ok <- Elixos.Shim.Control.next(number) do
       # The shim boots this generation next time, provisionally, until it
