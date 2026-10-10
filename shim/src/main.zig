@@ -512,7 +512,10 @@ fn execErts(
         "-boot",     boot_path,
         "-boot_var", "RELEASE_LIB", lib_path,
         "-config",   sys_config_path,
-        "-mode",     "embedded",
+        // Interactive, not embedded: Elixos loads code at run time - the live
+        // image restores modules, and the box builds Mix projects - and the
+        // embedded code server refuses to load anything from the code path.
+        "-mode",     "interactive",
         // The console is a tty that is not the shell's controlling terminal,
         // so without +Bc Ctrl+C does nothing at all and a runaway expression
         // can only be stopped with Ctrl+G then `i` (PROTOCOL.md §3).

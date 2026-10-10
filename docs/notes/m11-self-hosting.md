@@ -65,3 +65,31 @@ save, power cycle and see the app's service come back.
 4. Installed-app state in generations, service startup at boot, and the
    power-cycle test.
 5. The CA bundle, which only matters for Hex (M14).
+
+## Where the install stands (mid-M11)
+
+`Elixos.Package.install/1` for a path is implemented: read the spec, build in
+a child ERTS, load the ebin, start the services, journal the app (the image's
+generations then boot every installed app's services through a
+`start_service` MFA). Elixos.Zig is implemented.
+
+Three blockers were found and fixed by running it:
+
+1. `mix release` leaves the mix application out of the generated boot script,
+   so `Mix.Project` was not even loadable. `Elixos.Application.start` appends
+   the factory's `lib/mix/ebin` and starts `:mix` (whose project stack is a
+   process, and `Mix.Project.get/0` calls it).
+2. The BEAM ran `-mode embedded`, whose code server refuses to load anything
+   from the code path. The shim now runs `-mode interactive` (PROTOCOL.md §3),
+   which is also what the live image needs.
+3. A child ERTS must be given `-boot_var RELEASE_LIB`, and `-eval` takes
+   *Erlang*, so the child runs `'Elixir.Mix.CLI':main([<<"compile">>,
+   <<"--no-deps-check">>])`. Reproduced on the host against the factory's own
+   erlexec: it compiles a project successfully.
+
+Open: inside the guest the install did not return within the test's 600s
+timeout (the console showed nothing after the call). The host replica
+succeeds, so the difference is environmental - the next step is a manual guest
+run with a long wait and the child's output captured, not another blind
+retest. The crash-dump work proved itself here too: each failed child wrote
+`/priv/crash/gen0-attempt1.dump`.

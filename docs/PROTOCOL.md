@@ -63,6 +63,9 @@ plus `HOME=/priv/home`, `TERM=linux`, `LANG=C.UTF-8`, and:
   `ERL_CRASH_DUMP_BYTES` to 1 MiB, so a crash leaves its evidence on the disk
   the next boot mounts. Without the disk both are left unset and ERTS keeps
   its default.
+- The emulator runs `-mode interactive`: Elixos loads code at run time (the
+  live image restores modules, and the box builds Mix projects), and the
+  embedded code server refuses to load anything from the code path.
 - The emulator is launched with `+Bc`. The console is a tty that is not the
   shell's controlling terminal, so without it Ctrl+C does nothing at all and a
   runaway expression can only be stopped with Ctrl+G then `i`; with `+Bc`,

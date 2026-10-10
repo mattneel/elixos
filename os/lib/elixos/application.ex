@@ -39,7 +39,12 @@ defmodule Elixos.Application do
     factory = Application.get_env(:elixos, :factory_dir, "/factory")
     path = Path.join([factory, "lib", "mix", "ebin"])
 
-    if File.dir?(path), do: Code.append_path(path)
+    if File.dir?(path) do
+      Code.append_path(path)
+      # Mix keeps its project stack in a process of its own application, and
+      # Mix.Project.get/0 is a call to it.
+      Application.ensure_all_started(:mix)
+    end
   end
 
   @impl true

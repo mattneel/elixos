@@ -82,9 +82,26 @@ defmodule Elixos.Package do
       {"BINDIR", Path.join(factory(), "erts/bin")}
     ]
 
-    code = ~s|Mix.CLI.main(["compile", "--no-deps-check"])|
-    args = ["-noshell", "-pa", mix_ebin(), "-eval", code]
-    args = args ++ ["-boot", boot_script(), "-config", sys_config()]
+    # -eval is Erlang, so this calls the Elixir Mix.Own entry point the way
+    # the mix script itself does: a list of binaries, no shell anywhere.
+    code = ~s|'Elixir.Mix.CLI':main([<<"compile">>, <<"--no-deps-check">>])|
+
+    # The release's boot script resolves $RELEASE_LIB against the boot_var the
+    # shim passes, so a child ERTS has to pass it too.
+    args = [
+      "-noshell",
+      "-boot",
+      boot_script(),
+      "-boot_var",
+      "RELEASE_LIB",
+      lib_dir(),
+      "-config",
+      sys_config(),
+      "-pa",
+      mix_ebin(),
+      "-eval",
+      code
+    ]
 
     {output, status} =
       System.cmd(erlexec(), args, cd: root, env: env, stderr_to_stdout: true)
@@ -177,6 +194,7 @@ defmodule Elixos.Package do
   defp erlexec, do: Path.join([factory(), "erts", "bin", "erlexec"])
   defp mix_ebin, do: Path.join([factory(), "lib", "mix", "ebin"])
   defp boot_script, do: Path.join([factory(), "releases", "current", "start"])
+  defp lib_dir, do: Path.join(factory(), "lib")
   defp sys_config, do: Path.join([factory(), "releases", "current", "sys.config"])
 
   @doc """
