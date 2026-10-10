@@ -28,7 +28,14 @@ defmodule Elixos.Image do
       # with the ones that were forgotten left out.
       case Journal.read(journal_path(root)) do
         {:ok, entries, _status} ->
-          state = %{root: root, store: store, journal: journal, modules: working_set(entries)}
+          state = %{
+            root: root,
+            store: store,
+            journal: journal,
+            modules: working_set(entries),
+            apps: apps_of(entries)
+          }
+
           GenServer.start_link(__MODULE__, state)
 
         {:error, reason} ->
@@ -115,6 +122,17 @@ defmodule Elixos.Image do
   def init(state), do: {:ok, state}
 
   @impl true
+  def handle_call(:apps, _from, state), do: {:reply, state.apps, state}
+
+  def handle_call({:record_app, app, version, services}, _from, state) do
+    with {:ok, _seq} <- Journal.append(state.journal, {:app, app, version, services}) do
+      {:reply, :ok,
+       %{state | apps: Map.put(state.apps, app, %{version: version, services: services})}}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
   def handle_call({:record, module, bytecode}, _from, state) do
     # A full or read-only disk is an error to report, not a reason to take the
     # image service down (the caller would lose every queued capture with it).
@@ -152,7 +170,9 @@ defmodule Elixos.Image do
       number: Generation.next_number(dir),
       parent: if(saved == [], do: 0, else: Enum.max(saved)),
       modules: state.modules,
-      boot: Keyword.get(opts, :boot, []),
+      # The services of every installed app boot with this generation: that is
+      # what makes an install survive a power cycle (M11).
+      boot: Enum.uniq(Keyword.get(opts, :boot, []) ++ service_boot(state.apps)),
       created_at: DateTime.utc_now()
     }
 
@@ -200,6 +220,44 @@ defmodule Elixos.Image do
   end
 
   ## The image on disk
+
+  @doc "Installed apps and versions. (M11)"
+  @spec apps(t()) :: %{atom() => String.t()}
+  def apps(image) do
+    for {app, %{version: version}} <- GenServer.call(image, :apps), into: %{}, do: {app, version}
+  end
+
+  @doc """
+  Records that `app` (at `version`) is installed with `services` from its
+  `elixos:` key: journaled like a module, so it replays at boot. (M11)
+  """
+  @spec record_app(t(), atom(), String.t(), [term()]) :: :ok | {:error, term()}
+  def record_app(image, app, version, services) do
+    GenServer.call(image, {:record_app, app, version, services}, :infinity)
+  end
+
+  # What an install did, replayed: the newest entry for each app wins, and it
+  # carries the services that app's elixos: key asked for.
+  defp apps_of(entries) do
+    Enum.reduce(entries, %{}, fn {_seq, entry}, apps ->
+      case entry do
+        {:app, app, version, services} ->
+          Map.put(apps, app, %{version: version, services: services})
+
+        _other ->
+          apps
+      end
+    end)
+  end
+
+  # The services every installed app asked to have started under the system
+  # tree. Each is a boot MFA: the generation's boot list runs it, so a service
+  # comes back the same way at boot as it started at install time.
+  defp service_boot(apps) do
+    for {_app, %{services: services}} <- apps,
+        service <- services,
+        do: {Elixos.Package, :start_service, [service]}
+  end
 
   defp working_set(entries) do
     Enum.reduce(entries, %{}, fn {_seq, entry}, modules ->

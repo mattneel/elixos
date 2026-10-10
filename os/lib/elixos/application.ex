@@ -31,8 +31,21 @@ defmodule Elixos.Application do
     end
   end
 
+  # M11: the box builds Mix projects, and `mix release` leaves the mix
+  # application out of the generated boot script. Its ebin is in the factory,
+  # so the path is put right before anything can need Mix - the package
+  # installer, and the elixos: reader that runs before it.
+  defp add_mix_to_path do
+    factory = Application.get_env(:elixos, :factory_dir, "/factory")
+    path = Path.join([factory, "lib", "mix", "ebin"])
+
+    if File.dir?(path), do: Code.append_path(path)
+  end
+
   @impl true
   def start(_type, _args) do
+    add_mix_to_path()
+
     case Elixos.Boot.Env.current() do
       # On the dev host (unit tests) there is no shim and nothing to start.
       {:ok, :host} ->
