@@ -1,0 +1,84 @@
+# The Elixos kernel (M16, ADR-041): the pinned kernel.org tarball, configured
+# with our fragments and never patched (ADR-001). Not Alpine's kernel package:
+# that is Alpine's configuration, not ours.
+#
+# The version here must match kernel/VERSION, which the pipeline re-checks; the
+# sha256 there is the one from kernel.org's signed sums. The build runs in the
+# architecture's own environment (aarch64 under emulation on an x86_64 host,
+# which is slow but needs no cross toolchain - the point of the switch).
+package:
+  name: elixos-kernel
+  version: "7.2.9"
+  epoch: 0
+  description: "Elixos kernel: mainline, configured with the Elixos fragments"
+  copyright:
+    - license: GPL-2.0-only
+  dependencies:
+    runtime: []
+
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    packages:
+      - build-base
+      - bash
+      - bc
+      - bison
+      - curl
+      - diffutils
+      - elfutils-dev
+      - findutils
+      - flex
+      - linux-headers
+      - openssl-dev
+      - perl
+      - tar
+      - xz
+      - zstd
+
+pipeline:
+  - runs: |
+      version="$(sed -n 's/^KERNEL_VERSION=//p' /home/build/kernel/VERSION)"
+      sha="$(sed -n 's/^KERNEL_SHA256=//p' /home/build/kernel/VERSION)"
+      if [ "$version" != "${{package.version}}" ]; then
+        echo "kernel: kernel/VERSION says $version, this package says ${{package.version}}" >&2
+        exit 1
+      fi
+      major="${version%%.*}"
+
+      curl -fsSL -o /tmp/linux.tar.xz \
+        "https://cdn.kernel.org/pub/linux/kernel/v${major}.x/linux-${version}.tar.xz"
+      echo "${sha}  /tmp/linux.tar.xz" | sha256sum -c -
+
+      mkdir -p /tmp/k
+      tar -xJf /tmp/linux.tar.xz -C /tmp/k --strip-components=1
+      cd /tmp/k
+
+      case "${{build.arch}}" in
+        x86_64)
+          make -s x86_64_defconfig
+          make -s kvm_guest.config
+          target=bzImage
+          payload=arch/x86/boot/bzImage
+          name=bzImage
+          ;;
+        aarch64)
+          make -s defconfig
+          target=Image
+          payload=arch/arm64/boot/Image
+          name=Image
+          ;;
+        *) echo "kernel: unsupported arch ${{build.arch}}" >&2; exit 1 ;;
+      esac
+
+      # The fragments are common + per architecture, and the guard is the
+      # kernel's test: every option must survive olddefconfig verbatim.
+      scripts/kconfig/merge_config.sh -m -O . .config \
+        /home/build/kernel/elixos.config "/home/build/kernel/config.${{build.arch}}" >/dev/null
+      make -s olddefconfig
+      /home/build/scripts/check-kernel-config.sh .config \
+        /home/build/kernel/elixos.config "/home/build/kernel/config.${{build.arch}}"
+
+      make -s -j"$(nproc)" "$target"
+      install -Dm0644 "$payload" "${{targets.destdir}}/boot/$name"

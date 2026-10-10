@@ -6,10 +6,16 @@ apko v1.4.10, both by sha256).
 
 ## melange
 
+- Building the kernel's `tools/` (objtool) needs a system `asm/types.h`: on
+  Alpine that is the `linux-headers` package, on glibc distros it is there
+  already (linux-libc-dev). Without it objtool fails with "asm/types.h: No such
+  file or directory".
 - `--source-dir` does **not** bind your tree read-only: melange *copies* it
   into its workspace, which it then binds at `/home/build`. Pointing it at the
   repo root once copied 55G (the kernel tree, `os/_build`, `os/tmp`). Stage a
-  small directory instead - only what the package's pipeline reads.
+  small directory instead - only what the package's pipeline reads. Dotfiles
+  (`.zig-version`, `.tool-versions`) must be named explicitly when staging;
+  the package pipelines read them for their version assertions.
 - The copy is writable, so a pipeline can build in place (`cd /home/build`);
   no copying into `/tmp` is needed.
 - `melange keygen` writes `melange.rsa`/`melange.rsa.pub`. The private key is

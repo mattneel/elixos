@@ -40,6 +40,7 @@ need mformat mtools "ESP image (M13)"
 need ssh-keygen openssh-client "SSH test keys (M12)"
 
 echo "image build (M16: melange + apko, ADR-041):"
+need python3 python3 "the initramfs packer, the image checks and the demo checker"
 for candidate in "$(command -v melange 2>/dev/null || true)" "$ROOT/build/tools/melange"; do
   [ -n "$candidate" ] && [ -x "$candidate" ] || continue
   printf '  ok       %-20s %s\n' "melange" "builds our APKs (pinned; scripts/install-build-tools.sh)"
