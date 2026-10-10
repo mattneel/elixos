@@ -74,6 +74,16 @@ defmodule Elixos.Package.Hex do
   @spec resolve(String.t(), String.t() | nil) ::
           {:ok, %{repo: Repo.t(), name: String.t(), version: String.t()}} | {:error, term()}
   def resolve(name, requirement \\ nil) do
+    # ":elixos is not a package: a dependency on it is satisfied by the
+    # running OS, and a package that bundles it is refused" (PROTOCOL.md §8).
+    if name == "elixos" do
+      {:error, :elixos_is_the_os}
+    else
+      resolve_among_repos(name, requirement)
+    end
+  end
+
+  defp resolve_among_repos(name, requirement) do
     offering =
       for repo <- Repo.list(), {:ok, names} <- [names(repo, nil)], name in names, do: repo
 
@@ -151,7 +161,11 @@ defmodule Elixos.Package.Hex do
 
   defp release(repo, name, version) do
     with {:ok, payload} <- resource(repo, "packages/#{name}"),
-         {:ok, message} <- Proto.decode(payload) do
+         {:ok, message} <- Proto.decode(payload),
+         # The signature says *a* repository resource, not which one: the
+         # message's own name field is what ties it to the package asked for,
+         # so another same-version package cannot be served under this name.
+         true <- Proto.one(message, 2) == name do
       releases =
         for entry <- Proto.all(message, 1),
             {:ok, release} <- [Proto.decode(entry)],
@@ -170,6 +184,9 @@ defmodule Elixos.Package.Hex do
         [] ->
           {:error, :no_such_release}
       end
+    else
+      false -> {:error, :package_mismatch}
+      {:error, _reason} = error -> error
     end
   end
 
@@ -209,6 +226,11 @@ defmodule Elixos.Package.Hex do
 
   # The package's own files, and nothing that could escape `dir`.
   defp write_files(dir, files) do
+    # A fresh directory: a tarball must not land among files (or symlinks)
+    # something else left there.
+    File.rm_rf!(dir)
+    File.mkdir_p!(dir)
+
     for {name, bits} <- files do
       case Path.safe_relative(name) do
         {:ok, relative} ->

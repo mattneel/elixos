@@ -7,9 +7,9 @@ iex(1)> Enum.map(Elixos.Package.repos(), & &1.name)
 iex(2)> Elixos.Package.add_repo(:fixture, "/priv/hex-repo", key: File.read!("/priv/hex-repo/public_key"))
 :ok
 iex(3)> Elixos.Package.search("hello")
-[%{name: "hello_pkg", repo: :fixture, versions: ["0.1.0"]}]
+[{"hello_pkg", ["0.1.0"]}]
 iex(4)> Elixos.Package.info("hello_pkg")
-%{installed: false, version: "0.1.0"}
+[installed: false, version: "0.1.0"]
 iex(5)> Elixos.Package.install(:hello_pkg)
 {:ok, :hello_pkg}
 iex(6)> HelloPkg.greet()

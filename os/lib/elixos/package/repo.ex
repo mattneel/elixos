@@ -183,15 +183,27 @@ defmodule Elixos.Package.Repo do
     write_atomic(key_path(name), key)
   end
 
-  # Parse, then replace, then rename: a reader sees the old file or the new
-  # one, never half of either.
+  # Temporary file, fsync, rename, fsync of the directory (PROTOCOL.md §8): a
+  # reader sees the old trust or the new one, and a power loss cannot
+  # resurrect a repository that was removed or lose one that was added.
   defp write_atomic(path, body) do
     tmp = path <> ".#{System.unique_integer([:positive])}.tmp"
+    dir = Path.dirname(path)
 
-    with :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(tmp, body),
-         :ok <- File.rename(tmp, path) do
+    with :ok <- File.mkdir_p(dir),
+         {:ok, file} <- :file.open(tmp, [:write, :raw, :binary]),
+         :ok <- :file.write(file, body),
+         :ok <- :file.sync(file),
+         :ok <- :file.close(file),
+         :ok <- File.rename(tmp, path),
+         {:ok, dir_file} <- :file.open(dir, [:read, :directory]),
+         :ok <- :file.sync(dir_file),
+         :ok <- :file.close(dir_file) do
       :ok
+    else
+      error ->
+        File.rm(tmp)
+        error
     end
   end
 
