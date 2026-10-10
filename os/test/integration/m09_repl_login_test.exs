@@ -15,7 +15,7 @@ defmodule Elixos.Integration.M09REPLLoginTest do
     disk = Disk.fresh!(ctx.tmp_dir)
 
     vm = QEMU.boot_to_iex(ctx, disk: disk)
-    {out, vm} = QEMU.iex(vm, ~s|Elixos.User.put("/data/user.exs", :repl, :erl)|)
+    {out, vm} = QEMU.iex(vm, ~s|Elixos.User.put("/priv/user.exs", :repl, :erl)|)
     assert out =~ ":ok"
     vm = QEMU.send_line(vm, "Elixos.reboot()")
     {0, _} = QEMU.expect_exit(vm)

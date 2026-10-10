@@ -23,7 +23,7 @@ defmodule Elixos.Integration.M09SessionDirTest do
 
     # The first session starts in the user's home, and the VM is at /.
     {out, vm} = QEMU.iex(vm, "pwd()")
-    assert out =~ ~s("/data/home")
+    assert out =~ ~s("/priv/home")
     {out, vm} = QEMU.iex(vm, "File.cwd!()")
     assert out =~ ~s("/")
 
@@ -36,7 +36,7 @@ defmodule Elixos.Integration.M09SessionDirTest do
     assert out =~ ~s("/")
 
     # A second console job: Ctrl-G, start a local shell, connect to it. It is
-    # an erl shell, and it starts in /data/home too.
+    # an erl shell, and it starts in /priv/home too.
     vm = QEMU.send_raw(vm, @ctrl_g)
     {_, vm} = QEMU.expect(vm, ~r/User switch command/)
     vm = QEMU.send_line(vm, "s")
@@ -46,7 +46,7 @@ defmodule Elixos.Integration.M09SessionDirTest do
 
     vm = QEMU.send_line(vm, "pwd().")
     {out, vm} = QEMU.expect_with_before(vm, ~r/2> /, 60_000)
-    assert out =~ ~s("/data/home")
+    assert out =~ ~s("/priv/home")
     # Even in the second session the VM's directory is still /.
     vm = QEMU.send_line(vm, "file:get_cwd().")
     {out, vm} = QEMU.expect_with_before(vm, ~r/3> /, 60_000)

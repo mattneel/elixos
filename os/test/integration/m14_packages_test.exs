@@ -1,7 +1,7 @@
 defmodule Elixos.Integration.M14PackagesTest do
   @moduledoc """
   M14: packages by name (ADR-019). Hex repositories are the package sources,
-  `/data/hex/repos.exs` is the whole trust decision, `install/1` takes a name,
+  `/priv/hex/repos.exs` is the whole trust decision, `install/1` takes a name,
   and a native tool a package runs is exec'd with `cd:` set to the caller's
   session directory (ADR-020) — never through a shell (ADR-012), never by
   moving the VM's working directory (ADR-016).
@@ -28,10 +28,10 @@ defmodule Elixos.Integration.M14PackagesTest do
     vm = QEMU.boot_to_iex(ctx, disk: disk)
 
     # The official repository is preconfigured and trusted out of the box, and
-    # its key was seeded from the factory into /data/hex/ (PROTOCOL.md §8, Q7).
+    # its key was seeded from the factory into /priv/hex/ (PROTOCOL.md §8, Q7).
     {out, vm} = QEMU.iex(vm, "Elixos.Package.repos() |> Enum.map(& &1.name)")
     assert out =~ ":elixos"
-    {out, vm} = QEMU.iex(vm, ~s|File.read!("/data/hex/keys/elixos.pub")|)
+    {out, vm} = QEMU.iex(vm, ~s|File.read!("/priv/hex/keys/elixos.pub")|)
     assert out =~ "BEGIN RSA PUBLIC KEY"
 
     # Trusting the test repository is the consent step: its key, then the name.
@@ -101,30 +101,30 @@ defmodule Elixos.Integration.M14PackagesTest do
     # A stand-in toolchain whose `zig` prints the directory it was started in.
     # An escript is exec'd directly through its `#!` line: no shell anywhere.
     write = """
-    File.mkdir_p!("/data/toolchain/bin")
+    File.mkdir_p!("/priv/toolchain/bin")
     File.write!(
-      "/data/toolchain/bin/zig",
+      "/priv/toolchain/bin/zig",
       "#!/factory/erts/bin/escript\\nmain(_) ->\\n  {ok, Dir} = file:get_cwd(),\\n  io:format(\\"~s~n\\", [Dir]).\\n",
       [:write]
     )
-    File.chmod!("/data/toolchain/bin/zig", 0o755)
+    File.chmod!("/priv/toolchain/bin/zig", 0o755)
     """
 
     {out, vm} = QEMU.iex(vm, write)
     assert out =~ ":ok"
 
-    {out, vm} = QEMU.iex(vm, ~s|cd("/data/home")|)
-    assert out =~ ~s("/data/home")
-    {out, vm} = QEMU.iex(vm, ~s{Elixos.Package.install("/data/toolchain") |> elem(0)}, 600_000)
+    {out, vm} = QEMU.iex(vm, ~s|cd("/priv/home")|)
+    assert out =~ ~s("/priv/home")
+    {out, vm} = QEMU.iex(vm, ~s{Elixos.Package.install("/priv/toolchain") |> elem(0)}, 600_000)
     assert out =~ ~r/^:ok$/m
 
-    {out, vm} = QEMU.iex(vm, "Zig.init(path: \"/data/toolchain\")")
+    {out, vm} = QEMU.iex(vm, "Zig.init(path: \"/priv/toolchain\")")
     assert out =~ ":ok"
 
     # A relative path resolves against the session's directory: `zig build`
     # runs with cd: set to it, so it finds the project the session is in.
     {out, vm} = QEMU.iex(vm, "Zig.build([\"run\"])", 600_000)
-    assert out =~ ~s("/data/home")
+    assert out =~ ~s("/priv/home")
 
     # The instruction was not to move the VM's working directory (ADR-016).
     {out, vm} = QEMU.iex(vm, "File.cwd!()")

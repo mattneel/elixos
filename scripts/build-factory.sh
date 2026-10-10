@@ -33,16 +33,48 @@ OTP_ROOT="$OTP_INSTALL/usr/local/lib/erlang"
 ROOTFS="$BUILD/rootfs"
 JOBS="$(nproc)"
 
+# Every download is pinned and checked, the way the kernel is (ADR-001): the
+# factory must not change because an upstream tarball did.
+#
+# musl.cc rebuilds its toolchain file in place (they are dated snapshots), so
+# this hash is the one published when the pin was taken (2026-10-09, gcc
+# 11.2.1). If it stops matching, read their release notes, update the hash and
+# this comment, and re-run — never build a factory from an unchecked tarball.
 MUSL_CROSS_URL=https://musl.cc/x86_64-linux-musl-cross.tgz
+MUSL_CROSS_SHA256=c5d410d9f82a4f24c549fe5d24f988f85b2679b452413a9f7e5f7b956f2fe7ea
 OPENSSL_VERSION=3.5.9
+OPENSSL_SHA256=603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a
 NCURSES_VERSION=6.5
+NCURSES_SHA256=136d91bc269a9a5785e5f9e980bc76ab57428f604ce3e5a5a90cebc767971cc6
 OTP_VERSION=29.1.1
+OTP_SHA256=054e0143e39c780e091107fc9b345792a9c1a55f6bac1eca1c1101510fc06bf6
 
 mkdir -p "$TC" "$DL"
 
 step() { printf '\n== %s\n' "$1"; }
-fetch() { # fetch <url> <file>
-  [ -f "$DL/$2" ] || { echo "fetching $2"; curl -fL --retry 3 -o "$DL/$2.part" "$1"; mv "$DL/$2.part" "$DL/$2"; }
+fetch() { # fetch <url> <file> <sha256>
+  local url="$1" file="$2" expected="$3"
+
+  if [ ! -f "$DL/$file" ]; then
+    echo "fetching $file"
+    curl -fL --retry 3 -o "$DL/$file.part" "$url"
+    mv "$DL/$file.part" "$DL/$file"
+  fi
+
+  if ! echo "$expected  $DL/$file" | sha256sum -c - >/dev/null 2>&1; then
+    cat >&2 <<EOF
+fetch: $file does not match its pinned sha256.
+
+  expected $expected
+  got      $(sha256sum "$DL/$file" | cut -d' ' -f1)
+
+  For a source tarball this means the download is damaged or upstream replaced
+  the file: delete $DL/$file and re-run. musl.cc rebuilds its toolchain in
+  place, so a changed hash there is expected occasionally - read their release
+  notes, then update the pin and its comment in this script.
+EOF
+    exit 1
+  fi
 }
 
 export PATH="$CROSS/bin:$PATH"
@@ -75,7 +107,7 @@ fi
 # --- 1. the musl cross toolchain ---------------------------------------------
 step "musl cross toolchain"
 if [ ! -x "$CROSS/bin/x86_64-linux-musl-gcc" ]; then
-  fetch "$MUSL_CROSS_URL" musl-cross.tgz
+  fetch "$MUSL_CROSS_URL" musl-cross.tgz "$MUSL_CROSS_SHA256"
   tar -C "$TC" -xzf "$DL/musl-cross.tgz"
 fi
 echo "using $($CROSS/bin/x86_64-linux-musl-gcc --version | head -n1)"
@@ -84,7 +116,7 @@ echo "using $($CROSS/bin/x86_64-linux-musl-gcc --version | head -n1)"
 step "OpenSSL $OPENSSL_VERSION (target)"
 if [ ! -f "$SYS/usr/lib/libcrypto.so.3" ]; then
   fetch "https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz" \
-    "openssl-$OPENSSL_VERSION.tar.gz"
+    "openssl-$OPENSSL_VERSION.tar.gz" "$OPENSSL_SHA256"
   tar -C "$TC" -xzf "$DL/openssl-$OPENSSL_VERSION.tar.gz"
   (
     cd "$TC/openssl-$OPENSSL_VERSION"
@@ -104,7 +136,7 @@ echo "ok: $SYS/usr/lib/libcrypto.so.3"
 step "ncurses $NCURSES_VERSION (target)"
 if [ ! -f "$SYS/usr/lib/libncurses.so.6" ]; then
   fetch "https://invisible-island.net/archives/ncurses/ncurses-$NCURSES_VERSION.tar.gz" \
-    "ncurses-$NCURSES_VERSION.tar.gz"
+    "ncurses-$NCURSES_VERSION.tar.gz" "$NCURSES_SHA256"
   rm -rf "$TC/ncurses-$NCURSES_VERSION"
   mkdir -p "$TC/ncurses-$NCURSES_VERSION"
   tar -C "$TC/ncurses-$NCURSES_VERSION" -xzf "$DL/ncurses-$NCURSES_VERSION.tar.gz" --strip-components=1
@@ -126,7 +158,7 @@ echo "ok: $SYS/usr/lib/libncurses.so.6"
 step "OTP $OTP_VERSION (target)"
 if [ ! -x "$OTP_ROOT"/erts-*/bin/erlexec ]; then
   fetch "https://github.com/erlang/otp/releases/download/OTP-$OTP_VERSION/otp_src_$OTP_VERSION.tar.gz" \
-    "otp_src_$OTP_VERSION.tar.gz"
+    "otp_src_$OTP_VERSION.tar.gz" "$OTP_SHA256"
   rm -rf "$TC/otp_src_$OTP_VERSION"
   tar -C "$TC" -xzf "$DL/otp_src_$OTP_VERSION.tar.gz"
   (
@@ -180,7 +212,7 @@ rm -rf "$ROOTFS/factory/bin"
 
 # The official Hex repository: the factory ships its public key and the
 # preconfigured entry, so a box trusts it without anyone adding a repository
-# first (ADR-019). `/data/hex/` is the box's own copy and wins once it exists.
+# first (ADR-019). `/priv/hex/` is the box's own copy and wins once it exists.
 mkdir -p "$ROOTFS/factory/hex/keys"
 cp "$ROOT/hex/keys/elixos.pub" "$ROOTFS/factory/hex/keys/elixos.pub"
 {

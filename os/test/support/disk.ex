@@ -3,7 +3,7 @@ defmodule Elixos.Test.Disk do
   Reads and writes files on an ext4 disk image *while QEMU is not running*,
   with e2fsprogs' `debugfs` (no root, no mounting).
 
-  The data disk is mounted at `/data` inside Elixos, so `/data/boot.state`
+  The data disk is mounted at `/priv` inside Elixos, so `/priv/boot.state`
   in the guest is `/boot.state` here.
   """
 

@@ -19,7 +19,7 @@ defmodule Zig do
   """
 
   @doc """
-  Installs the toolchain if needed (`ZIG_GLOBAL_CACHE_DIR=/data/cache/zig`) and
+  Installs the toolchain if needed (`ZIG_GLOBAL_CACHE_DIR=/priv/cache/zig`) and
   makes `zig` available to this session.
 
   Options:
@@ -28,7 +28,7 @@ defmodule Zig do
       fetching the package (an offline mirror, or a test).
 
   Installing once is enough for every session: the toolchain lives in
-  `/data/toolchain/`, not in a session.
+  `/priv/toolchain/`, not in a session.
   """
   @spec init(keyword()) :: :ok | {:error, term()}
   def init(opts \\ []), do: Elixos.NotImplemented.raise!(11, "Zig.init/1 #{inspect(opts)}")

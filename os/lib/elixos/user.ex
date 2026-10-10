@@ -1,7 +1,7 @@
 defmodule Elixos.User do
   @moduledoc """
   The single user's settings (ADR-013), kept in one human-editable file
-  (`/data/user.exs` on a running system).
+  (`/priv/user.exs` on a running system).
 
   The file holds one keyword list literal, e.g. `[repl: :erl, theme: :amber]`.
   It is parsed, never evaluated: only literal terms are accepted.

@@ -25,7 +25,7 @@ defmodule Elixos.Integration.M11SelfHostingTest do
   test "a regular Mix app installs from source and its services start", ctx do
     vm = QEMU.boot_to_iex(ctx, [disk: disk_with_fixtures(ctx.tmp_dir)] ++ @big_vm)
 
-    {out, vm} = QEMU.iex(vm, ~s|Elixos.Package.install("/data/src/sample_app")|, 600_000)
+    {out, vm} = QEMU.iex(vm, ~s|Elixos.Package.install("/priv/src/sample_app")|, 600_000)
     assert out =~ "{:ok, :sample_app}"
 
     {out, vm} = QEMU.iex(vm, "SampleApp.where()")
@@ -39,7 +39,7 @@ defmodule Elixos.Integration.M11SelfHostingTest do
   test "a C NIF compiles on the box with zig cc and loads", ctx do
     vm = QEMU.boot_to_iex(ctx, [disk: disk_with_fixtures(ctx.tmp_dir)] ++ @big_vm)
 
-    {out, vm} = QEMU.iex(vm, ~s|Elixos.Package.install("/data/src/sample_nif")|, 900_000)
+    {out, vm} = QEMU.iex(vm, ~s|Elixos.Package.install("/priv/src/sample_nif")|, 900_000)
     assert out =~ "{:ok, :sample_nif}"
 
     {out, vm} = QEMU.iex(vm, "SampleNif.add(40, 2)")
@@ -51,7 +51,7 @@ defmodule Elixos.Integration.M11SelfHostingTest do
     disk = disk_with_fixtures(ctx.tmp_dir)
 
     vm = QEMU.boot_to_iex(ctx, [disk: disk] ++ @big_vm)
-    {_, vm} = QEMU.iex(vm, ~s|Elixos.Package.install("/data/src/sample_app")|, 600_000)
+    {_, vm} = QEMU.iex(vm, ~s|Elixos.Package.install("/priv/src/sample_app")|, 600_000)
     {out, vm} = QEMU.iex(vm, "Elixos.save()")
     assert out =~ ~r/\{:ok, \d+\}/
     vm = QEMU.send_line(vm, "Elixos.poweroff()")

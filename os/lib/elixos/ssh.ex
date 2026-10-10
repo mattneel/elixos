@@ -5,9 +5,9 @@ defmodule Elixos.SSH do
   OTP's `ssh` daemon takes a shell fun receiving the authenticated user and
   peer address and returning the shell's pid, so a per-user REPL is a lookup
   in `Elixos.User` followed by `Elixos.REPL.mfa/1`. Single user (ADR-013):
-  public-key auth against `/data/home/.ssh/authorized_keys`, no passwords.
+  public-key auth against `/priv/home/.ssh/authorized_keys`, no passwords.
 
-  Host keys are generated on first boot and kept in `/data/ssh/`.
+  Host keys are generated on first boot and kept in `/priv/ssh/`.
   """
 
   @spec start(keyword()) :: {:ok, pid()} | {:error, term()}

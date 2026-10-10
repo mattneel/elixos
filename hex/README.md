@@ -1,7 +1,7 @@
 # The official Elixos Hex repository
 
 `elixos` is the repository every Elixos box trusts out of the box (ADR-019):
-the factory image ships its public key, and `/data/hex/repos.exs` names it, so
+the factory image ships its public key, and `/priv/hex/repos.exs` names it, so
 `Elixos.Package.install(:name)` works without anyone adding a repository first.
 
 It is a **static Hex repository** served by **GitHub Pages**:

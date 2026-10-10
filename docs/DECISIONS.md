@@ -117,8 +117,8 @@ the same paths; record it in docs/notes/ and replace it before M11.
 **Status:** accepted (M11)
 
 **Decision.** Ship `zig cc`/`zig c++` (plus make and a BusyBox sh, which
-`elixir_make` needs) as a package fetched into `/data` on first use, never in
-the factory. `ZIG_GLOBAL_CACHE_DIR=/data/cache/zig`.
+`elixir_make` needs) as a package fetched into `/priv` on first use, never in
+the factory. `ZIG_GLOBAL_CACHE_DIR=/priv/cache/zig`.
 
 **Consequences.** An x86_64 Elixos can cross-build NIFs for other targets
 too, since BEAM bytecode is portable and only NIFs are architecture-specific.
@@ -297,7 +297,7 @@ calls `File.cd/1`), and the erl shell's `cd/1` comes from `user_default` and
 calls `file:set_cwd/1`: both change the world for everyone.
 
 **Decision.** A **REPL session** has its own working directory, starting at
-`/data/home`. The directory is keyed by the session's process-group leader,
+`/priv/home`. The directory is keyed by the session's process-group leader,
 which every process spawned from that REPL inherits, so console jobs, SSH
 channels and anything they start each have one. Relative paths typed at a
 prompt expand against the session's directory.
@@ -322,6 +322,39 @@ spawned process would lose the directory, so `System.cmd(cd: ...)` would break
 for anything started from a task. (d) An explicit session handle passed to
 every function: infects every API, and the shells' built-ins cannot take it.
 
+## ADR-021: The persistent disk mounts at /priv
+
+**Status:** accepted (decided by the human, 2026-10-09)
+
+**Context.** The persistent ext4 disk was mounted at `/data`, a name from the
+scaffold. The human moved it to `/priv`, named after OTP's `priv` directories:
+the OS's private storage, the counterpart of an application's `lib/`.
+
+**Decision.** The disk mounts at `/priv`; the user's home is `/priv/home`, and
+`~` means `/priv/home` everywhere. The launch contract sets `HOME=/priv/home`
+(PROTOCOL.md §3), so `Path.expand/1`, IEx, Mix and anything else that resolves
+`~` land there with no Elixos-specific code, and there is no other home
+directory. Session directories start in `~` (ADR-020).
+
+The kernel parameters keep their names: `elixos.data=` and `elixos.data_wait=`
+name the *device*, not the path, and renaming them would change an interface
+for a filesystem rename and rewrite passing M1 and M3 acceptance tests.
+
+**Consequences.** Every path under the old mount point moved: `boot.state`,
+`store/`, `journal.log`, `generations/`, `user.exs`, `home/`, `ssh/`,
+`cache/`, `apps/` and `hex/`. The shipped tests that spelled the old path — the
+M9, M11, M12 and M14 acceptance files, whose fixtures and assertions name it —
+changed path for path in the same commit, which is what this ADR records
+(AGENTS.md, hard rules). `docs/TESTING.md` and the `Elixos.Test.Disk` helper's
+docs now say that `/priv/x` in the guest is `/x` on the disk.
+
+**Alternatives considered.** (a) Keep `/data`: the human decided otherwise, and
+`priv` already means "this system's own files" to an OTP reader. (b) `/var`:
+POSIX shaped, and wrong for a system whose userland is one application.
+(c) `/persist`, `/state`, `/store`: longer, and meaningless to that reader.
+(d) Renaming `elixos.data`: rejected above — it would break the M1 and M3
+tests for no gain.
+
 ---
 
 ## Open questions
@@ -330,7 +363,7 @@ Decide these with the human. Until then, follow the proposed default.
 
 - **Q1: Package versions.** One version per package system-wide (proposed,
   ADR-015), or something cleverer, such as per-app module renaming?
-- **Q2: Process state.** Rebuild from supervisors and `/data` at boot
+- **Q2: Process state.** Rebuild from supervisors and `/priv` at boot
   (proposed), or persist some process state across boots?
 - **Q3: Wi-Fi.** `wpa_supplicant`/`iwd` as a package, or nl80211 from Elixir?
 - **Q4: The cyberdeck hardware.** Which machine? It decides the kernel
@@ -339,14 +372,14 @@ Decide these with the human. Until then, follow the proposed default.
   `BootNext`, or something simpler?
 - **Q6: gsh.** Packaging the `gleam` compiler that gsh drives.
 - **Q7: On-disk layout of repo configuration and trusted keys.** Proposed
-  default: `/data/hex/repos.exs` (a keyword list of `name: [url:, key:]`, the
-  key being the PEM text) and `/data/hex/keys/<repo>.pub` for the key files, so
+  default: `/priv/hex/repos.exs` (a keyword list of `name: [url:, key:]`, the
+  key being the PEM text) and `/priv/hex/keys/<repo>.pub` for the key files, so
   trust survives power cycles and a repo can be inspected by hand. The factory
-  ships the default in `/factory/hex/`, and `/data/hex/repos.exs` is what a
+  ships the default in `/factory/hex/`, and `/priv/hex/repos.exs` is what a
   session reads: seeded from the factory the first time, then the machine
   owner's. It is read by evaluating it (`Code.eval_file/1`), because PEM keys
   do not fit a line format; that single exception is why it is worth a
-  decision. The root is `Application.get_env(:elixos, :hex_dir, "/data/hex")`,
+  decision. The root is `Application.get_env(:elixos, :hex_dir, "/priv/hex")`,
   so the host unit tests can point it at a temporary directory. PROTOCOL.md §7
   and §8 document the paths and the format.
 - **Q8: Repo URLs beyond http(s).** Proposed default: a repo URL may be an

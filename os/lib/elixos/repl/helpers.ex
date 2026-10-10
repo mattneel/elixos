@@ -8,7 +8,7 @@ defmodule Elixos.REPL.Helpers do
   are what a prompt has:
 
       iex(1)> pwd()
-      "/data/home"
+      "/priv/home"
       iex(2)> cd("/tmp")
       "/tmp"
       iex(3)> ls()

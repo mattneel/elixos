@@ -7,8 +7,8 @@
 //!
 //!   1. Mount /proc, /sys, /dev (devtmpfs), /run and /tmp (tmpfs).
 //!   2. Read /proc/cmdline -> cmdline.parse. Log the banner and invalid tokens.
-//!   3. Mount the data device (elixos.data, ext4) on /data. Missing: rescue.
-//!   4. Read /data/boot.state -> statefile.parse. Missing file: defaults.
+//!   3. Mount the data device (elixos.data, ext4) on /priv. Missing: rescue.
+//!   4. Read /priv/boot.state -> statefile.parse. Missing file: defaults.
 //!      Corrupt file: rescue override, and never overwrite the evidence.
 //!   5. recovery.planLaunch, persist next_state atomically, log the plan.
 //!   6. Create the control pipe and exec ERTS (erlexec) for the planned
@@ -18,7 +18,7 @@
 //!      change); timerfd heartbeat deadline (boot_grace, then hb_timeout).
 //!   8. Reap every child; PID 1 inherits orphans. On BEAM exit ->
 //!      recovery.onBeamExit -> relaunch after a short backoff, or shut down.
-//!   9. Shutdown: SIGTERM then SIGKILL stragglers, sync, unmount /data,
+//!   9. Shutdown: SIGTERM then SIGKILL stragglers, sync, unmount /priv,
 //!      reboot(2) with RESTART / POWER_OFF / HALT.
 //!
 //! Every console line it prints follows the log contract in PROTOCOL.md §6;
@@ -58,8 +58,8 @@ const console_fd: linux.fd_t = 1;
 const log_prefix = "elixos-shim: ";
 
 /// boot.state and the temp file it is written through (PROTOCOL.md §4).
-const state_path = "/data/boot.state";
-const state_tmp_path = "/data/boot.state.tmp";
+const state_path = "/priv/boot.state";
+const state_tmp_path = "/priv/boot.state.tmp";
 
 /// The factory (generation 0) lives in the initramfs from M4 on.
 const factory_path = "/factory";
@@ -79,7 +79,7 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
     var overrides: recovery.Overrides = .{};
 
     // 1. The filesystems the rest of the boot needs. A missing one is not
-    //    fatal: it only costs us /proc/cmdline or a place to mount /data.
+    //    fatal: it only costs us /proc/cmdline or a place to mount /priv.
     if (!mountBase()) overrides.safe = true;
 
     // 2. Kernel command line (PROTOCOL.md §5).
@@ -89,8 +89,8 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
     if (settings.invalid > 0) log("ignored {d} invalid elixos.* parameters", .{settings.invalid});
     if (settings.safe) overrides.safe = true;
 
-    // 3+4. /data and boot.state. The disk is mounted and read even when the
-    //      safe override is set: rescue is "the factory with /data mounted"
+    // 3+4. /priv and boot.state. The disk is mounted and read even when the
+    //      safe override is set: rescue is "the factory with /priv mounted"
     //      (ARCHITECTURE.md §4.5), and the plan must be computed from the real
     //      state. Persisting is a separate decision: only a plan that actually
     //      changes the state is written, which is what leaves the safe and
@@ -177,7 +177,7 @@ fn mountBase() bool {
     return ok;
 }
 
-/// Mounts the data device on /data, waiting for it to appear first (see
+/// Mounts the data device on /priv, waiting for it to appear first (see
 /// `Settings.data_wait_s`: the kernel starts /init without waiting for USB or
 /// SD storage, so on real hardware the device may not exist yet). Logs and
 /// returns false when it fails, so the boot goes to the factory in rescue
@@ -191,7 +191,7 @@ fn mountData(device: []const u8, wait_s: u32) bool {
 
     var remaining: u32 = wait_s *| 10; // tenths of a second
     while (true) {
-        const err = linux.errno(linux.mount(path.ptr, "/data", "ext4", 0, 0));
+        const err = linux.errno(linux.mount(path.ptr, "/priv", "ext4", 0, 0));
         if (err == .SUCCESS) return true;
         // Only "there is no such device yet" is worth waiting for: anything
         // else (a bad filesystem, a wrong device) will not fix itself.
@@ -206,14 +206,14 @@ fn mountData(device: []const u8, wait_s: u32) bool {
     }
 }
 
-/// Reads and parses /data/boot.state (PROTOCOL.md §4).
+/// Reads and parses /priv/boot.state (PROTOCOL.md §4).
 fn readState(state: *recovery.BootState) StateError!void {
     var buffer: [128]u8 = undefined;
     const text = try readFile(state_path, &buffer);
     state.* = try statefile.parse(text);
 }
 
-/// Write boot.state.tmp, fsync it, rename it over boot.state, fsync /data
+/// Write boot.state.tmp, fsync it, rename it over boot.state, fsync /priv
 /// (PROTOCOL.md §4). Every failure leaves the old file in place.
 fn writeState(state: recovery.BootState) void {
     var buffer: [statefile.max_len]u8 = undefined;
@@ -260,7 +260,7 @@ fn execErts(plan: recovery.Plan, ctl_fd: linux.fd_t) noreturn {
         "BINDIR=" ++ bindir_path,
         "EMU=beam",
         "PROGNAME=erl",
-        "HOME=/data/home",
+        "HOME=/priv/home",
         "TERM=linux",
         "LANG=C.UTF-8",
         zeroed(&generation, "ELIXOS_GENERATION={d}", .{plan.launch.generation}),
@@ -609,7 +609,7 @@ fn shutdown(kind: recovery.Shutdown) noreturn {
     sleepMs(50);
     _ = linux.kill(-1, .KILL);
     linux.sync();
-    _ = linux.umount2("/data", 0);
+    _ = linux.umount2("/priv", 0);
     log("shutdown {t}", .{kind});
     const cmd: linux.LINUX_REBOOT.CMD = switch (kind) {
         .reboot => .RESTART,
@@ -698,7 +698,7 @@ fn writeFileAtomic(final_path: [*:0]const u8, tmp_path: [*:0]const u8, bytes: []
     if (linux.errno(linux.rename(tmp_path, final_path)) != .SUCCESS) return;
 
     // fsync the directory as well, so the rename itself is durable.
-    const raw_dir = linux.open("/data", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+    const raw_dir = linux.open("/priv", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
     if (linux.errno(raw_dir) != .SUCCESS) return;
     const dir: linux.fd_t = @intCast(raw_dir);
     _ = linux.fsync(dir);

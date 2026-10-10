@@ -44,7 +44,7 @@ The roadmap already exists as tests, gated by the `MILESTONE` file
 - **`spec/` vectors are shared** by the Zig and Elixir suites; change both
   sides together.
 - **Programs are packages, commands are functions** (ADR-019). Hex repositories
-  are the package sources and `/data/hex/repos.exs` is the whole trust
+  are the package sources and `/priv/hex/repos.exs` is the whole trust
   decision; nothing is installed from a repo whose key was not added first.
 - **Each REPL session has its own working directory** (ADR-020), keyed by its
   group leader. Nothing changes the VM's cwd (ADR-016); native tools are exec'd

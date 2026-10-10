@@ -35,10 +35,10 @@ defmodule Elixos.Package.RepoTest do
   end
 
   test "adding a repository with its key is the consent step", %{hex_dir: hex_dir, key: key} do
-    assert Package.add_repo(:team, "/data/mirrors/team", key: key) == :ok
+    assert Package.add_repo(:team, "/priv/mirrors/team", key: key) == :ok
     assert Elixos.Package.Repo.trusted?(:team)
 
-    assert [%Elixos.Package.Repo{name: :team, url: "/data/mirrors/team", key: ^key}] = Package.repos()
+    assert [%Elixos.Package.Repo{name: :team, url: "/priv/mirrors/team", key: ^key}] = Package.repos()
 
     # The key is kept where PROTOCOL.md §8 says, so trust survives a power cycle.
     assert File.read!(Path.join([hex_dir, "keys", "team.pub"])) == key
@@ -56,7 +56,7 @@ defmodule Elixos.Package.RepoTest do
   test "an install never trusts a repository implicitly", %{key: key} do
     # Adding the repository is what makes it trusted; after removing it, the
     # same URL is unknown again — nothing was remembered behind our back.
-    assert Package.add_repo(:team, "/data/mirrors/team", key: key) == :ok
+    assert Package.add_repo(:team, "/priv/mirrors/team", key: key) == :ok
     assert Package.remove_repo(:team) == :ok
 
     refute Elixos.Package.Repo.trusted?(:team)

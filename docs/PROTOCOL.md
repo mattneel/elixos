@@ -48,7 +48,7 @@ run every line, and valid lines must round-trip through encode.
 The shim forks and execs `erlexec` from the generation's ERTS directly. No
 shell script runs, ever (ADR-012); set what the release's `bin/` scripts would
 have set (like Nerves' erlinit does): `ROOTDIR`, `BINDIR`, `EMU`, `PROGNAME`,
-plus `HOME=/data/home`, `TERM=linux`, `LANG=C.UTF-8`, and:
+plus `HOME=/priv/home`, `TERM=linux`, `LANG=C.UTF-8`, and:
 
 | variable            | value                                                  |
 |---------------------|--------------------------------------------------------|
@@ -68,7 +68,7 @@ Parsed BEAM-side by `Elixos.Boot.Env.parse/1`.
 
 ## §4 `boot.state`
 
-Path: `/data/boot.state`. Single writer: the shim (ADR-006). The BEAM may read
+Path: `/priv/boot.state`. Single writer: the shim (ADR-006). The BEAM may read
 it, never write it.
 
 Canonical form, exactly (encode always writes this):
@@ -91,8 +91,8 @@ Parse rules (`shim/src/statefile.zig`):
 
 Lines are checked in order and the first error wins.
 
-Writes are atomic: write `/data/boot.state.tmp`, fsync it, rename it over
-`boot.state`, fsync `/data`.
+Writes are atomic: write `/priv/boot.state.tmp`, fsync it, rename it over
+`boot.state`, fsync `/priv`.
 
 If `boot.state` is missing, the shim plans from the defaults (`0/0/0`).
 If it exists but does not parse, the shim plans from the defaults with the
@@ -110,7 +110,7 @@ malformed or unknown `elixos.*` tokens are counted and logged, never applied:
 | `elixos.max_attempts=<n≥1>`     | 3          | launches before falling back                    |
 | `elixos.hb_timeout=<s≥1>`       | 10         | seconds without `HB` before killing the BEAM    |
 | `elixos.boot_grace=<s≥1>`       | 120        | seconds allowed before the first `HB`           |
-| `elixos.data=/dev/<dev>`        | /dev/vda   | ext4 device mounted on `/data`                  |
+| `elixos.data=/dev/<dev>`        | /dev/vda   | ext4 device mounted on `/priv`                  |
 | `elixos.data_wait=<s≥0>`        | 10         | seconds to wait for that device to appear        |
 
 BEAM side (`Elixos.Boot.Cmdline`):
@@ -158,26 +158,26 @@ unreadable or unmountable state, the shim uses the defaults (`0/0/0`).
 
 ## §7 The persistent disk
 
-ext4, label `ELIXOS`, mounted on `/data`:
+ext4, label `ELIXOS`, mounted on `/priv`:
 
 ```
-/data/boot.state        §4, written only by the shim
-/data/store/            Elixos.Image.Store blobs: <2 hex>/<62 hex>
-/data/journal.log       Elixos.Image.Journal (record format in its moduledoc)
-/data/generations/      <n>.gen manifests (Elixos.Image.Generation)
-/data/user.exs          Elixos.User settings (a keyword list literal)
-/data/home/             the user's home; .ssh/authorized_keys (M12)
-/data/ssh/              SSH host keys (M12)
-/data/cache/zig/        ZIG_GLOBAL_CACHE_DIR for on-box builds (M11)
-/data/apps/             installed apps (M11)
-/data/hex/repos.exs     trusted Hex repositories (M14, ADR-019)
-/data/hex/keys/         each repo's public key, `<name>.pub`
-/data/hex/cache/        fetched registries and tarballs
+/priv/boot.state        §4, written only by the shim
+/priv/store/            Elixos.Image.Store blobs: <2 hex>/<62 hex>
+/priv/journal.log       Elixos.Image.Journal (record format in its moduledoc)
+/priv/generations/      <n>.gen manifests (Elixos.Image.Generation)
+/priv/user.exs          Elixos.User settings (a keyword list literal)
+/priv/home/             the user's home; .ssh/authorized_keys (M12)
+/priv/ssh/              SSH host keys (M12)
+/priv/cache/zig/        ZIG_GLOBAL_CACHE_DIR for on-box builds (M11)
+/priv/apps/             installed apps (M11)
+/priv/hex/repos.exs     trusted Hex repositories (M14, ADR-019)
+/priv/hex/keys/         each repo's public key, `<name>.pub`
+/priv/hex/cache/        fetched registries and tarballs
 ```
 
 ## §8 Trusted Hex repositories (M14)
 
-Software comes from Hex repositories (ADR-019). `/data/hex/repos.exs` is a
+Software comes from Hex repositories (ADR-019). `/priv/hex/repos.exs` is a
 keyword list, one entry per repository, and **it is the whole trust decision**:
 a repository is trusted exactly when it appears here, so an install can never
 trust one implicitly.
@@ -185,15 +185,15 @@ trust one implicitly.
 ```elixir
 [
   elixos: [url: "https://repo.example/elixos", key: "-----BEGIN PUBLIC KEY-----\n..."],
-  team: [url: "/data/mirrors/team", key: "-----BEGIN PUBLIC KEY-----\n..."]
+  team: [url: "/priv/mirrors/team", key: "-----BEGIN PUBLIC KEY-----\n..."]
 ]
 ```
 
-  * `url` is `http(s)://` or a local path (`/data/mirrors/team`), so an offline
+  * `url` is `http(s)://` or a local path (`/priv/mirrors/team`), so an offline
     mirror is a directory.
   * `key` is the repository's public key, PEM, RSA: the same bytes the repo
     serves as `public_key`, and what every resource it serves is verified
-    against. The same key is written to `/data/hex/keys/<name>.pub`.
+    against. The same key is written to `/priv/hex/keys/<name>.pub`.
   * A repository name and a package name may contain lowercase letters,
     digits, `_` and `-`; a package name belongs to exactly one trusted
     repository, and a clash is an error naming both.
@@ -208,7 +208,7 @@ The factory ships the official repository preconfigured — its key in
 ```
 
 in `/factory/hex/repos.exs` — so it is trusted without any consent step; the
-box's `/data/hex/repos.exs` wins once it exists. The file is the machine
+box's `/priv/hex/repos.exs` wins once it exists. The file is the machine
 owner's (single user, ADR-013), and it is the one configuration file Elixos
 reads by evaluating it (`Code.eval_file/1`), because it holds PEM keys.
 

@@ -2,7 +2,7 @@ defmodule Elixos.Package do
   @moduledoc """
   Installing software onto the running system (M11 self-hosting, M14 by name).
 
-  A **path** is installed as it stands: `install("/data/src/my_app")` builds the
+  A **path** is installed as it stands: `install("/priv/src/my_app")` builds the
   Mix project in place with `MIX_TARGET=elixos` (so its `config/elixos.exs`
   applies and `targets: :elixos` deps are included), resolves its dependencies
   system-wide (`Elixos.Package.Resolver`), loads it into the running VM, starts
@@ -15,10 +15,10 @@ defmodule Elixos.Package do
       iex> Elixos.Package.install(:hello_pkg)
       {:ok, :hello_pkg}
 
-  The name is resolved among the repositories `/data/hex/repos.exs` lists —
+  The name is resolved among the repositories `/priv/hex/repos.exs` lists —
   which is the entire trust decision, so an install never trusts a repository
   implicitly — the tarball is fetched, verified and unpacked into
-  `/data/apps/<name>-<version>/`, and that directory goes through the same path
+  `/priv/apps/<name>-<version>/`, and that directory goes through the same path
   as an explicit one. A name offered by two repositories is an error naming
   both. `:elixos` is never fetched: it is the running OS.
 

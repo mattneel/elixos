@@ -9,17 +9,17 @@ defmodule Elixos.Session do
   channel and any task they start all resolve relative paths the same way.
 
       iex(1)> pwd()
-      "/data/home"
+      "/priv/home"
       iex(2)> cd("src")
       iex(3)> Elixos.Session.cwd()
-      "/data/home/src"
+      "/priv/home/src"
 
   The login REPLs carry session-aware `cd/1`, `pwd/0` and `ls/0,1`
   (`Elixos.REPL.Helpers` for IEx, `:user_default` for erl). Nothing here ever
   calls `File.cd/1` or `file:set_cwd/1`: the VM's directory stays `/`.
   """
 
-  @default_dir "/data/home"
+  @default_dir "/priv/home"
 
   @doc "The calling session's working directory."
   @spec cwd() :: Path.t()

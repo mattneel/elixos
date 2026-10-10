@@ -55,7 +55,7 @@ there and both sides must handle it. The format is documented in the file.
 - `Elixos.Test.Disk`: `fresh!/1` (sparse copy of the pristine
   `build/disk.img`), `read/2`, `exists?/2`, `write!/3`, `put_tree!/3`. It uses
   e2fsprogs' `debugfs`, so no root and no mounting. Only use it while QEMU is
-  not running. Guest `/data/x` is `/x` here.
+  not running. Guest `/priv/x` is `/x` here.
 
 **Conventions.**
 - QEMU tests live in `os/test/integration/`, are tagged `:qemu`, and set a

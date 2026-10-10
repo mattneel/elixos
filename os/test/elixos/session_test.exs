@@ -30,11 +30,11 @@ defmodule Elixos.SessionTest do
     end
   end
 
-  test "a session starts in /data/home and the VM's directory never moves" do
+  test "a session starts in /priv/home and the VM's directory never moves" do
     vm_dir = File.cwd!()
     one = leader()
 
-    assert in_session(one, fn -> Session.cwd() end) == "/data/home"
+    assert in_session(one, fn -> Session.cwd() end) == "/priv/home"
     assert in_session(one, fn -> Session.cd("/tmp") end) == {:ok, "/tmp"}
     assert in_session(one, fn -> Session.cwd() end) == "/tmp"
 
@@ -49,7 +49,7 @@ defmodule Elixos.SessionTest do
     assert in_session(a, fn -> Session.cd("/tmp") end) == {:ok, "/tmp"}
 
     assert in_session(a, fn -> Session.cwd() end) == "/tmp"
-    assert in_session(b, fn -> Session.cwd() end) == "/data/home"
+    assert in_session(b, fn -> Session.cwd() end) == "/priv/home"
     assert in_session(a, fn -> Session.cwd() end) == "/tmp"
   end
 
@@ -75,7 +75,7 @@ defmodule Elixos.SessionTest do
     assert in_session(one, fn -> Session.expand("x/y") end) == "/tmp/x/y"
     assert in_session(one, fn -> Session.expand("../z") end) == "/z"
     assert in_session(one, fn -> Session.expand("/absolute") end) == "/absolute"
-    assert in_session(one, fn -> Session.expand("~") end) == "/data/home"
+    assert in_session(one, fn -> Session.expand("~") end) == "/priv/home"
   end
 
   test "cd to something that is not a directory changes nothing" do

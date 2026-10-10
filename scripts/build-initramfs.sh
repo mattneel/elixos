@@ -6,7 +6,7 @@
 #   /init                          the Zig shim (zig-out/bin/init)
 #   /dev/console, /dev/null        so PID 1 has stdio before it mounts devtmpfs
 #   /proc /sys /dev /run /tmp      mount points
-#   /data                          mount point for the persistent disk
+#   /priv                          mount point for the persistent disk
 #   everything under build/rootfs  overlaid at /  (M4+: /factory, /lib/ld-musl-*)
 #
 # Env: INIT=<path to shim>  ROOTFS=<overlay dir>  ELIXOS_BUILD=<build dir>
@@ -30,7 +30,7 @@ OUT="$BUILD/initramfs.cpio.gz"
   echo "dir /dev 0755 0 0"
   echo "nod /dev/console 0600 0 0 c 5 1"
   echo "nod /dev/null 0666 0 0 c 1 3"
-  for dir in /proc /sys /run /tmp /data; do
+  for dir in /proc /sys /run /tmp /priv; do
     echo "dir $dir 0755 0 0"
   done
   echo "file /init $INIT 0755 0 0"

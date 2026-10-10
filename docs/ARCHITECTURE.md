@@ -12,8 +12,8 @@ UEFI firmware (hardware)            QEMU -kernel/-initrd (development)
                      │
                      ▼
           initramfs: /init = Zig shim (PID 1)      never exits (ADR-002)
-                     │  mounts /proc /sys /dev /run /tmp, /data (ext4)
-                     │  reads cmdline + /data/boot.state, plans, persists
+                     │  mounts /proc /sys /dev /run /tmp, /priv (ext4)
+                     │  reads cmdline + /priv/boot.state, plans, persists
                      │  fork + exec erlexec (no shell), control pipe on fd ≥ 3
                      ▼
           ERTS (dynamic musl, ADR-008) running generation G
@@ -34,7 +34,7 @@ hardware UEFI runs the kernel image itself through its EFI stub (ADR-014).
 /init                          the shim
 /dev/console, /dev/null        device nodes, so PID 1 has stdio before devtmpfs
 /proc /sys /dev /run /tmp      mount points
-/data                          mount point for the persistent disk
+/priv                          mount point for the persistent disk
 /factory/                      generation 0: ERTS + OTP apps + Elixir + Elixos (M4)
 /lib/ld-musl-x86_64.so.1       musl's dynamic loader, also its libc.so (M4)
 ```
@@ -42,7 +42,7 @@ hardware UEFI runs the kernel image itself through its EFI stub (ADR-014).
 The initramfs is the immutable base: the factory image cannot be broken by
 anything done at runtime, so rescue mode always has something to boot.
 
-**/data** is the persistent ext4 disk (layout in PROTOCOL.md §7). Everything
+**/priv** is the persistent ext4 disk (layout in PROTOCOL.md §7). Everything
 the user creates lives there.
 
 There is no `/bin`, no `/usr`, no `/etc` beyond what a feature needs (for
@@ -56,17 +56,17 @@ tested in QEMU.
 
 ### §3.1 Duties
 
-1. Mount `/proc`, `/sys`, `/dev` (devtmpfs), `/run`, `/tmp`; then `/data`,
+1. Mount `/proc`, `/sys`, `/dev` (devtmpfs), `/run`, `/tmp`; then `/priv`,
    waiting up to `elixos.data_wait` seconds for that device to appear (the
    kernel does not wait for USB or SD storage before running `/init`).
-2. Parse `/proc/cmdline`, read `/data/boot.state`, plan, persist, log.
+2. Parse `/proc/cmdline`, read `/priv/boot.state`, plan, persist, log.
 3. Fork and exec ERTS with the launch contract (PROTOCOL.md §3).
 4. Event loop on epoll: a signalfd (SIGCHLD, SIGTERM, SIGINT, SIGPWR), the
    control pipe, and a timerfd for the heartbeat deadline.
 5. Reap every child. As PID 1 it inherits orphans; zombies must never pile up.
 6. Relaunch the BEAM after an exit nobody asked for (short backoff), or carry
    out a requested shutdown: SIGTERM, then SIGKILL stragglers, sync, unmount
-   `/data`, `reboot(2)`.
+   `/priv`, `reboot(2)`.
 
 Allocate nothing after startup. Single-threaded. Raw `std.os.linux` syscalls.
 
@@ -83,7 +83,7 @@ to boot; the shim persists `next_state` **before** launching, so a crash, a
 hang or a power cut mid-boot still counts.
 
 ```
-safe override (elixos.safe, unreadable state, no /data)  → factory, rescue, state untouched
+safe override (elixos.safe, unreadable state, no /priv)  → factory, rescue, state untouched
 generation override (elixos.generation=N)                → N once, state untouched
 attempts < max_attempts                                  → current, attempts + 1
 attempts ≥ max and current ≠ last_good                   → last_good, attempts = 1  (fallback)
@@ -128,19 +128,19 @@ evaluates with `eval_quoted_with_env/4` and `IEx.Server.run/1` accepts an
 ### §4.2 Store
 
 Module bytecode goes into a content-addressed store
-(`/data/store/<2 hex>/<62 hex>`, SHA-256). Writes are atomic; reads verify the hash.
+(`/priv/store/<2 hex>/<62 hex>`, SHA-256). Writes are atomic; reads verify the hash.
 
 ### §4.3 Journal
 
 Each change (`{:module, mod, hash}`, `{:forget, mod}`, `{:generation, n}`) is
-appended to `/data/journal.log` and fsync'd before anything else happens.
+appended to `/priv/journal.log` and fsync'd before anything else happens.
 Records are length-prefixed and CRC'd; a torn tail from a crash is detected
 and truncated, while damage in the middle is reported and left for a human.
 
 ### §4.4 Generations
 
 `Elixos.save/1` writes the working set (latest hash of every module not
-forgotten) as an immutable manifest `/data/generations/<n>.gen` with a boot
+forgotten) as an immutable manifest `/priv/generations/<n>.gen` with a boot
 spec, then sends `NEXT <n>` so the shim boots it next time, provisionally,
 until it commits. Generation 0 is the factory and never touches the disk.
 
@@ -154,7 +154,7 @@ unsaved work is recoverable on request, never applied by surprise.
   changes", from the journal.
 - `Elixos.Image.Bisect.first_bad/2`: find the journal entry that broke things.
 - `Generation.diff/2`: what changed between two generations.
-- Rescue mode: the factory with `/data` mounted and no user code loaded.
+- Rescue mode: the factory with `/priv` mounted and no user code loaded.
 
 ### §4.6 The sticky base
 
@@ -165,7 +165,7 @@ take the image down.
 ### §4.7 Process state (OPEN)
 
 Proposed default: process state is not persisted. Supervisors rebuild it at
-boot from code and from data the app keeps in `/data` (files, DETS, Mnesia).
+boot from code and from data the app keeps in `/priv` (files, DETS, Mnesia).
 See DECISIONS.md, open questions.
 
 ## §5 The BEAM side of boot
@@ -191,7 +191,7 @@ shell only vets what is typed at the prompt, so it is a guardrail, not a
 security boundary. That is fine for a single-user machine (ADR-013).
 
 **Session directories (ADR-020).** Each session has its own working directory,
-starting at `/data/home`, keyed by its process-group leader — which everything
+starting at `/priv/home`, keyed by its process-group leader — which everything
 spawned from that REPL inherits. The login REPLs therefore carry session-aware
 `cd/1`, `pwd/0` and `ls/0,1` (IEx by importing Elixos's helpers into its
 evaluation environment, erl through `user_default`), relative paths resolve
@@ -221,7 +221,7 @@ The VM's working directory never moves (ADR-016).
 ## §7a Packages by name (ADR-019, M14)
 
 Software is installed from **Hex repositories**: a repository is a name, a URL
-and a public key, and `/data/hex/repos.exs` is the entire trust decision
+and a public key, and `/priv/hex/repos.exs` is the entire trust decision
 (PROTOCOL.md §8). The official `elixos` repository is a static repository on
 GitHub Pages, built and published by CI (`.github/workflows/hex-repo.yml`); the
 factory ships its public key and presets the entry in `/factory/hex/`, so it is
@@ -231,7 +231,7 @@ nothing else to consent to (no sudo).
 
 `Elixos.Package.install/1` by name finds the package among the trusted repos
 (a name in two repos is an error naming both), fetches and unpacks the tarball
-into `/data/apps/`, and hands the directory to the M11 path below. The apt
+into `/priv/apps/`, and hands the directory to the M11 path below. The apt
 verbs are functions: `add_repo/3`, `remove_repo/1`, `repos/0`, `search/1`,
 `info/1`, `upgrade/0,1`, `remove/1`.
 
@@ -248,8 +248,8 @@ that.
   linked musl cannot. musl's loader is its libc, so this costs almost nothing,
   and precompiled musl NIFs from packages load as-is.
 - `zig cc` is the system C/C++ compiler and cross compiler, shipped in a
-  toolchain package fetched into `/data` on first use, never in the factory.
-  `ZIG_GLOBAL_CACHE_DIR=/data/cache/zig` keeps libc builds across boots.
+  toolchain package fetched into `/priv` on first use, never in the factory.
+  `ZIG_GLOBAL_CACHE_DIR=/priv/cache/zig` keeps libc builds across boots.
 - `elixir_make` shells out to `make`, and make runs recipes with `/bin/sh`, so
   the toolchain package carries make and a BusyBox sh. They exist only for
   builds; nobody ever gets an sh prompt.

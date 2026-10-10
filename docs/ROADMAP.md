@@ -71,7 +71,7 @@ number is parsed. Saturating `+|` for attempts.
 
 ## M3: First boot (QEMU, shim only)
 
-**Goal.** The real PID 1: mounts, cmdline, `/data`, `boot.state`, plan,
+**Goal.** The real PID 1: mounts, cmdline, `/priv`, `boot.state`, plan,
 persist, log, and a clean power off, all without ERTS yet.
 
 **Acceptance.** `make test-qemu` with `MILESTONE=3`:
@@ -89,7 +89,7 @@ persist, log, and a clean power off, all without ERTS yet.
   Never return from `main`.
 - Debug interactively with `make qemu` (Ctrl-A X quits).
 
-- [x] Done (2026-10-09): `make ci` green (37/37 Zig, 76 ExUnit, 6/6 QEMU M3 tests). Reviewer subagent found five defects in the first draft — a failed write still renamed over boot.state, states the policy calls "untouched" were persisted, `elixos.safe` skipped mounting/reading `/data`, errno names printed `NOENT` instead of `ENOENT`, and an oversized device name could drop the required mount-failure line — all fixed, with the rescue and safe paths re-verified end to end on real boots.
+- [x] Done (2026-10-09): `make ci` green (37/37 Zig, 76 ExUnit, 6/6 QEMU M3 tests). Reviewer subagent found five defects in the first draft — a failed write still renamed over boot.state, states the policy calls "untouched" were persisted, `elixos.safe` skipped mounting/reading `/priv`, errno names printed `NOENT` instead of `ENOENT`, and an oversized device name could drop the required mount-failure line — all fixed, with the rescue and safe paths re-verified end to end on real boots.
 
 ---
 
@@ -185,11 +185,11 @@ control fd; the new shim adopts the running BEAM instead of launching one.
 `test/integration/m09_repl_login_test.exs`, `test/elixos/session_test.exs`,
 `test/integration/m09_session_dir_test.exs`.
 
-**Notes.** The console login reads `/data/user.exs` (`Elixos.User`) and starts
+**Notes.** The console login reads `/priv/user.exs` (`Elixos.User`) and starts
 `Elixos.REPL.mfa(repl)`. Parse the user file, never evaluate it.
 
 **Session directories (ADR-020).** Each REPL session has its own working
-directory, starting at `/data/home`, keyed by the session's process-group
+directory, starting at `/priv/home`, keyed by the session's process-group
 leader (which everything spawned from that REPL inherits). The login REPLs
 replace `cd/1`, `pwd/0` and `ls/0,1` with session-aware versions: for IEx they
 are the helpers imported into its evaluation environment, for erl they come
@@ -233,8 +233,8 @@ doc has a verified approach. Remember Elixir's `~> 0.1` means `< 1.0.0`.
 **Acceptance.** `test/integration/m12_ssh_test.exs`.
 
 **Notes.** OTP `ssh` daemon; the shell fun gets user and peer, returns
-`Elixos.REPL.mfa(...)`'s shell pid. Keys in `/data/home/.ssh/authorized_keys`,
-host keys in `/data/ssh/`. No passwords. Networking in QEMU uses kernel
+`Elixos.REPL.mfa(...)`'s shell pid. Keys in `/priv/home/.ssh/authorized_keys`,
+host keys in `/priv/ssh/`. No passwords. Networking in QEMU uses kernel
 `ip=dhcp` until Elixos has its own DHCP client.
 
 ---
@@ -260,7 +260,7 @@ that path.
 **Manual checklist (human).**
 - [ ] Boots from USB with Secure Boot off (or with your own enrolled keys).
 - [ ] IEx on the built-in panel in a readable Terminus font.
-- [ ] The internal disk works as `/data` (`elixos.data=/dev/nvme0n1p2` or similar).
+- [ ] The internal disk works as `/priv` (`elixos.data=/dev/nvme0n1p2` or similar).
 - [ ] Keyboard, including Ctrl-G job control.
 - [ ] `Elixos.poweroff()` really powers the machine off.
 
@@ -277,7 +277,7 @@ by name, and commands are functions rather than CLIs.
 `test/integration/m11_toolchain_test.exs`.
 
 **Notes.**
-- Repo configuration and trusted keys live under `/data/hex/` (PROTOCOL.md §7).
+- Repo configuration and trusted keys live under `/priv/hex/` (PROTOCOL.md §7).
   A repo is added with its public key or a verified fingerprint, and an install
   never trusts a repository implicitly: adding it is the consent step.
 - `Elixos.Package.install/1` by name: find the package among the trusted repos

@@ -2,23 +2,23 @@ defmodule Elixos.Package.Repo do
   @moduledoc """
   Trusted Hex repositories: the configuration and the consent (ADR-019, M14).
 
-  `/data/hex/repos.exs` is the whole trust decision: a repository is trusted
+  `/priv/hex/repos.exs` is the whole trust decision: a repository is trusted
   exactly when it appears there, with its public key. An install can therefore
   never trust a repository implicitly — adding it is the consent step, and on a
   single-user machine (ADR-013) that is the only one there is.
 
-      iex> pem = File.read!("/data/hex/keys/team.pub")
-      iex> Elixos.Package.add_repo("team", "/data/mirrors/team", key: pem)
+      iex> pem = File.read!("/priv/hex/keys/team.pub")
+      iex> Elixos.Package.add_repo("team", "/priv/mirrors/team", key: pem)
       :ok
       iex> Elixos.Package.repos()
-      [%Elixos.Package.Repo{name: :team, url: "/data/mirrors/team"}]
+      [%Elixos.Package.Repo{name: :team, url: "/priv/mirrors/team"}]
 
   A repository is a static Hex repository (`mix hex.registry build`): `names`,
   `versions`, `packages/<name>` and `tarballs/<name>-<version>.tar`, each
   resource signed, and `public_key` serving the key above. `url` is `http(s)://`
   or a local path (PROTOCOL.md §8, Q8).
 
-  The same key is written to `/data/hex/keys/<name>.pub`, so trust survives a
+  The same key is written to `/priv/hex/keys/<name>.pub`, so trust survives a
   power cycle and can be inspected by hand. Both files are written atomically.
   """
 
@@ -55,7 +55,7 @@ defmodule Elixos.Package.Repo do
   @spec trusted?(name()) :: boolean()
   def trusted?(name), do: Elixos.NotImplemented.raise!(14, "Elixos.Package.Repo.trusted?/1 #{inspect(name)}")
 
-  @doc "The key file for `name` (`/data/hex/keys/<name>.pub`)."
+  @doc "The key file for `name` (`/priv/hex/keys/<name>.pub`)."
   @spec key_path(name()) :: Path.t()
   def key_path(name), do: Elixos.NotImplemented.raise!(14, "Elixos.Package.Repo.key_path/1 #{inspect(name)}")
 
