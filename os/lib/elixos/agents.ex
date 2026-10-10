@@ -186,12 +186,13 @@ defmodule Elixos.Agents do
       instance = Keyword.get(opts, :jido, Jido)
       :ok = start_jido(instance)
 
-      {agent_server(),
-       Keyword.merge(Keyword.drop(opts, [:id, :jido]),
-         agent: snapshot || module,
-         id: id,
-         jido: instance
-       )}
+      options = Keyword.drop(opts, [:id, :jido])
+      # What was remembered goes in as the agent's *state*: the module is the
+      # one the record names, and a restored `%Jido.Agent{}` struct would
+      # tell the server the module is `Jido.Agent` itself.
+      options = if snapshot, do: Keyword.put(options, :initial_state, snapshot), else: options
+
+      {agent_server(), Keyword.merge(options, agent: module, id: id, jido: instance)}
     else
       %{
         id: {:elixos_agent, id},
@@ -234,11 +235,11 @@ defmodule Elixos.Agents do
     end
   end
 
-  # The AgentServer's own state carries the agent struct the runtime works
-  # with, which is exactly what a restart hands back.
+  # What an agent remembers is its state map; the module comes from the
+  # record, so this is all a restart needs.
   defp jido_snapshot(pid) do
     case apply(agent_server(), :state, [pid]) do
-      {:ok, state} -> Map.get(state, :agent)
+      {:ok, state} -> Map.get(state, :agent).state
       {:error, _reason} -> nil
     end
   end

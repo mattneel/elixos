@@ -36,6 +36,17 @@ defmodule Elixos.Application do
   # so the path is put right before anything can need Mix - the package
   # installer, and the elixos: reader that runs before it.
   defp os_priv, do: Application.get_env(:elixos, :priv_dir, "/priv")
+  defp factory, do: Application.get_env(:elixos, :factory_dir, "/factory")
+
+  # The stock OTP applications the factory carries beside the release (mnesia,
+  # ssl, inets: what an installed package may need) are not on the release's
+  # code path on their own: put them there, before anything can load.
+  defp add_factory_path do
+    for dir <- Path.wildcard(Path.join([factory(), "lib", "*", "ebin"])),
+        do: Code.append_path(dir)
+
+    :ok
+  end
 
   defp add_mix_to_path do
     factory = Application.get_env(:elixos, :factory_dir, "/factory")
@@ -51,6 +62,7 @@ defmodule Elixos.Application do
 
   @impl true
   def start(_type, _args) do
+    add_factory_path()
     add_mix_to_path()
 
     # The factory's Hex trust - the official repository's key and its entry -

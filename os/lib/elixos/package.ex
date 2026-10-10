@@ -99,7 +99,7 @@ defmodule Elixos.Package do
     if File.regular?(Path.join(dir, "mix.exs")) do
       install_project(dir, deps)
     else
-      install_payload(dir)
+      install_payload(dir, deps)
     end
   end
 
@@ -122,25 +122,25 @@ defmodule Elixos.Package do
   # rest. One without ebin/ - the toolchain (ADR-009) - is taken where it lies
   # (the disk's /priv/toolchain is 421M; copying it would be waste) and
   # recorded, so it is part of the image like any package.
-  defp install_payload(root) do
+  defp install_payload(root, deps \\ %{}) do
     ebin = Path.join(root, "ebin")
 
     if File.dir?(ebin) do
-      install_built(root, ebin)
+      install_built(root, ebin, deps)
     else
       name = root |> Path.basename() |> String.to_atom()
 
-      with :ok <- record(name, payload_version(root), %Elixos.Package.Spec{}, %{}) do
+      with :ok <- record(name, payload_version(root), %Elixos.Package.Spec{}, deps) do
         {:ok, name}
       end
     end
   end
 
-  defp install_built(root, ebin) do
+  defp install_built(root, ebin, deps) do
     with {:ok, app, version} <- built_identity(ebin),
          :ok <- install_tree(app, ebin, root),
          :ok <- load(app, installed_ebin(app)),
-         :ok <- record(app, version, %Elixos.Package.Spec{}, %{}) do
+         :ok <- record(app, version, %Elixos.Package.Spec{}, deps) do
       {:ok, app}
     end
   end

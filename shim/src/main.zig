@@ -246,6 +246,11 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
     //    fatal: it only costs us /proc/cmdline or a place to mount /priv.
     if (!mountBase()) overrides.safe = true;
 
+    // 1b. Loopback up: the kernel leaves `lo` down until someone asks, and
+    //     everything local needs it - a provider an agent's action calls on
+    //     127.0.0.1, a session's own services. One ioctl, as any init does.
+    bringLoopbackUp();
+
     // 2. Kernel command line (PROTOCOL.md §5). The buffer outlives the
     //    settings it is parsed into, for the whole of main.
     const settings = readSettings(&cmdline_buffer);
@@ -1078,6 +1083,37 @@ fn errnoName(buffer: []u8, err: linux.E) []const u8 {
     return std.fmt.bufPrint(buffer, "E{s}", .{name}) catch "E?";
 }
 
+/// Reads the flags of a network interface, or an error.
+fn interfaceFlags(fd: i32, name: []const u8) !linux.IFF {
+    var request: linux.ifreq = std.mem.zeroes(linux.ifreq);
+    if (name.len + 1 > request.ifrn.name.len) return error.NameTooLong;
+    @memcpy(request.ifrn.name[0..name.len], name);
+
+    if (linux.errno(linux.ioctl(fd, linux.SIOCGIFFLAGS, @intFromPtr(&request))) != .SUCCESS) {
+        return error.IoctlFailed;
+    }
+
+    return request.ifru.flags;
+}
+
+/// Loopback up. A socket to ask with, the flags to keep, one more ioctl to
+/// set them; nothing here speaks the network. Not fatal on failure: a boot
+/// with no loopback only costs what would have listened on it.
+fn bringLoopbackUp() void {
+    const fd = linux.socket(linux.AF.INET, linux.SOCK.DGRAM, 0);
+    if (linux.errno(fd) != .SUCCESS) return;
+    defer _ = linux.close(@intCast(fd));
+
+    var flags = interfaceFlags(@intCast(fd), "lo") catch return;
+    flags.UP = true;
+    flags.RUNNING = true;
+
+    var request: linux.ifreq = std.mem.zeroes(linux.ifreq);
+    @memcpy(request.ifrn.name[0..2], "lo");
+    request.ifru.flags = flags;
+    _ = linux.ioctl(@intCast(fd), linux.SIOCSIFFLAGS, @intFromPtr(&request));
+}
+
 /// A bounded sleep. Used only while waiting for a device that may still be
 /// probing; nothing else in the shim sleeps.
 fn sleepMs(ms: u32) void {
@@ -1167,6 +1203,17 @@ test "a fresh boot carries no adoption request" {
 
     const malformed = [_][]const u8{ "init", "--adopt", "nope", "7" };
     try std.testing.expectEqual(@as(?rescue.Adopted, null), rescue.parse(&malformed));
+}
+
+test "interface flags: a real interface parses, a missing one is an error" {
+    const fd = linux.socket(linux.AF.INET, linux.SOCK.DGRAM, 0);
+    if (linux.errno(fd) != .SUCCESS) return error.SkipZigTest;
+    defer _ = linux.close(@intCast(fd));
+
+    // Whatever the flags are, a real interface parses; a name the kernel does
+    // not know is the ioctl's error, which is what the caller tolerates.
+    _ = try interfaceFlags(@intCast(fd), "lo");
+    try std.testing.expectError(error.IoctlFailed, interfaceFlags(@intCast(fd), "no_such_if0"));
 }
 
 test {

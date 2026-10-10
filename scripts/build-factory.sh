@@ -225,6 +225,20 @@ ln -sfn "$RELEASE_VSN" "$ROOTFS/factory/releases/current"
 # No shells, no release scripts: the shim execs erlexec itself (ADR-012).
 rm -rf "$ROOTFS/factory/bin"
 
+# Stock OTP applications a package may need at run time travel with the
+# factory, because a release only carries what its own dependency graph names:
+# mnesia (the jido framework's hard dependency), ssl and inets (a provider
+# over the network, M15). `Elixos.Application` puts their ebins on the code
+# path at boot, like the mix application's.
+for app in mnesia ssl inets; do
+  cp -a "$OTP_ROOT"/lib/"$app"-* "$ROOTFS/factory/lib/"
+done
+
+# ...and the machine's CA bundle, in the place :public_key.cacerts_get/0
+# reads, so a hosted provider (or a Hex repository) can be verified.
+mkdir -p "$ROOTFS/etc/ssl/certs"
+cp /etc/ssl/certs/ca-certificates.crt "$ROOTFS/etc/ssl/certs/ca-certificates.crt"
+
 # An escript execs `erl` from beside itself, and OTP's `erl` is a shell
 # script - unusable in an image that has no /bin/sh (ADR-012). erlexec *is*
 # the emulator launcher: it reads ROOTDIR/BINDIR from the environment the shim

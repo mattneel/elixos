@@ -34,6 +34,7 @@ defmodule Elixos do
     # defmodule entered just before Elixos.poweroff() cannot be lost in a cast
     # that never ran (M7: nothing typed is ever lost).
     :ok = sync_recorder()
+    :ok = snapshot_agents()
 
     case request.() do
       :ok -> :init.stop()
@@ -56,8 +57,10 @@ defmodule Elixos do
   Options: `boot: [{module, function, args}]` to run at boot in that generation.
   """
   def save(opts \\ []) do
-    # Everything traced so far is recorded before the working set is written.
+    # Everything traced so far is recorded before the working set is written,
+    # and every agent's memory is written with it: one durable moment (M15).
     :ok = sync_recorder()
+    :ok = snapshot_agents()
 
     with {:ok, image} <- image(),
          {:ok, number} <- Elixos.Image.save(image, opts),
@@ -65,6 +68,15 @@ defmodule Elixos do
       # The shim boots this generation next time, provisionally, until it
       # commits (ADR-007).
       {:ok, number}
+    end
+  end
+
+  # What an agent remembers survives exactly what the image does: nothing
+  # else writes it, so a save (or a graceful poweroff) writes it here.
+  defp snapshot_agents do
+    case Process.whereis(Elixos.Agents) do
+      nil -> :ok
+      _pid -> Elixos.Agents.snapshot_all()
     end
   end
 
