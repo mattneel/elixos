@@ -10,7 +10,14 @@ SIZE="${DISK_SIZE:-1G}"
 DISK="$BUILD/disk.img"
 
 mkdir -p "$BUILD"
+
+# The pristine disk carries the guest toolchain (M11, ADR-009): the disk is
+# mounted at /priv, so this is what a box with no network builds NIFs with.
+STAGE="$(mktemp -d)"
+trap 'rm -rf "$STAGE"' EXIT
+"$ROOT/scripts/fetch-toolchain.sh" "$STAGE"
+
 rm -f "$DISK"
 truncate -s "$SIZE" "$DISK"
-mkfs.ext4 -q -F -L ELIXOS -E root_owner=0:0 "$DISK"
-echo "disk: $DISK ($SIZE, ext4, label ELIXOS)"
+mkfs.ext4 -q -F -L ELIXOS -E root_owner=0:0 -d "$STAGE" "$DISK"
+echo "disk: $DISK ($SIZE, ext4, label ELIXOS, toolchain $(du -sh "$STAGE/toolchain" | cut -f1))"
