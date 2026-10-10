@@ -360,7 +360,7 @@ development host (`jido-core`, `jido-agent`, `jido-action`, `jido-ai`,
 `jido-testing`) is the authority for the API and its conventions; see
 docs/notes/jido.md.
 
-- [ ] Demo recorded: `demos/m15-jido-agents.mp4` (`make demo M=15`).
+- [x] Demo recorded: `demos/m15-jido-agents.mp4` (`make demo M=15`).
 
 ---
 
