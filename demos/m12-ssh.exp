@@ -1,0 +1,64 @@
+#!/usr/bin/expect -f
+# M12: public-key SSH lands in the user's REPL on the same VM. One power-on of
+# a pristine disk copy: the console starts a process and trusts a key, then an
+# ssh client on the host logs in with that key - no password, no shell - and
+# finds the same running world. Both terminals are in this recording.
+
+set timeout 300
+set send_human {.1 .3 10 .05 2}
+set port [expr {20000 + int(rand() * 20000)}]
+
+# The key this login uses, made the way a user makes one.
+set key /tmp/elixos-m12-demo-key
+catch {exec rm -f $key $key.pub}
+exec ssh-keygen -q -t ed25519 -N "" -f $key
+set pub [string trim [exec cat $key.pub]]
+
+set qemu [spawn -noecho qemu-system-x86_64 \
+    -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600 ip=dhcp" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:$port-:22" \
+    -device virtio-net-pci,netdev=n0
+
+expect "iex(1)> "
+sleep 1
+send "Agent.start(fn -> :from_console end, name: :shared)\r"
+expect "iex(2)> "
+sleep 1
+
+# Trust the key where the daemon looks for it (PROTOCOL.md §7, ADR-013).
+send "File.mkdir_p!(\"/priv/home/.ssh\")\r"
+expect "iex(3)> "
+sleep 1
+send "File.write!(\"/priv/home/.ssh/authorized_keys\", \"$pub\\n\")\r"
+expect "iex(4)> "
+sleep 1
+
+# Log in from the host with that key: a REPL, and the same running VM.
+spawn -noecho ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -i $key -p $port elixos@127.0.0.1
+expect "iex(1)> "
+sleep 1
+send "Agent.get(:shared, & &1)\r"
+expect "iex(2)> "
+sleep 1
+send "Node.self()\r"
+expect "iex(3)> "
+sleep 1
+
+# The client's own escape ends this session, not the machine.
+send "~."
+expect eof
+sleep 1
+
+# The console is still there, and still the same VM.
+set spawn_id $qemu
+
+send "Elixos.poweroff()\r"
+expect "elixos-shim: shutdown poweroff"
+expect "reboot: Power down"
+expect eof
+sleep 1

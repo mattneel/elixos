@@ -1,0 +1,9 @@
+# What the M12 demo must show, in order: a key in authorized_keys logs the
+# host straight into the user's REPL, and it is the same VM as the console.
+elixos-shim: pid 1, version
+iex(1)> Agent.start(fn -> :from_console end, name: :shared)
+iex(2)> File.mkdir_p!("/priv/home/.ssh")
+iex(3)> File.write!("/priv/home/.ssh/authorized_keys"
+iex(1)> Agent.get(:shared, & &1)
+:from_console
+elixos-shim: shutdown poweroff

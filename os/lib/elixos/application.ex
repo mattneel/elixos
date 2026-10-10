@@ -81,6 +81,10 @@ defmodule Elixos.Application do
             # it; a failure here stops the tree on purpose (ADR-007).
             {Elixos.Boot.Restore, {image, env}},
             {Elixos.Boot.Recorder, image},
+            # Key-only SSH into the user's REPL (M12). Not boot-critical: with
+            # no network, or in rescue, it logs and steps aside (the prompt
+            # still comes up).
+            {Elixos.SSH, []},
             {Elixos.Boot.Login, {env, image}},
             # Commits the generation once it has been healthy for a while; in
             # rescue mode the child is skipped (:ignore), so a rescue boot never
