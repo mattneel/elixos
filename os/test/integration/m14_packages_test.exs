@@ -84,7 +84,7 @@ defmodule Elixos.Integration.M14PackagesTest do
     # would type into a console whose prompt the harness thought was still the
     # boot's (ADR-042).
     vm =
-      Enum.reduce([{:fixture, "/priv/hex-repo"}, {:mirror, "/priv/hex-mirror"}], vm, fn
+      Enum.reduce([{":fixture", "/priv/hex-repo"}, {":mirror", "/priv/hex-mirror"}], vm, fn
         {name, dir}, vm ->
           # One short expression per call, deliberately: IEx redraws an input
           # line that wraps the terminal, and the harness reads prompts off the
