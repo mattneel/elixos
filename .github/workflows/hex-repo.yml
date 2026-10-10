@@ -11,6 +11,12 @@ name: Hex repo
 #       ELIXOS_HEX_PRIVATE_KEY = the contents of the private key whose public
 #       half is hex/keys/elixos.pub (see hex/README.md; keep a backup, the
 #       factory images ship the public key and cannot verify a new one).
+#
+# Without that secret the build still runs (packages must keep building) but
+# stops before signing: only `mix hex.registry build` with the real key
+# produces a registry the factory images accept, and publishing an unsigned
+# one would be worse than publishing none. The run is green, with a warning,
+# until the secret exists.
 
 on:
   push:
@@ -32,6 +38,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
     steps:
       - uses: actions/checkout@v4
 
@@ -47,18 +55,29 @@ jobs:
         run: ./hex/build-packages.sh
 
       - name: Sign the registry
+        id: sign
         env:
           ELIXOS_HEX_PRIVATE_KEY: ${{ secrets.ELIXOS_HEX_PRIVATE_KEY }}
-        run: ./hex/build-repo.sh
+        run: |
+          if [ -z "$ELIXOS_HEX_PRIVATE_KEY" ]; then
+            echo "::warning title=Hex repo not published::ELIXOS_HEX_PRIVATE_KEY is not set, so the registry was not signed or published. See the header of .github/workflows/hex-repo.yml."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ./hex/build-repo.sh
+          echo "signed=true" >> "$GITHUB_OUTPUT"
 
       - uses: actions/configure-pages@v5
+        if: steps.sign.outputs.signed == 'true'
 
       - uses: actions/upload-pages-artifact@v3
+        if: steps.sign.outputs.signed == 'true'
         with:
           path: build/hex-repo/public
 
   deploy:
     needs: build
+    if: needs.build.outputs.signed == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
