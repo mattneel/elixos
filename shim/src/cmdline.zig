@@ -20,6 +20,11 @@ pub const Settings = struct {
     boot_grace_s: u32 = 120,
     /// elixos.data=/dev/...: block device holding the persistent image (ext4).
     data_device: []const u8 = "/dev/vda",
+    /// elixos.data_wait=S (S >= 0): seconds to wait for `data_device` to
+    /// appear before giving up. The kernel runs /init without waiting for USB
+    /// or SD storage, so on hardware the device may need a moment; QEMU
+    /// virtual disks are always ready, and 0 disables the wait.
+    data_wait_s: u32 = 10,
     /// elixos.test.stop_before_launch[=1|0]: log the plan, persist it, power off.
     /// Honored only in -Dtest-hooks builds (main.zig checks build_options).
     test_stop_before_launch: bool = false,
@@ -63,6 +68,8 @@ pub fn parse(text: []const u8) Settings {
             } else {
                 settings.invalid += 1;
             }
+        } else if (std.mem.eql(u8, name, "data_wait")) {
+            if (setNumber(&settings.data_wait_s, value, 0) == null) settings.invalid += 1;
         } else if (std.mem.eql(u8, name, "test.stop_before_launch")) {
             if (setFlag(&settings.test_stop_before_launch, value) == null) settings.invalid += 1;
         } else if (std.mem.eql(u8, name, "test.shim_panic_after")) {

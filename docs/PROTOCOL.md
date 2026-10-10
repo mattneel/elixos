@@ -111,6 +111,7 @@ malformed or unknown `elixos.*` tokens are counted and logged, never applied:
 | `elixos.hb_timeout=<s≥1>`       | 10         | seconds without `HB` before killing the BEAM    |
 | `elixos.boot_grace=<s≥1>`       | 120        | seconds allowed before the first `HB`           |
 | `elixos.data=/dev/<dev>`        | /dev/vda   | ext4 device mounted on `/data`                  |
+| `elixos.data_wait=<s≥0>`        | 10         | seconds to wait for that device to appear        |
 
 BEAM side (`Elixos.Boot.Cmdline`):
 
@@ -136,6 +137,7 @@ Placeholders: `<g>` generation, `<n>` number, `<m>` `normal|rescue`,
 |------------------------------------------------------------------------|---------------------------------------|------|
 | `pid 1, version <version>`                                             | first thing                           | M3   |
 | `ignored <n> invalid elixos.* parameters`                              | n > 0                                 | M3   |
+| `waiting for <device> up to <n>s`                                      | the data device is absent, so the shim waits | M13  |
 | `cannot mount <device> (<E>), entering rescue`                         | data disk missing or unmountable      | M3   |
 | `state file unreadable (<E>), entering rescue`                         | boot.state does not parse             | M3   |
 | `fallback to last_good=<g> after <n> attempts of generation=<g>`       | planLaunch fell back                  | M3   |
@@ -149,6 +151,7 @@ Placeholders: `<g>` generation, `<n>` number, `<m>` `normal|rescue`,
 | `commit generation=<g>`                                                | a COMMIT was applied                  | M5   |
 | `next generation=<g>`                                                  | a NEXT was applied                    | M6   |
 | `re-exec after panic: <message>`                                       | the new shim, after a panic           | M8   |
+| `ignored control line (<error>)`                                       | a control line was not a message      | M4   |
 
 `attempt=<n>` is the plan's `next_state.attempts`. When planning from an
 unreadable or unmountable state, the shim uses the defaults (`0/0/0`).

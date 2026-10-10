@@ -56,7 +56,9 @@ tested in QEMU.
 
 ### §3.1 Duties
 
-1. Mount `/proc`, `/sys`, `/dev` (devtmpfs), `/run`, `/tmp`; then `/data`.
+1. Mount `/proc`, `/sys`, `/dev` (devtmpfs), `/run`, `/tmp`; then `/data`,
+   waiting up to `elixos.data_wait` seconds for that device to appear (the
+   kernel does not wait for USB or SD storage before running `/init`).
 2. Parse `/proc/cmdline`, read `/data/boot.state`, plan, persist, log.
 3. Fork and exec ERTS with the launch contract (PROTOCOL.md §3).
 4. Event loop on epoll: a signalfd (SIGCHLD, SIGTERM, SIGINT, SIGPWR), the

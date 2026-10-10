@@ -19,7 +19,7 @@ TEST_HOOKS ?= true
 NEEDS_FACTORY := $(shell [ $(MILESTONE) -ge 4 ] && echo yes)
 
 .PHONY: help check-tools test test-shim test-os test-qemu ci image kernel shim release-shim \
-        factory initramfs disk uefi-image qemu format clean distclean
+        factory initramfs disk uefi-image qemu format clean distclean audit
 
 help: ## List targets
 	@awk -F':.*## ' '/^[a-z-]+:.*## / { printf "  %-14s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -40,6 +40,9 @@ test-qemu: image ## Boot real images in QEMU (slow): os/test/integration
 	cd os && ELIXOS_QEMU=1 ELIXOS_MILESTONE=$(MILESTONE) mix test test/integration
 
 ci: test test-qemu ## Everything for the current milestone
+
+audit: ## Fail if a shipped test, Zig test block or vector changed without an ADR
+	scripts/audit-tests.sh
 
 kernel: $(BUILD)/bzImage ## Pinned mainline kernel: configured, never patched (ADR-001)
 

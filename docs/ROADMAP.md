@@ -241,6 +241,12 @@ initramfs and cmdline built in (configuration, not a patch), packed into a FAT
 ESP as `EFI/BOOT/BOOTX64.EFI` with mtools. The hardware variant uses
 `console=tty0 fbcon=font:TER16x32`.
 
+**Notes on hardware the tests cannot cover.** The kernel runs `/init` without
+waiting for USB or SD storage, so the shim waits up to `elixos.data_wait`
+seconds for the data device to appear (it logs `waiting for <device> up to
+<n>s` first); QEMU virtual disks are ready immediately, so no test exercises
+that path.
+
 **Manual checklist (human).**
 - [ ] Boots from USB with Secure Boot off (or with your own enrolled keys).
 - [ ] IEx on the built-in panel in a readable Terminus font.
