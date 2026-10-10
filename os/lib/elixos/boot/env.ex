@@ -9,7 +9,8 @@ defmodule Elixos.Boot.Env do
   | `ELIXOS_ATTEMPT`    | this launch's attempt count (boot.state)   |
   | `ELIXOS_CTL_FD`     | fd number of the control pipe's write end  |
 
-  Numbers are canonical decimal u32 (PROTOCOL.md §1).
+  Numbers are canonical decimal u32 (PROTOCOL.md §1); `ELIXOS_CTL_FD` is also
+  an inherited descriptor, so it must be at least 3 (0, 1 and 2 are the console).
 
   `parse/1` rules, in order:
 
@@ -55,8 +56,17 @@ defmodule Elixos.Boot.Env do
     with {:ok, generation} <- number(env, "ELIXOS_GENERATION"),
          {:ok, mode} <- mode(env["ELIXOS_MODE"]),
          {:ok, attempt} <- number(env, "ELIXOS_ATTEMPT"),
-         {:ok, ctl_fd} <- number(env, "ELIXOS_CTL_FD") do
+         {:ok, ctl_fd} <- control_fd(env) do
       {:ok, %__MODULE__{generation: generation, mode: mode, attempt: attempt, ctl_fd: ctl_fd}}
+    end
+  end
+
+  # PROTOCOL.md §3: the control pipe's write end is an inherited fd >= 3;
+  # 0, 1 and 2 are /dev/console, so a smaller number is not a control fd.
+  defp control_fd(env) do
+    case number(env, "ELIXOS_CTL_FD") do
+      {:ok, fd} when fd >= 3 -> {:ok, fd}
+      _ -> {:error, {:invalid, "ELIXOS_CTL_FD"}}
     end
   end
 

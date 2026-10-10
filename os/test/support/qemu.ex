@@ -55,7 +55,7 @@ defmodule Elixos.Test.QEMU do
         ["-machine", "q35", "-accel", "kvm", "-accel", "tcg", "-cpu", "max"],
         ["-m", to_string(Keyword.get(opts, :memory_mb, 1024)), "-smp", "2"],
         ["-display", "none", "-monitor", "none", "-serial", "stdio", "-no-reboot"],
-        ["-drive", "file=#{disk},if=virtio,format=raw"],
+        ["-drive", "file=#{drive_path(disk)},if=virtio,format=raw"],
         ["-device", "virtio-rng-pci"],
         boot_args(opts),
         net_args(opts)
@@ -87,14 +87,19 @@ defmodule Elixos.Test.QEMU do
       {esp, code, vars} ->
         [
           "-drive",
-          "if=pflash,format=raw,readonly=on,file=#{code}",
+          "if=pflash,format=raw,readonly=on,file=#{drive_path(code)}",
           "-drive",
-          "if=pflash,format=raw,file=#{vars}",
+          "if=pflash,format=raw,file=#{drive_path(vars)}",
           "-drive",
-          "file=#{esp},format=raw,if=virtio"
+          "file=#{drive_path(esp)},format=raw,if=virtio"
         ]
     end
   end
+
+  # ExUnit's tmp_dir paths contain the test name, commas and all, and QEMU's
+  # option parser treats a comma in `file=` as a separator. Doubling it is
+  # QEMU's escape (verified: `-drive file=/a,,b,if=none` opens "/a,b").
+  defp drive_path(path), do: String.replace(path, ",", ",,")
 
   defp net_args(opts) do
     case Keyword.get(opts, :ssh_port) do

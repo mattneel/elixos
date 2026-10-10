@@ -101,25 +101,38 @@ defmodule Elixos.Shim.Control do
   end
 
   @impl true
-  def handle_info(:heartbeat, state) do
-    state = %{state | timer: nil}
+  def handle_info({:heartbeat, ref}, state) do
+    # A message from a superseded schedule (see schedule/1) is a no-op: acting
+    # on it would forget the live timer and leave two heartbeat loops running.
+    if match?({^ref, _}, state.timer) do
+      state = %{state | timer: nil}
 
-    if state.paused do
-      # To the shim, a paused heartbeat is indistinguishable from a hung VM.
-      {:noreply, state}
+      if state.paused do
+        # To the shim, a paused heartbeat is indistinguishable from a hung VM.
+        {:noreply, state}
+      else
+        # A failed write must not bring the server down: the shim times us out.
+        _ = write(state)
+        {:noreply, schedule(state)}
+      end
     else
-      # A failed write must not bring the server down: the shim times us out.
-      _ = write(state)
-      {:noreply, schedule(state)}
+      {:noreply, state}
     end
   end
 
+  def handle_info(_message, state), do: {:noreply, state}
+
   defp write(state), do: state.module.write(state.sink, Elixos.Shim.Protocol.encode(:heartbeat))
 
-  defp schedule(state), do: %{state | timer: Process.send_after(self(), :heartbeat, state.heartbeat_ms)}
+  # Every schedule carries a fresh reference, so an expired timer that was
+  # already in flight when pause/resume ran cannot revive a stale loop.
+  defp schedule(state) do
+    ref = make_ref()
+    %{state | timer: {ref, Process.send_after(self(), {:heartbeat, ref}, state.heartbeat_ms)}}
+  end
 
   defp cancel(nil), do: :ok
-  defp cancel(timer), do: Process.cancel_timer(timer)
+  defp cancel({_ref, timer}), do: Process.cancel_timer(timer)
 
   @impl true
   def terminate(_reason, state) do
