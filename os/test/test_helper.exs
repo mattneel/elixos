@@ -17,7 +17,7 @@ milestone =
       String.to_integer(value)
   end
 
-future = for m <- (milestone + 1)..20//1, do: {:milestone, m}
+future = for m <- (milestone + 1)..24//1, do: {:milestone, m}
 
 # QEMU tests boot real images and are slow; `make test-qemu` sets ELIXOS_QEMU=1
 # and runs only test/integration. Never use `--include qemu`: an include filter

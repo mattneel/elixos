@@ -522,8 +522,105 @@ and the ADR records the mechanism.
 
 ---
 
+## M20: Ask the human
+
+**Goal.** Questions are data in the OS; front-ends are only views. `Elixos.Ask`
+keeps a queue of open questions, any front-end can answer one, and the asking
+process blocks until it is answered - so an agent can ask a person something
+and act on the answer, from IEx, from an ssh session, or (M21) from the GUI.
+
+**Acceptance.** `test/elixos/ask_test.exs` (the queue on the host: ordering,
+several askers at once, a timeout, a dismissal, and answers checked against
+the question) and `test/integration/m20_ask_test.exs`: an agent defined at the
+prompt asks through the Jido action, the console shows the notice, the test
+answers at the prompt, and the action returns the answer.
+
+**Notes.** A question has an `id`, a `kind` (`:text`, `:choice`, `:multi`,
+`:confirm`), the options a choice or multi offers (with an optional "other"
+free-text answer), the asking process, an optional default and an optional
+timeout. `ask/2` blocks and returns `{:ok, answer}` or
+`{:error, :timeout | :dismissed}`; `pending/0` lists what is open; `answer/2`
+and `dismiss/1` resolve by id. Every answer is validated against its question
+(a choice must be one of its options, a multi a subset, a confirm a boolean),
+so a front-end cannot hand back something the question never allowed. The
+first front-end is the REPL: one notice line per new question on the console,
+`elixos-ask: question <id> (<kind>): <prompt>` - a console line is API
+(PROTOCOL.md §6), so it is written into PROTOCOL.md and matched byte for byte
+by the test. A Jido action wraps `ask/2` with a schema, so agents get it as a
+tool (Jido ships in the factory since M15). The queue is not boot-critical; a
+question still open when its session ends is dismissed, never answered by
+guesswork, and rescue runs none of it.
+
+**Done when.** `make ci` is green with `MILESTONE=20`, both test files pass,
+and the notice line and the question shape are in PROTOCOL.md.
+
+- [ ] Demo recorded: `demos/m20-ask.mp4` (`make demo M=20`).
+
+---
+
+## M21: GUI (Emerge on the framebuffer)
+
+**Goal.** A dialog on the cyberdeck's own screen: Emerge renders the Ask
+queue's questions to the panel, the person answers with the keyboard, and IEx
+stays alive behind it - a GUI that is never in the boot-critical path, whose
+first app is the queue M20 already has.
+
+**Acceptance.** `test/elixos/emerge_render_test.exs` (each Ask dialog renders
+with no display and its pixels are checked) and
+`test/integration/m21_gui_test.exs`: a pending question appears on the
+framebuffer, an injected key answers it, the asking agent gets the answer, and
+the console works again after the GUI exits (rescue stays text-only).
+
+**Notes. What Emerge actually offers (checked against its 0.4.2 docs).**
+- *Frames.* `backend: :headless, rendering_api: :raster, headless: [mode:
+  :binary, target: pid, ...]` sends `{:emerge_skia_frame,
+  %VideoInterop.Frame{}}` to a local PID; the sink writes each frame to
+  `/dev/fb0` itself (no Mesa, no GPU). The precompiled
+  `x86_64-unknown-linux-musl` artifact is the *minimal raster* one, selected
+  at compile time with `config :emerge, compiled_backends: []` (CPU raster,
+  embedded FreeType, no Wayland/GPU libraries). It is downloaded, pinned and
+  checksum-verified when the image is built, from the release that publishes
+  the checksum manifest (ADR-009: the box itself never downloads), and packed
+  into the read-only system image (M16).
+- *Rendering off-screen.* `render_tree_to_pixels_nif/2` and
+  `render_tree_to_png_nif/2` render a tree synchronously with no window: the
+  host test uses the pixel buffer.
+- *Input is ours, not Emerge's.* 0.4.2 has **no API to inject input into the
+  renderer**; events only flow out (`set_input_target/2`, `set_input_mask/2`,
+  `Emerge.handle_input/2`), and a headless raster renderer has no input device
+  at all. So a small static Zig helper grabs the evdev devices (`EVIOCGRAB`)
+  while the GUI owns the screen and streams their events to the BEAM, and the
+  dialog's logic - which option is selected, which key answers - is Elixir.
+  The QEMU test injects at `Elixos.GUI.input/1`, the same entry the helper
+  feeds - `{:key, key, :press | :release}`, `{:pointer, x, y}`,
+  `{:button, button, :press | :release}` - and QEMU's own keyboard through a
+  QMP socket (`sendkey`, and `screendump` for the demo's frames) is the
+  hardware-level variant for the demo, and the harness grows that socket
+  without changing anything existing.
+- *Kernel.* `/dev/fb0` needs `CONFIG_FB_DEVICE` (off today: fbcon uses fbdev
+  emulation without the node); `virtio-gpu` is already built in, so QEMU needs
+  only `-device virtio-gpu-pci`. The fragment change is configuration, never a
+  patch (ADR-001).
+- *Console handover.* While the GUI owns the screen, unbind fbcon through its
+  entry under `/sys/class/vtconsole`; rebind it when the GUI exits. The
+  helper's grab dies with the helper, so a crash returns the keyboard.
+- *Failure modes.* The GUI is never boot-critical: a renderer, NIF or helper
+  failure leaves IEx on the console working, and rescue stays text-only. The
+  NIF runs inside the VM, so a Skia crash takes the VM down with it - which is
+  exactly why the GUI is a service on top of the OS and not a dependency of
+  anything; an ADR records that.
+
+**Done when.** `make ci` is green with `MILESTONE=21`, both test files pass,
+and the ADRs (the renderer as a service; the input path) are written.
+
+- [ ] Demo recorded: `demos/m21-gui.mp4` from QEMU screendump frames, next to the console recording (`make demo M=21`).
+
+---
+
 ## Later (not yet scheduled)
 
 Wi-Fi (Q3), a DHCP client in Elixir, power-button handling from input events,
 kernel/factory upgrades on hardware (Q5), process-state persistence (Q2),
-gsh packaging (Q6), CRIU as a stretch goal, aarch64.
+gsh packaging (Q6), CRIU as a stretch goal, aarch64. A terminal view in
+Emerge that hosts IEx as just another REPL session, so the GUI can become the
+shell.
