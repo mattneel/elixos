@@ -8,3 +8,5 @@
 /os/test/fixtures/*/priv/
 erl_crash.dump
 /os/tmp/
+# A demo's working disk copy, made and removed by demos/record.sh
+demos/*.disk

@@ -1,0 +1,39 @@
+#!/usr/bin/expect -f
+# M3: first boot. PID 1 mounts, plans the factory, persists the attempt and
+# powers off; the second power-on of the same disk counts another attempt
+# (docs/ROADMAP.md M3).
+#
+# The boot itself is the point here, so the kernel log is not quieted. The wait
+# before each step is for real output: a guest with the stop hook powers off
+# within a second or two, so each boot ends at `expect eof`, and the pause for
+# the viewer comes after the console has gone quiet. Whether the recording
+# shows what it claims is asserted against the recording itself
+# (demos/m03-first-boot.keys, demos/check.sh).
+#
+# spawns are at the top level on purpose: -noecho keeps the command line out of
+# the recording, and a spawn inside a proc does not capture the console.
+
+set timeout 120
+set send_human {.1 .3 10 .05 2}
+
+# Boot 1: the plan, the attempt it persisted, and the power-off.
+spawn -noecho qemu-system-x86_64 \
+    -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 elixos.test.stop_before_launch" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+expect eof
+sleep 2
+
+# Boot 2 on the same disk: the attempt count went up.
+spawn -noecho qemu-system-x86_64 \
+    -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 elixos.test.stop_before_launch" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+expect eof
+sleep 1

@@ -91,6 +91,8 @@ persist, log, and a clean power off, all without ERTS yet.
 
 - [x] Done (2026-10-09): `make ci` green (37/37 Zig, 76 ExUnit, 6/6 QEMU M3 tests). Reviewer subagent found five defects in the first draft — a failed write still renamed over boot.state, states the policy calls "untouched" were persisted, `elixos.safe` skipped mounting/reading `/priv`, errno names printed `NOENT` instead of `ENOENT`, and an oversized device name could drop the required mount-failure line — all fixed, with the rescue and safe paths re-verified end to end on real boots.
 
+- [x] Demo recorded: `demos/m03-first-boot.mp4` (`make demo M=3`).
+
 ---
 
 ## M4: Boot to IEx
@@ -116,6 +118,8 @@ persist, log, and a clean power off, all without ERTS yet.
   `:init.stop/0`. The shim performs the shutdown after reaping the VM.
 - If the cross-build blocks you, ADR-008 allows a temporary stand-in; keep going.
 
+- [ ] Demo recorded: `demos/m04-boot-to-iex.mp4` (`make demo M=4`).
+
 ---
 
 ## M5: The shim supervises the BEAM
@@ -129,6 +133,8 @@ persist, log, and a clean power off, all without ERTS yet.
 **Notes.** epoll + signalfd + timerfd in the shim; reap with `wait4(-1, WNOHANG)`
 in a loop; relaunch with a short backoff. `Elixos.Boot.AutoCommit` runs only in
 normal mode and commits once.
+
+- [ ] Demo recorded: `demos/m05-beam-supervision.mp4` (`make demo M=5`).
 
 ---
 
@@ -148,6 +154,8 @@ normal mode and commits once.
   generation from `ELIXOS_GENERATION` before starting the REPL.
 - The shim applies `NEXT` and logs `next generation=<g>`.
 
+- [ ] Demo recorded: `demos/m06-live-image.mp4` (`make demo M=6`).
+
 ---
 
 ## M7: Recovery
@@ -162,6 +170,8 @@ mode loads no user code. Stick the factory's code directories with
 `:code.stick_dir/1`. `Elixos.unsaved/1` and `Elixos.recover/1` sit on the
 `Elixos.Image` functions.
 
+- [ ] Demo recorded: `demos/m07-recovery.mp4` (`make demo M=7`).
+
 ---
 
 ## M8: The shim survives its own panics
@@ -174,6 +184,8 @@ mode loads no user code. Stick the factory's code directories with
 the handler re-execs `/init` with a pre-built argv carrying the BEAM pid and
 control fd; the new shim adopts the running BEAM instead of launching one.
 `elixos.test.shim_panic_after` triggers it.
+
+- [ ] Demo recorded: `demos/m08-shim-self-recovery.mp4` (`make demo M=8`).
 
 ---
 
@@ -196,6 +208,8 @@ are the helpers imported into its evaluation environment, for erl they come
 from `user_default`. Relative paths typed at a prompt resolve against the
 session directory, native tools run with `cd:` set to it, and nothing changes
 the VM's working directory (ADR-016).
+
+- [ ] Demo recorded: `demos/m09-repl-login.mp4` (`make demo M=9`).
 
 ---
 
@@ -224,6 +238,8 @@ doc has a verified approach. Remember Elixir's `~> 0.1` means `< 1.0.0`.
   and records the modules in the image.
 - Ship a CA bundle so Hex works; the acceptance test itself needs no network.
 
+- [ ] Demo recorded: `demos/m11-self-hosting.mp4` (`make demo M=11`).
+
 ---
 
 ## M12: SSH into your REPL
@@ -236,6 +252,8 @@ doc has a verified approach. Remember Elixir's `~> 0.1` means `< 1.0.0`.
 `Elixos.REPL.mfa(...)`'s shell pid. Keys in `/priv/home/.ssh/authorized_keys`,
 host keys in `/priv/ssh/`. No passwords. Networking in QEMU uses kernel
 `ip=dhcp` until Elixos has its own DHCP client.
+
+- [ ] Demo recorded: `demos/m12-ssh.mp4` (`make demo M=12`).
 
 ---
 
@@ -263,6 +281,8 @@ that path.
 - [ ] The internal disk works as `/priv` (`elixos.data=/dev/nvme0n1p2` or similar).
 - [ ] Keyboard, including Ctrl-G job control.
 - [ ] `Elixos.poweroff()` really powers the machine off.
+
+- [ ] Demo recorded: `demos/m13-uefi.mp4` (`make demo M=13`).
 
 ---
 
@@ -304,6 +324,8 @@ by name, and commands are functions rather than CLIs.
 the repo/install unit tests cover trust (a repo without a trusted key is
 refused), the one-name-per-repo clash, and an install by name from the fixture
 repo.
+
+- [ ] Demo recorded: `demos/m14-packages.mp4` (`make demo M=14`).
 
 ---
 

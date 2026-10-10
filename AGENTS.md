@@ -114,6 +114,7 @@ build.zig            the shim's build; shim/src/*.zig is PID 1
 spec/                golden vectors shared by both test suites
 os/                  the Mix project: the Elixos userland (lib/) and every ExUnit test (test/)
 hex/                 the official Hex repository (packages, signing key) and its README
+demos/               scripted asciinema recordings, one per visible milestone
 .github/workflows/   CI: the Hex repository's build and Pages deployment
 os/test/integration/ QEMU acceptance tests, one file per milestone
 scripts/             kernel, initramfs, disk, QEMU, factory (M4), UEFI image (M13),

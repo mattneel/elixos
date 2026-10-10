@@ -44,30 +44,47 @@ note() {
 }
 
 # --- content access -----------------------------------------------------------
+#
+# Every path is audited at a revision: AUDIT_HEAD if given, otherwise the
+# working tree — except that a path whose working-tree content equals HEAD's is
+# audited at HEAD, so a committed ADR-carrying change is covered instead of
+# looking uncommitted forever. An empty revision means "as yet uncommitted",
+# which is never covered.
 
-# content <path>: the bytes under audit (the working tree or the revision).
+# revision <path>: the revision to audit that path at (empty: uncommitted work).
+revision() {
+  if [ -n "$head_rev" ]; then
+    printf '%s' "$head_rev"
+  elif git diff --quiet HEAD -- "$1"; then
+    git rev-parse HEAD
+  fi
+}
+
+# content <rev> <path>: the bytes under audit (empty revision: the working tree).
 content() {
-  if [ -n "$head_rev" ]; then git show "$head_rev:$1"; else cat "$1"; fi
+  if [ -n "$1" ]; then git show "$1:$2"; else cat "$2"; fi
 }
 
-# exists <path>: is it there at all?
+# exists <rev> <path>: is it there at all?
 exists() {
-  if [ -n "$head_rev" ]; then git cat-file -e "$head_rev:$1" 2>/dev/null; else [ -e "$1" ]; fi
+  if [ -n "$1" ]; then git cat-file -e "$1:$2" 2>/dev/null; else [ -e "$2" ]; fi
 }
 
-# changed <path>: do the audited bytes differ from the baseline's?
+# changed <rev> <path>: do the audited bytes differ from the baseline's?
 changed() {
-  git show "$baseline:$1" > "$tmp/before" 2>/dev/null || : > "$tmp/before"
-  content "$1" > "$tmp/after" 2>/dev/null || : > "$tmp/after"
+  local rev="$1" path="$2"
+  git show "$baseline:$path" > "$tmp/before" 2>/dev/null || : > "$tmp/before"
+  content "$rev" "$path" > "$tmp/after" 2>/dev/null || : > "$tmp/after"
   ! cmp -s "$tmp/before" "$tmp/after"
 }
 
-# covered <path>: a commit in range mentions an ADR and this file, and the
-# audited bytes are exactly what it left. Never true for uncommitted work.
+# covered <rev> <path>: a commit in range mentions an ADR and this file, and
+# the audited bytes are exactly what it left.
 covered() {
-  [ -n "$head_rev" ] || return 1
+  local rev="$1"
+  [ -n "$rev" ] || return 1
 
-  local path="$1" sha
+  local path="$2" sha
   while read -r sha; do
     [ -n "$sha" ] || continue
     git show --pretty=format:%B --name-only "$sha" > "$tmp/commit"
@@ -75,25 +92,27 @@ covered() {
     grep -qxF "$path" "$tmp/commit" || continue
     # No later commit may have touched the file again (formatting included):
     # the ADR has to describe the bytes we are looking at.
-    if git diff --quiet "$sha" "$head_rev" -- "$path"; then return 0; fi
-  done < <(git log --format=%H "$baseline..$head_rev" -- "$path")
+    if git diff --quiet "$sha" "$rev" -- "$path"; then return 0; fi
+  done < <(git log --format=%H "$baseline..$rev" -- "$path")
 
   return 1
 }
 
 # --- shared vectors and shipped test files: whole files -----------------------
 while IFS= read -r path; do
-  if ! exists "$path"; then
+  rev="$(revision "$path")"
+
+  if ! exists "$rev" "$path"; then
     fail "deleted: $path"
     continue
   fi
 
-  if changed "$path"; then
-    summary="$(git diff --shortstat "$baseline" ${head_rev:+"$head_rev"} -- "$path" | tr -d '\n')"
-    if [ -z "$head_rev" ]; then
+  if changed "$rev" "$path"; then
+    summary="$(git diff --shortstat "$baseline" ${rev:+"$rev"} -- "$path" | tr -d '\n')"
+    if [ -z "$rev" ]; then
       fail "changed in the working tree: $path ($summary); commit it with an ADR"
     else
-      covered "$path" || fail "changed without an ADR: $path ($summary)"
+      covered "$rev" "$path" || fail "changed without an ADR: $path ($summary)"
     fi
   fi
 done < <(git ls-tree -r --name-only "$baseline" -- spec os/test |
@@ -169,20 +188,22 @@ PY
 zig_error() { fail "could not read the Zig test blocks of $2 ($1)"; }
 
 for path in $(git ls-tree -r --name-only "$baseline" -- shim/src | grep '\.zig$'); do
-  if ! exists "$path"; then
+  rev="$(revision "$path")"
+
+  if ! exists "$rev" "$path"; then
     fail "deleted: $path"
     continue
   fi
 
   zig_blocks "$baseline" "$path" > "$tmp/base" || { zig_error "baseline" "$path"; continue; }
-  zig_blocks "$head_rev" "$path" > "$tmp/have" || { zig_error "audited revision" "$path"; continue; }
+  zig_blocks "$rev" "$path" > "$tmp/have" || { zig_error "audited revision" "$path"; continue; }
 
   while IFS=$'\t' read -r name digest; do
     [ -n "$name" ] || continue
     new="$(awk -F'\t' -v n="$name" '$1 == n {print $2}' "$tmp/have")"
     if [ -z "$new" ]; then
       fail "Zig test removed from $path: $name"
-    elif [ "$new" != "$digest" ] && ! covered "$path"; then
+    elif [ "$new" != "$digest" ] && ! covered "$rev" "$path"; then
       fail "Zig test changed without an ADR: $path: $name"
     fi
   done < "$tmp/base"

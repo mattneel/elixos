@@ -19,7 +19,7 @@ TEST_HOOKS ?= true
 NEEDS_FACTORY := $(shell [ $(MILESTONE) -ge 4 ] && echo yes)
 
 .PHONY: help check-tools test test-shim test-os test-qemu ci image kernel shim release-shim \
-        factory initramfs disk uefi-image qemu format clean distclean audit
+        factory initramfs disk uefi-image qemu format clean distclean audit demo demos
 
 help: ## List targets
 	@awk -F':.*## ' '/^[a-z-]+:.*## / { printf "  %-14s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -43,6 +43,13 @@ ci: test test-qemu ## Everything for the current milestone
 
 audit: ## Fail if a shipped test, Zig test block or vector changed without an ADR
 	scripts/audit-tests.sh
+
+demo: ## Record and check one demo: make demo M=4 (demos/README.md)
+	@[ -n "$(M)" ] || { echo "usage: make demo M=<milestone>" >&2; exit 1; }
+	demos/demo.sh $(M)
+
+demos: ## Record and check every demo up to MILESTONE
+	demos/demo.sh --all
 
 kernel: $(BUILD)/bzImage ## Pinned mainline kernel: configured, never patched (ADR-001)
 

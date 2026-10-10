@@ -44,6 +44,33 @@ if [ ! -e /lib/ld-musl-x86_64.so.1 ]; then
   status=1
 fi
 
+echo "demos (demos/README.md):"
+need expect expect "drives the demo recordings"
+for candidate in "$(command -v asciinema 2>/dev/null || true)" "$ROOT/build/tools/asciinema"; do
+  [ -n "$candidate" ] && [ -x "$candidate" ] || continue
+  if "$candidate" --version 2>/dev/null | grep -q '^asciinema 3'; then
+    printf '  ok       %-20s %s\n' "asciinema $("$candidate" --version | awk '{print $2}')" "records the demos (3.x required)"
+    found=yes
+    break
+  fi
+done
+if [ "${found:-}" != yes ]; then
+  printf '  MISSING  %-20s %s  (apt ships 2.x: fetch the 3.x static binary, see demos/README.md)\n' "asciinema 3.x" "records the demos"
+  status=1
+fi
+agg_found=no
+for candidate in "$(command -v agg 2>/dev/null || true)" "$ROOT/build/tools/agg"; do
+  [ -n "$candidate" ] && [ -x "$candidate" ] || continue
+  printf '  ok       %-20s %s\n' "agg $("$candidate" --version | awk '{print $2}')" "draws the demo frames"
+  agg_found=yes
+  break
+done
+if [ "$agg_found" != yes ]; then
+  printf '  MISSING  %-20s %s  (see demos/README.md)\n' "agg" "draws the demo frames"
+  status=1
+fi
+need ffmpeg ffmpeg "encodes the demos as mp4"
+
 echo "versions:"
 if command -v zig >/dev/null 2>&1; then
   echo "  zig $(zig version) (pinned: $(head -n1 "$ROOT/.zig-version"))"

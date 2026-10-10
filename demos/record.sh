@@ -18,7 +18,6 @@ DEMO="$ROOT/demos/$NAME"
 [ -f "$DEMO.exp" ] || { echo "record: no $DEMO.exp" >&2; exit 1; }
 
 # asciinema 3.x: apt ships 2.x, whose flags differ.
-ASCII="$(demos_locate_asciinema() { :; }; echo)"
 ASCII=""
 for candidate in "${ELIXOS_ASCIINEMA:-}" "$BUILD/tools/asciinema" "$(command -v asciinema || true)"; do
   [ -n "$candidate" ] && [ -x "$candidate" ] || continue
@@ -36,6 +35,10 @@ MSG
   exit 1
 }
 
+# Demos that count attempts need the *pristine* disk, and never build/disk.img
+# itself (which `make qemu` may have written to). mkdisk.sh recreates it
+# unconditionally; `make disk` would leave a drifted file alone.
+"$ROOT/scripts/mkdisk.sh" >/dev/null
 cp --sparse=always "$BUILD/disk.img" "$DEMO.disk"
 export ELIXOS_DEMO_DISK="$DEMO.disk"
 export ELIXOS_DEMO_KERNEL="$BUILD/bzImage"
@@ -46,3 +49,6 @@ echo "record: $NAME -> $NAME.cast"
   -c "expect $DEMO.exp" "$DEMO.cast"
 
 rm -f "$DEMO.disk"
+
+# The video is what people actually watch; the cast is its source.
+demos/render.sh "$NAME"
