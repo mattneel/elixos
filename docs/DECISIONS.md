@@ -579,6 +579,113 @@ reports precisely because `run/2` does not.
 quoted assertion pass, but it would change an M11 API to fit a test that was
 never run, and `Zig.version/0` already trims where trimming is wanted.
 
+## ADR-032: Agents restart from the image, with their memory on /priv
+
+**Status:** accepted (M15)
+
+**Context.** Q2 asked whether a boot rebuilds process state from supervisors
+and `/priv`, or tries to persist it; M15's agents make the answer concrete. A
+module the image keeps is not a process: Jido runs an agent as an
+`AgentServer`, whose state is what the agent has been told. A heap snapshot is
+the vision's non-goal, and CRIU stays a stretch goal.
+
+**Decision.** `Elixos.Agents` starts recorded agents under
+`Elixos.Agents.Supervisor` and records each in the image's journal
+(`{:agent, id, module, opts}`), so the boot starts it again. An agent's memory
+is written to `/priv/agents/<id>.term` by `Elixos.Agents.snapshot_all/0`, and
+that runs whenever the image is written (`Elixos.save/1`) and on a graceful
+stop - one durable moment, like everything else the image keeps. A Jido
+agent's memory is its state map, handed back as `initial_state`; a plain
+agent's is whatever `snapshot/1` returns, handed back as `:snapshot`. The LLM
+is a provider, not the definition: `Elixos.Agents.LLM` speaks both wire
+shapes, and the `:codex` mode signs in with a ChatGPT subscription through
+`~/.codex/auth.json` (refreshing the token when its own `exp` says so), so an
+agent works with no model at all and a model works with no API key.
+
+**Consequences.** What survives a power cycle is what a save saw; work done
+after the last save is lost, which is the same promise the image makes and the
+reason `Elixos.save/1` exists. Agents are ordinary modules: anything the image
+can journal, this can run.
+
+**Alternatives.** Persisting process state (Q2's other arm) needs a snapshot
+of the heap; CRIU could checkpoint `beam.smp` but is heavy and fragile around
+devices (VISION.md, "Not").
+
+## ADR-033: A package may arrive built
+
+**Status:** accepted (M15)
+
+**Context.** M14 installs a package by building it on the box. Jido's closure
+cannot be built there yet: three of its 15 dependencies are rebar projects,
+and one of them (telemetry) needs the `pc` plugin, which rebar3 fetches from
+the network. The box has neither rebar3 nor that network.
+
+**Decision.** A package whose contents carry `ebin/` and no `mix.exs` is
+adopted, not built: the application resource inside names it, its tree is
+copied under `/priv/apps` like every install's, its application is loaded and
+it is recorded - dependencies first, weighed by the resolver all the same. The
+fixture's jido closure arrives this way, written by Hex's own tarball writer so
+its checksums are the ones a registry builder recomputes.
+
+**Consequences.** Installing such a package is fast (nothing compiles) and
+portable (BEAM files are architecture-independent; a NIF ships built for musl).
+Building rebar packages *on* the box waits for rebar3 in the toolchain package
+along with a plugin story; until then, a repository that serves one is expected
+to serve it built.
+
+**Alternatives.** Vendoring jido (ADR-019 says packages arrive through the
+repository); shipping rebar3 plus a pre-seeded plugin cache (a milestone of its
+own).
+
+## ADR-034: The shim brings loopback up
+
+**Status:** accepted (M15)
+
+**Context.** The kernel leaves `lo` down until someone asks. Everything local
+needs it: an agent's action calling a provider on `127.0.0.1`, a service a
+session starts for itself. Until M15 nothing did - M12's SSH comes in over
+virtio-net, and a stub on a disk with no network is useless.
+
+**Decision.** After mounting the pseudo-filesystems, PID 1 brings `lo` up with
+one ioctl (`SIOCGIFFLAGS`/`SIOCSIFFLAGS`, `IFF_UP|IFF_RUNNING`). A failure is
+not fatal and, on the normal path, not logged: the console lines are API
+(PROTOCOL.md §6). The Zig unit test checks the ioctl plumbing (a real
+interface parses, a missing one is the kernel's error); the guest, where PID 1
+is root, is where the flags actually change, and the M15 acceptance proves it
+end to end.
+
+**Consequences.** Local sockets work from boot on any image, and nothing else
+in the system configures an interface - the network device still comes from
+the kernel's `ip=dhcp` or nothing at all.
+
+**Alternatives.** A helper in Elixir (later than PID 1, and no portable ioctl
+in the standard library); a shell script (ADR-012).
+
+## ADR-035: The factory ships the stock OTP applications and a CA bundle
+
+**Status:** accepted (M15)
+
+**Context.** A release carries only the applications its dependency graph
+names, so `mix release` left out what an *installed* package may need at run
+time: mnesia (a hard dependency of jido), ssl and inets (a provider over the
+network). And TLS verification needs a trust store, which an initramfs does not
+have.
+
+**Decision.** `scripts/build-factory.sh` copies those stock applications from
+the cross-built OTP into `/factory/lib`, and the host's CA bundle to
+`/etc/ssl/certs/ca-certificates.crt` - the place `:public_key.cacerts_get/0`
+reads. `Elixos.Application` puts `/factory/lib/*/ebin` on the code path at
+boot, before anything can load from it. Nothing is started by this: the code
+is there, and a package's own application starts what it declares.
+
+**Consequences.** An installed package can start its OTP dependencies, and a
+hosted provider (or a Hex repository) can be verified from the box. The bundle
+is a build-host artifact: refreshing it means rebuilding the factory.
+Which applications travel is a short list that grows when something needs one.
+
+**Alternatives.** Shipping every OTP application (the image is an initramfs);
+letting each package vendor its dependencies (ADR-019 forbids it).
+
 ## Open questions
 
 ## ADR-024: Ctrl+C rides with a newline on the console

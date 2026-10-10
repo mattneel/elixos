@@ -192,6 +192,8 @@ ext4, label `ELIXOS`, mounted on `/priv`:
 /priv/ssh/              SSH host keys (M12)
 /priv/cache/zig/        ZIG_GLOBAL_CACHE_DIR for on-box builds (M11)
 /priv/apps/             installed apps (M11)
+/priv/agents/           agent memory, `<id>.term` (M15, ADR-032)
+/priv/llm.exs           LLM provider settings (a keyword list, M15)
 /priv/hex/repos.exs     trusted Hex repositories (M14, ADR-019)
 /priv/hex/keys/         each repo's public key, `<name>.pub`
 /priv/hex/cache/        fetched registries and tarballs

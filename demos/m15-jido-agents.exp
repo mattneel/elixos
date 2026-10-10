@@ -1,0 +1,155 @@
+#!/usr/bin/expect -f
+# M15: agents are ordinary Elixos code. A Jido agent - installed from a
+# repository by name, with its whole dependency closure - is defined at the
+# prompt and started under the system's own supervisor; one of its actions
+# calls a model (a stub on the loopback here). Then the machine is saved,
+# powered off, and powered on again: the next boot starts the agent with what
+# it remembered.
+
+set timeout 900
+set send_human {.1 .3 10 .05 2}
+
+# The repository the box installs from, on the demo disk (which mounts at
+# /priv): an offline mirror, exactly what the tests use.
+set disk $env(ELIXOS_DEMO_DISK)
+set repo "[pwd]/os/test/fixtures/hex_repo/public"
+foreach dir {hex-repo hex-repo/packages hex-repo/tarballs} {
+    catch {exec -ignorestderr debugfs -w -R "mkdir $dir" $disk}
+}
+foreach file [split [exec sh -c "cd $repo && find . -type f | sed 's|^\./||'"]] {
+    exec -ignorestderr debugfs -w -R "write $repo/$file hex-repo/$file" $disk
+}
+
+spawn -noecho qemu-system-x86_64 \
+    -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+set qemu $spawn_id
+
+expect "iex(1)> "
+sleep 1
+
+# Trusting a repository is the consent step; installing by name pulls jido and
+# its dependencies.
+send "Elixos.Package.add_repo(:fixture, \"/priv/hex-repo\", key: File.read!(\"/priv/hex-repo/public_key\"))\r"
+expect "iex(2)> "
+sleep 1
+send "Elixos.Package.install(:jido)\r"
+expect "{:ok, :jido}"
+sleep 2
+
+# An agent is a module, and a prompt defines it - one expression, the way a
+# defmodule is typed.
+send {(defmodule Demo.Jido do
+  use Jido, otp_app: :demo_agents
+end
+
+defmodule Demo.Note do
+  use Jido.Action, name: "note", schema: [note: [type: :string, default: ""]]
+  def run(params, _ctx), do: {:ok, %{last: params.note}}
+end
+
+defmodule Demo.Ask do
+  use Jido.Action, name: "ask", schema: [prompt: [type: :string, default: "hello"]]
+  def run(params, _ctx) do
+    case Elixos.Agents.LLM.complete([{"user", params.prompt}], base_url: "http://127.0.0.1:4040/v1", model: "stub-model") do
+      {:ok, text} -> {:ok, %{answer: text}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+end
+
+defmodule Demo.Agent do
+  use Jido.Agent, name: "demo_agent",
+    schema: [last: [type: :string, default: ""], answer: [type: :string, default: ""]],
+    signal_routes: [{"note", Demo.Note}, {"ask", Demo.Ask}]
+end
+
+defmodule Demo.Stub do
+  def start(port, text) do
+    {:ok, listen} = :gen_tcp.listen(port, [:binary, active: false, reuseaddr: true])
+    spawn_link(fn -> loop(listen, text) end)
+    :ok
+  end
+  defp loop(listen, text) do
+    {:ok, socket} = :gen_tcp.accept(listen)
+    :gen_tcp.recv(socket, 0, 5000)
+    body = IO.iodata_to_binary(:json.encode(%{"choices" => [%{"message" => %{"content" => text}}]}))
+    :gen_tcp.send(socket, ["HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: ", Integer.to_string(byte_size(body)), "\r\nconnection: close\r\n\r\n", body])
+    :gen_tcp.close(socket)
+    loop(listen, text)
+  end
+end
+
+defmodule Demo do
+  def ask(id, type, data) do
+    {:ok, _agent} = Jido.AgentServer.call(Elixos.Agents.whereis(id), Jido.Signal.new!(type, data))
+    state(id)
+  end
+  def state(id) do
+    {:ok, state} = Jido.AgentServer.state(Elixos.Agents.whereis(id))
+    state.agent.state
+  end
+end)}
+sleep 2
+
+send "Elixos.Agents.start(Demo.Agent, id: \"greeter\", jido: Demo.Jido)\r"
+expect "{:ok, #PID<"
+sleep 1
+send "Demo.ask(\"greeter\", \"note\", %{note: \"remember me\"})\r"
+expect "iex(6)> "
+sleep 1
+
+# An action that asks a model - the stub answers over the loopback.
+send "Demo.Stub.start(4040, \"a model said hello\")\r"
+expect "iex(7)> "
+sleep 1
+send "Elixos.Agents.start(Demo.Agent, id: \"scribe\", jido: Demo.Jido)\r"
+expect "{:ok, #PID<"
+sleep 1
+send "Demo.ask(\"scribe\", \"ask\", %{prompt: \"say hello\"})\r"
+expect ~|answer: "a model said hello"|
+sleep 2
+
+send "Elixos.Agents.list() |> Map.keys() |> Enum.sort()\r"
+expect ~|\["greeter", "scribe"\]|
+sleep 1
+
+# The live image saves what was typed and what the agents remember; then the
+# machine goes dark.
+send "Elixos.save()\r"
+expect {:ok, 1}
+sleep 2
+send "Elixos.poweroff()\r"
+expect "elixos-shim: shutdown poweroff"
+expect "reboot: Power down"
+expect eof
+sleep 2
+
+# Power on again: the same disk, the same modules, both agents running, the
+# note still there.
+spawn -noecho qemu-system-x86_64 \
+    -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+set second $spawn_id
+
+expect "iex(1)> "
+sleep 1
+send "Elixos.Agents.list() |> Map.keys() |> Enum.sort()\r"
+expect ~|\["greeter", "scribe"\]|
+sleep 1
+send "Demo.state(\"greeter\")\r"
+expect ~|last: "remember me"|
+sleep 2
+
+send "Elixos.poweroff()\r"
+expect "elixos-shim: shutdown poweroff"
+expect eof
+sleep 1

@@ -1,0 +1,26 @@
+# What the M15 demo must show, in order: jido installs by name, an agent is
+# defined and started at the prompt, an action talks to a stub model over the
+# loopback, and after a power cycle the agent is running with what it
+# remembered.
+elixos-shim: pid 1, version
+iex(1)> Elixos.Package.add_repo(:fixture, "/priv/hex-repo", key: File.read!("/priv/hex-repo/public_key"))
+:ok
+iex(2)> Elixos.Package.install(:jido)
+{:ok, :jido}
+iex(3)> (defmodule Demo.Jido do
+iex(5)> Elixos.Agents.start(Demo.Agent, id: "greeter", jido: Demo.Jido)
+{:ok, #PID<
+Demo.ask("greeter", "note", %{note: "remember me"})
+last: "remember me"
+iex(7)> Demo.Stub.start(4040, "a model said hello")
+:ok
+Demo.ask("scribe", "ask", %{prompt: "say hello"})
+answer: "a model said hello"
+["greeter", "scribe"]
+Elixos.save()
+{:ok, 1}
+elixos-shim: shutdown poweroff
+["greeter", "scribe"]
+Demo.state("greeter")
+last: "remember me"
+elixos-shim: shutdown poweroff

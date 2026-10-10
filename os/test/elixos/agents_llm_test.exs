@@ -277,3 +277,43 @@ defmodule Elixos.Agents.LLMTest do
              LLM.complete([{"user", "hi"}], base_url: "http://127.0.0.1:1/v1", model: "m")
   end
 end
+
+defmodule Elixos.Agents.LLMFileTest do
+  @moduledoc "Providers are configuration: `/priv/llm.exs` is a keyword list (PROTOCOL.md §7)."
+  use ExUnit.Case, async: false
+
+  @moduletag milestone: 15
+  @moduletag :tmp_dir
+
+  alias Elixos.Agents.LLM
+
+  test "providers come from the file, and a call names one", %{tmp_dir: tmp_dir} do
+    file = Path.join(tmp_dir, "llm.exs")
+
+    File.write!(file, """
+    [
+      stub: [base_url: "http://127.0.0.1:4040/v1", model: "stub-model"]
+    ]
+    """)
+
+    previous = Application.get_env(:elixos, :llm_file)
+    Application.put_env(:elixos, :llm_file, file)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:elixos, :llm_file, previous),
+        else: Application.delete_env(:elixos, :llm_file)
+    end)
+
+    assert LLM.providers() == [stub: [base_url: "http://127.0.0.1:4040/v1", model: "stub-model"]]
+
+    # A named provider with nothing listening is a connect error, not a crash:
+    # the configuration was read and used.
+    assert {:error, {:connect, _reason}} = LLM.complete([{"user", "hi"}], provider: :stub)
+  end
+
+  test "no file is no providers" do
+    Application.delete_env(:elixos, :llm_file)
+    assert LLM.providers() == []
+  end
+end
