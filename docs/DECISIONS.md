@@ -1025,3 +1025,35 @@ Decide these with the human. Until then, follow the proposed default.
   exposes an Elixir API. Proposed default: the package's own top-level name,
   as Hex packages normally do — the M11 toolchain package provides `Zig`, so
   `Zig.init/1` is how a session initializes it.
+
+## ADR-042: Integration tests thread the console through loops, and the harness waits for the echo
+
+**Status:** accepted (M16)
+
+**Context.** M14's "a name in two trusted repositories" test types four
+expressions at the console, two per repository. It was written as a `for`
+comprehension over the two repositories, and a comprehension discards each
+iteration's returned VM: the second iteration typed into a console whose
+prompt `QEMU.iex/3` still believed was the boot's first. The contract of
+`iex/3` is a console sitting at a prompt the harness has already consumed, so
+with that precondition broken the harness matched the first prompt it saw -
+the one already on screen - and returned the echoed input alone. The test
+failed roughly one run in three, and the failure was twice diagnosed as a
+harness timing bug (`docs/notes/melange-apko.md`).
+
+**Decision.**
+- A test that types more than one expression must thread the VM from one call
+  to the next: `Enum.reduce/3`, or `for ... reduce: vm`. Never a plain `for`
+  whose result is dropped.
+- `QEMU.iex/3` anchors on the echo of the line it just sent before waiting
+  for a prompt whose own number is higher than the one the expression started
+  at, and it judges each matched prompt by that number rather than by the
+  highest number ever seen. Both are defensive, not a substitute for the
+  contract above; the anchor also survives a redraw arriving before the
+  result, which is what made the old code look guilty.
+
+**Consequences.** The m14 test asserts what it means to assert - the first
+call's result, then `:ok` from the second - on a console whose state it now
+tracks. The anchor's cost is a five-second window per call for multi-line
+expressions, whose redraws split the echoed text so the echo never matches;
+those fall back to the prompt-number wait.

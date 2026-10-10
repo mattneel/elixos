@@ -77,17 +77,27 @@ defmodule Elixos.Integration.M14PackagesTest do
 
     vm = QEMU.boot_to_iex(ctx, disk: disk)
 
-    for {name, dir} <- [{":fixture", "/priv/hex-repo"}, {":mirror", "/priv/hex-mirror"}] do
-      # One short expression per call, deliberately: IEx redraws an input line
-      # that wraps the terminal, and the harness reads prompts off the console -
-      # a wrapped 100-character line reads like one. The key travels in a
-      # variable so the call itself stays under the width.
-      {out, vm} = QEMU.iex(vm, ~s|key = File.read!("#{dir}/public_key")|)
-      assert out =~ "BEGIN RSA PUBLIC KEY"
+    # The VM threads through the loop. It must: the console's prompt number
+    # advances with every expression, and QEMU.iex/3's contract is a console
+    # sitting at a prompt the harness has already consumed. A `for`
+    # comprehension would discard the updated VM and the second iteration
+    # would type into a console whose prompt the harness thought was still the
+    # boot's (ADR-042).
+    vm =
+      Enum.reduce([{:fixture, "/priv/hex-repo"}, {:mirror, "/priv/hex-mirror"}], vm, fn
+        {name, dir}, vm ->
+          # One short expression per call, deliberately: IEx redraws an input
+          # line that wraps the terminal, and the harness reads prompts off the
+          # console - a wrapped 100-character line reads like one. The key
+          # travels in a variable so the call itself stays under the width.
+          {out, vm} = QEMU.iex(vm, ~s|key = File.read!("#{dir}/public_key")|)
+          assert out =~ "BEGIN RSA PUBLIC KEY"
 
-      {out, vm} = QEMU.iex(vm, ~s|Elixos.Package.add_repo(#{name}, "#{dir}", key: key)|)
-      assert out =~ ":ok"
-    end
+          {out, vm} = QEMU.iex(vm, ~s|Elixos.Package.add_repo(#{name}, "#{dir}", key: key)|)
+          assert out =~ ":ok"
+
+          vm
+      end)
 
     {out, vm} = QEMU.iex(vm, "Elixos.Package.install(:hello_pkg)", 300_000)
     assert out =~ "name_in_multiple_repos"

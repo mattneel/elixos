@@ -103,15 +103,17 @@ apko v1.4.10, both by sha256).
 
 ## Test hygiene
 
-- The QEMU harness reads prompts off the console and counts them. IEx redraws
-  the prompt while it evaluates, and that redraw can carry a *higher* prompt
-  number before the result is printed, so waiting for a number alone returned
-  the *previous* expression's output one call late - M14's two-repo test
-  caught it. `QEMU.iex/3` now anchors on the echo of the line it sent first
-  (the exact bytes, whitespace flexible because a long line wraps), which
-  belongs to that expression alone, and only then waits for the next prompt.
-  Keep test expressions short anyway: one per call, key material in a
-  variable.
+- The QEMU harness reads prompts off the console, and `QEMU.iex/3`'s contract
+  is a console sitting at a prompt the harness has already consumed. A test
+  that types several expressions must thread the VM between the calls: M14's
+  two-repo test used a `for` comprehension, dropped each iteration's VM, and
+  typed into a console two prompts ahead of what the harness believed - the
+  harness then matched the prompt still on screen and returned the echoed
+  input alone, about one run in three. It looked like a harness timing bug for
+  a while; ADR-042 records the rule. `iex/3` also anchors on the echo of the
+  line it sent (whitespace flexible; a five-second window, because a
+  multi-line expression's redraws can split the echo) and compares each
+  matched prompt by its own number. Keep expressions short anyway.
 - A killed QEMU run leaves its `@moduletag :tmp_dir` behind, and each holds a
   copy of the disk image: `os/tmp` reached 19G once. When the disk looks
   wrong, `rm -rf os/tmp/*` is safe - the tests recreate it.
