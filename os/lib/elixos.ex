@@ -29,6 +29,12 @@ defmodule Elixos do
   # (PROTOCOL.md §2), so the last thing we do is stop the VM. PID 1 is the
   # only thing that can power the machine off; we just ask.
   defp request_shutdown(request) do
+    # Recording is asynchronous and the journal is what the next boot replays:
+    # like save/1, a graceful exit waits for everything typed so far, so a
+    # defmodule entered just before Elixos.poweroff() cannot be lost in a cast
+    # that never ran (M7: nothing typed is ever lost).
+    :ok = sync_recorder()
+
     case request.() do
       :ok -> :init.stop()
       {:error, reason} -> {:error, reason}
@@ -85,10 +91,28 @@ defmodule Elixos do
     end
   end
 
-  @doc "Modules defined since generation `n` that were never saved. (M7)"
-  def unsaved(n), do: Elixos.NotImplemented.raise!(7, "Elixos.unsaved/1 #{n}")
+  @doc """
+  Modules defined since generation `n` that were never saved. (M7)
 
-  @doc "Load unsaved modules back from the journal (Smalltalk's recover lost changes). (M7)"
-  def recover(modules),
-    do: Elixos.NotImplemented.raise!(7, "Elixos.recover/1 #{inspect(modules)}")
+  The working set comes from the journal, so anything typed at a prompt is in
+  it whether or not it was ever saved.
+  """
+  @spec unsaved(non_neg_integer()) :: [module()] | {:error, term()}
+  def unsaved(n) do
+    :ok = sync_recorder()
+
+    with {:ok, image} <- image(), do: Elixos.Image.unsaved(image, n)
+  end
+
+  @doc """
+  Loads unsaved modules back from the journal (Smalltalk's recover lost
+  changes). (M7)
+  """
+  @spec recover([module()]) :: {:ok, [module()]} | {:error, term()}
+  def recover(modules) do
+    # A module defined a moment ago must be recorded before its blob is wanted.
+    :ok = sync_recorder()
+
+    with {:ok, image} <- image(), do: Elixos.Image.recover(image, modules)
+  end
 end

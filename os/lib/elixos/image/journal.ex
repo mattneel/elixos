@@ -165,8 +165,10 @@ defmodule Elixos.Image.Journal do
   defp decode(payload, crc) do
     if :erlang.crc32(payload) == crc do
       case decode_term(payload) do
-        {:ok, record} -> {:ok, record}
-        :error -> :damage
+        # The format is `{seq, entry}` (moduledoc): a CRC-valid term of any
+        # other shape is damage, not a record to replay.
+        {:ok, {seq, _entry} = record} when is_integer(seq) and seq > 0 -> {:ok, record}
+        _other -> :damage
       end
     else
       :damage

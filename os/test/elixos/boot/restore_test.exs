@@ -45,6 +45,17 @@ defmodule Elixos.Boot.RestoreTest do
              Restore.start_link({image, env()})
   end
 
+  test "rescue mode loads no user code, so it can fix a bad generation", %{
+    image: image,
+    root: root
+  } do
+    # The same hostile generation that fails a normal boot is skipped here.
+    :ok = write_generation(root, [{Kernel, :throw, [:ignore]}])
+
+    assert {:ok, pid} = Restore.start_link({image, %{env() | mode: :rescue}})
+    assert Process.alive?(pid)
+  end
+
   test "a boot spec that never returns is bounded, not a wedged box", %{
     image: image,
     root: root

@@ -175,7 +175,7 @@ mode loads no user code. Stick the factory's code directories with
 `:code.stick_dir/1`. `Elixos.unsaved/1` and `Elixos.recover/1` sit on the
 `Elixos.Image` functions.
 
-- [ ] Demo recorded: `demos/m07-recovery.mp4` (`make demo M=7`).
+- [x] Demo recorded: `demos/m07-recovery.mp4` (`make demo M=7`).
 
 ---
 

@@ -41,8 +41,18 @@ defmodule Elixos.Boot.Recorder do
   """
   def trace({:on_module, bytecode, _ignore}, _env) do
     case Capture.module_of(bytecode) do
-      {:ok, module} -> GenServer.cast(__MODULE__, {:record, module, bytecode})
-      :error -> :ok
+      # A *rejected* redefinition gets this far: Elixir traces the module
+      # after compiling it, and only the load fails (the base is sticky, or a
+      # conflict was refused). Recording base bytecode would put it in the
+      # working set, and the next save would write a generation that cannot
+      # boot - and every later save would carry it too.
+      {:ok, module} ->
+        if not :code.is_sticky(module) do
+          GenServer.cast(__MODULE__, {:record, module, bytecode})
+        end
+
+      :error ->
+        :ok
     end
 
     :ok

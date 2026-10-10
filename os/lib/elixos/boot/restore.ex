@@ -34,9 +34,15 @@ defmodule Elixos.Boot.Restore do
 
   @impl true
   def init({image, %Env{} = env}) do
-    with :ok <- restore_generation(image, env.generation),
-         :ok <- run_boot_spec(image, env.generation) do
+    # Rescue mode loads no user code (docs/ROADMAP.md M7): it exists to fix a
+    # bad generation, so it must not run that generation's modules or boot spec.
+    if env.mode == :rescue do
       {:ok, env}
+    else
+      with :ok <- restore_generation(image, env.generation),
+           :ok <- run_boot_spec(image, env.generation) do
+        {:ok, env}
+      end
     end
   end
 

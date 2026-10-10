@@ -1,0 +1,73 @@
+#!/usr/bin/expect -f
+# M7: recovery. A saved generation whose boot spec crashes is tried, counted,
+# and abandoned for the last good one; code typed at a prompt but never saved
+# is still there afterwards, recovered from the journal (docs/ROADMAP.md M7,
+# ADR-007).
+#
+# Two power-ons of one pristine disk copy, inside one recording: -no-reboot
+# ends QEMU when the guest reboots, so the second boot is a second spawn.
+
+set timeout 300
+set send_human {.1 .3 10 .05 2}
+
+# Boot 1: save generation 1 with a boot spec that raises; then define a module
+# *after* that save, so it is genuinely never saved - it exists only in the
+# journal, which is what recovery reads.
+spawn -noecho qemu-system-x86_64 \
+    -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+
+expect "iex(1)> "
+sleep 1
+send -h "defmodule Bad do\n  def boot, do: raise(\"boom\")\nend\r"
+expect "iex(2)> "
+sleep 1
+
+send -h "Elixos.save(boot: \[{Bad, :boot, \[\]}\])\r"
+expect "iex(3)> "
+sleep 2
+
+send -h "defmodule Unsaved do\n  def hi, do: :recovered\nend\r"
+expect "iex(4)> "
+sleep 2
+
+send -h "Elixos.poweroff()\r"
+expect "elixos-shim: shutdown poweroff"
+expect "reboot: Power down"
+expect eof
+sleep 2
+
+# Boot 2: generation 1 crashes twice, the shim falls back to 0, and the module
+# that was never saved comes back from the journal.
+spawn -noecho qemu-system-x86_64 \
+    -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600 elixos.max_attempts=2" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+
+expect "elixos-shim: fallback to last_good=0 after 2 attempts of generation=1"
+expect "iex(1)> "
+sleep 1
+# Generation 1 (the one that crashes) holds Bad but not Unsaved: this is the
+# journal tail, the work the bad save never captured.
+send -h "Elixos.unsaved(1)\r"
+expect "iex(2)> "
+sleep 1
+send -h "Elixos.recover(\[Unsaved\])\r"
+expect "iex(3)> "
+sleep 1
+send -h "Unsaved.hi()\r"
+expect "iex(4)> "
+sleep 2
+
+send -h "Elixos.poweroff()\r"
+expect "elixos-shim: shutdown poweroff"
+expect "reboot: Power down"
+expect eof
+sleep 1

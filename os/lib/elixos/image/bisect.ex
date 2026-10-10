@@ -16,6 +16,25 @@ defmodule Elixos.Image.Bisect do
   @spec first_bad([term()], ([term()] -> boolean())) ::
           {:ok, pos_integer()} | :none | {:error, :base_bad}
   def first_bad(entries, good?) when is_list(entries) and is_function(good?, 1) do
-    Elixos.NotImplemented.raise!(7, "Elixos.Image.Bisect.first_bad/2")
+    cond do
+      not good?.([]) -> {:error, :base_bad}
+      good?.(entries) -> :none
+      true -> search(entries, good?, 0, length(entries))
+    end
+  end
+
+  # `good` counts entries known to leave the system good, `bad` entries known
+  # to break it (monotonic, so the whole list is already known bad). The first
+  # breaking entry is the one where the two meet.
+  defp search(_entries, _good?, good, bad) when bad - good == 1, do: {:ok, bad}
+
+  defp search(entries, good?, good, bad) do
+    middle = div(good + bad, 2)
+
+    if good?.(Enum.take(entries, middle)) do
+      search(entries, good?, middle, bad)
+    else
+      search(entries, good?, good, middle)
+    end
   end
 end

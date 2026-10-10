@@ -1,0 +1,22 @@
+# What the M7 demo must show, in order. Prompt lines are matched with the
+# shim's lines where they share a line (the shim writes to the console as the
+# prompt is redrawn), adjusted after recording.
+elixos-shim: launching generation=0 mode=normal
+iex(1)> defmodule Bad do
+iex(2)> Elixos.save(boot: [{Bad, :boot, []}])
+{:ok, 1}
+iex(3)> elixos-shim: next generation=1
+# The definition is typed at that same prompt (the counter advances only
+# when the whole expression is evaluated), and its first echo line has no
+# prompt of its own.
+defmodule Unsaved do
+elixos-shim: shutdown poweroff
+elixos-shim: plan generation=1 mode=normal attempt=1
+elixos-shim: plan generation=1 mode=normal attempt=2
+elixos-shim: fallback to last_good=0 after 2 attempts of generation=1
+iex(1)> Elixos.unsaved(1)
+[Unsaved]
+iex(2)> Elixos.recover([Unsaved])
+iex(3)> Unsaved.hi()
+:recovered
+elixos-shim: shutdown poweroff
