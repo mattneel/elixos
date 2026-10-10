@@ -98,7 +98,7 @@ factory in rescue mode and wait for the user. Exact rules: ARCHITECTURE.md §3.3
 
 ## ADR-008: ERTS is dynamically linked against musl, built with zig cc
 
-**Status:** accepted
+**Status:** superseded by ADR-041 (how ERTS is built)
 
 **Context.** NIFs are shared objects loaded with `dlopen`; statically linked
 musl cannot `dlopen`.
@@ -147,7 +147,8 @@ an `elixos:` key costs nothing on a plain host. It holds install metadata
 
 ## ADR-012: REPLs are the login shells; there is no sh in the base system
 
-**Status:** accepted
+**Status:** amended by ADR-041 (a shell is allowed for tooling; IEx stays the
+login shell and the shim still execs erlexec directly)
 
 **Decision.** `/etc/shells` is erl, IEx and gsh. Logins (console, SSH) start
 the user's REPL through OTP's shell contract (an MFA returning the shell pid).
@@ -168,7 +169,7 @@ permission model, no login prompt on the console, public-key-only SSH.
 
 ## ADR-014: x86_64 only, booting via the EFI stub
 
-**Status:** accepted (for now)
+**Status:** superseded by ADR-041 (x86_64 and aarch64)
 
 **Decision.** Build and test only x86_64. QEMU boots the kernel directly
 (`-kernel`/`-initrd`); hardware boots the kernel's EFI stub from the ESP, no
@@ -827,7 +828,7 @@ for every build. It is pinned there, not in `config/elixos.exs`, because that
 file layers only when a build names `MIX_TARGET=elixos` - and the factory's
 release does not; the setting is part of the running system's disk layout, so
 it must hold wherever the OS is built. Where Jido keeps its state, and whether
-that is Mnesia at all, stays an M17 decision.
+that is Mnesia at all, stays an M18 decision.
 
 **Consequences.** Mnesia resolves `/priv/mnesia` before any schema exists; a
 unit test asserts the directory is absolute and under `/priv`, and that
@@ -841,6 +842,68 @@ or the gap would have shown).
 pinning it in the target config only (inert in the guest, see above); building
 the factory as the target (a build change with its own verification, and not
 this finding's business).
+
+## ADR-041: The image build is Alpine packages, melange and apko
+
+**Status:** accepted (M16)
+
+**Context.** The factory has been hand-built since M4: musl.cc's cross
+toolchain, OpenSSL, ncurses and OTP compiled inside one script, a `mix
+release` from the dev host, and a hand-listed rootfs
+(`scripts/build-factory.sh`). That was right for one architecture and one
+ecosystem. Elixos is now growing Postgres with pgvector and TimescaleDB,
+Emerge, a browser and a shell - on musl, for x86_64 *and* aarch64 - and
+Alpine already packages most of that for musl on both. Hand-rolled
+cross-compiles do not scale to it; pinned sources, checksums and lockfiles
+do. ADR-001 stands: the kernel is still the kernel.org tarball plus our
+config fragments, never patched - and never Alpine's kernel package, which is
+Alpine's configuration, not ours.
+
+**Decision.**
+- `build.zig` keeps building everything written in Zig: the shim, the
+  drop-privileges helper, later the evdev helper. Still ReleaseSafe.
+- melange builds our own signed APKs from pinned sources: the kernel
+  (kernel.org tarball + our fragments), OTP 29.1.1, Elixir 1.20.4, the shim
+  (`zig build` inside the melange pipeline), the factory release, and the
+  on-box toolchain. Every source is fetched by sha256.
+- Everything else comes from a pinned stable Alpine release, resolved in a
+  lockfile with checksums and served from a local APK mirror, so a build
+  cannot drift. Edge is allowed package by package, each with a note here.
+- apko assembles the root filesystem from that lockfile; from it come the
+  same images the QEMU tests boot today - a kernel plus an initramfs carrying
+  `/init` and `/factory` - for both architectures. apko does not run package
+  install scripts, so users an image needs (the Postgres uid, M17) are
+  declared in the apko config rather than created by a script.
+- The old pipeline goes: the cross-build and the musl.cc download are
+  deleted, there is no dual pipeline, and the make targets keep their names
+  (`make image`, `make test-qemu`).
+- melange and apko themselves are pinned by version and sha256.
+
+**Supersedes.** ADR-008's "how the ERTS is built" (the factory's own zig cc
+cross toolchain becomes a melange package). ADR-014's "x86_64 only" (both
+architectures now). ADR-012's "no sh anywhere": IEx stays the login shell and
+the shim still execs `erlexec` directly - never a release script (ADR-012's
+actual decision) - but BusyBox sh, from Alpine, is allowed for *tooling*:
+building and packaging, never as the system's login or as a shim exec path.
+
+**Consequences.** The build needs melange, apko, bubblewrap, and - for
+aarch64 packages on an x86_64 host - QEMU user emulation through
+binfmt_misc; `make check-tools` reports them, and melange/apko are pinned in
+the tree. Images become reproducible from the lockfile (two builds, one
+digest - checked in the build) and each carries an SBOM naming at least the
+kernel, OTP and Elixir versions. The dev APK signing key stays out of git; a
+release key is a later decision. Image size moves (recorded in M16): before,
+initramfs 44M and rootfs 108M (factory 82M, libs 27M); after, recorded when
+the pipeline builds. Emerge ships no aarch64 musl NIF (only aarch64 GNU), so
+the GUI milestone (M22) needs a source build for aarch64 - noted there.
+
+**Alternatives.** Keeping the hand-rolled cross-build and adding one
+cross-compile per new dependency (what this replaces: every new C dependency
+is a new toolchain project, times two architectures); building everything
+from source in melange (reproducible, but a reimplementation of Alpine for no
+reason); Nerves-style Buildroot (a different, host-side model: the point here
+is a machine you live inside, and Alpine is the smallest well-packaged musl
+distribution).
 
 ## Open questions
 

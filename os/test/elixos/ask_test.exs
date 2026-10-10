@@ -1,12 +1,12 @@
 defmodule Elixos.AskTest do
   @moduledoc """
-  The question queue on the host (M20): ordering, several askers at once, a
+  The question queue on the host (M21): ordering, several askers at once, a
   timeout, a dismissal, and answers checked against the question they answer.
-  The REPL front-end and the Jido action run in the M20 QEMU acceptance.
+  The REPL front-end and the Jido action run in the M21 QEMU acceptance.
   """
   use ExUnit.Case, async: false
 
-  @moduletag milestone: 20
+  @moduletag milestone: 21
 
   alias Elixos.Ask
 

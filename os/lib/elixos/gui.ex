@@ -1,6 +1,6 @@
 defmodule Elixos.GUI do
   @moduledoc """
-  The GUI on the machine's own screen (M21, docs/ROADMAP.md).
+  The GUI on the machine's own screen (M22, docs/ROADMAP.md).
 
   Emerge renders headless raster frames (`backend: :headless, rendering_api:
   :raster`, binary mode) into `Elixos.GUI`'s frame sink; the sink writes them
@@ -17,22 +17,22 @@ defmodule Elixos.GUI do
 
   @doc "Starts the GUI (renderer + frame sink + input), unless it is running."
   @spec start() :: {:ok, pid()} | {:error, term()}
-  def start, do: Elixos.NotImplemented.raise!(21, "Elixos.GUI.start/0")
+  def start, do: Elixos.NotImplemented.raise!(22, "Elixos.GUI.start/0")
 
   @doc "The running GUI: `{:ok, pid}` or `{:error, :not_running}`."
   @spec status() :: {:ok, pid()} | {:error, :not_running}
-  def status, do: Elixos.NotImplemented.raise!(21, "Elixos.GUI.status/0")
+  def status, do: Elixos.NotImplemented.raise!(22, "Elixos.GUI.status/0")
 
   @doc "Stops the GUI and gives the console back to fbcon."
   @spec stop() :: :ok | {:error, term()}
-  def stop, do: Elixos.NotImplemented.raise!(21, "Elixos.GUI.stop/0")
+  def stop, do: Elixos.NotImplemented.raise!(22, "Elixos.GUI.stop/0")
 
   @doc """
   One input event from a front-end (the evdev helper, or a test): a key, a
   pointer position, a button. Returns what the dialog did with it.
   """
   @spec input(term()) :: :ok | {:error, term()}
-  def input(_event), do: Elixos.NotImplemented.raise!(21, "Elixos.GUI.input/1")
+  def input(_event), do: Elixos.NotImplemented.raise!(22, "Elixos.GUI.input/1")
 
   @doc """
   Renders one Ask question as a dialog with no display:
@@ -42,5 +42,5 @@ defmodule Elixos.GUI do
           {:ok, %{width: pos_integer(), height: pos_integer(), pixels: binary()}}
           | {:error, term()}
   def render_dialog(_question),
-    do: Elixos.NotImplemented.raise!(21, "Elixos.GUI.render_dialog/1")
+    do: Elixos.NotImplemented.raise!(22, "Elixos.GUI.render_dialog/1")
 end

@@ -23,7 +23,7 @@ defmodule Elixos.Package.Spec do
     * `:services` - modules or `{module, arg}` started under the system
       supervision tree when the app is installed
     * `:oban` - `queues:` and `cron:` the app wants the system's scheduler to
-      run (M17, docs/ROADMAP.md)
+      run (M18, docs/ROADMAP.md)
     * `:persist` - relative paths (no `..`, not absolute) under the app's data dir
     * `:min_os` - `Version` requirement on the running Elixos
     * `:boot` - `:auto` (start at boot) or `:manual`
@@ -92,7 +92,7 @@ defmodule Elixos.Package.Spec do
 
   defp check({:services, _other}), do: [services: :invalid]
 
-  # TODO(M17): validate queues (name => positive concurrency) and cron
+  # TODO(M18): validate queues (name => positive concurrency) and cron
   # ({crontab, module}); until the milestone implements it, no declaration is
   # accepted.
   defp check({:oban, _value}), do: [oban: :invalid]

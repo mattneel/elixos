@@ -38,6 +38,37 @@ need mkfs.ext4 e2fsprogs "persistent disk image"
 need debugfs e2fsprogs "tests read/write the disk image without root"
 need mformat mtools "ESP image (M13)"
 need ssh-keygen openssh-client "SSH test keys (M12)"
+
+echo "image build (M16: melange + apko, ADR-041):"
+for candidate in "$(command -v melange 2>/dev/null || true)" "$ROOT/build/tools/melange"; do
+  [ -n "$candidate" ] && [ -x "$candidate" ] || continue
+  printf '  ok       %-20s %s\n' "melange" "builds our APKs (pinned; scripts/install-build-tools.sh)"
+  melange_found=yes
+  break
+done
+if [ "${melange_found:-}" != yes ]; then
+  printf '  MISSING  %-20s %s  (scripts/install-build-tools.sh)\n' "melange" "builds our APKs"
+  status=1
+fi
+for candidate in "$(command -v apko 2>/dev/null || true)" "$ROOT/build/tools/apko"; do
+  [ -n "$candidate" ] && [ -x "$candidate" ] || continue
+  printf '  ok       %-20s %s\n' "apko" "assembles the root filesystem (pinned)"
+  apko_found=yes
+  break
+done
+if [ "${apko_found:-}" != yes ]; then
+  printf '  MISSING  %-20s %s  (scripts/install-build-tools.sh)\n' "apko" "assembles the root filesystem"
+  status=1
+fi
+need bwrap bubblewrap "melange's default runner sandbox"
+need qemu-system-aarch64 qemu-system-arm "the aarch64 image and its smoke tests"
+need qemu-aarch64-static qemu-user-static "aarch64 packages on an x86_64 host"
+if [ -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
+  echo "  ok       binfmt_misc          qemu-aarch64 is registered"
+else
+  echo "  MISSING  binfmt_misc          register qemu-aarch64 (sudo update-binfmts --enable qemu-aarch64)"
+  status=1
+fi
 if [ ! -e /lib/ld-musl-x86_64.so.1 ]; then
   echo "  MISSING  musl loader           the factory build runs target binaries on this host"
   echo "                                   install: sudo cp build/toolchain/x86_64-linux-musl-cross/x86_64-linux-musl/lib/libc.so /lib/ld-musl-x86_64.so.1"

@@ -1,13 +1,13 @@
-defmodule Elixos.Integration.M20AskTest do
+defmodule Elixos.Integration.M21AskTest do
   @moduledoc """
-  M20: an agent asks the human through the Jido action, the console shows the
+  M21: an agent asks the human through the Jido action, the console shows the
   notice line, and the answer is typed at the prompt - the same queue every
-  front-end shares (the GUI is M21).
+  front-end shares (the GUI is M22).
   """
   use ExUnit.Case, async: false
 
   @moduletag :qemu
-  @moduletag milestone: 20
+  @moduletag milestone: 21
   @moduletag timeout: 900_000
   @moduletag :tmp_dir
 

@@ -364,7 +364,60 @@ docs/notes/jido.md.
 
 ---
 
-## M16: The system database (Postgres)
+## M16: The image build is Alpine packages (melange + apko)
+
+**Goal.** The image stops being hand-built. Our own APKs - the kernel from the
+kernel.org tarball plus our fragments, OTP 29.1.1, Elixir 1.20.4, the shim
+(`build.zig`, still ReleaseSafe), the factory release and the on-box toolchain
+- are built by melange from pinned sources; everything else comes from a
+pinned Alpine release, locked in a lockfile with checksums and served from a
+local mirror; apko assembles the root filesystem. The result is the image the
+QEMU tests already boot, for **x86_64 and aarch64**, reproducible from the
+lockfile, each with an SBOM. ADR-041: the old cross-build and the musl.cc
+download are gone, no dual pipeline, and the make targets keep their names.
+
+**Acceptance.**
+- x86_64: `make ci` green with every QEMU test through M15, on the image the
+  new pipeline builds.
+- aarch64: `make test-qemu-aarch64` (qemu-system-aarch64, `virt`): boot to
+  `iex(1)>`, `Elixos.info` reports the architecture, save a module, reboot,
+  the module is still there, poweroff - the smoke set only; TCG is slow.
+- Reproducible: `make reproducible` builds the rootfs twice from the same
+  lockfile and compares the digests.
+- The SBOM next to each image lists at least the kernel, OTP and Elixir
+  versions; `make image` runs that check.
+- The kernel config is per architecture: `kernel/elixos.config` (common) plus
+  `kernel/config.x86_64` and `kernel/config.arm64`, each applied over its
+  defconfig and guarded by `scripts/check-kernel-config.sh`.
+
+**Notes.** melange's default runner needs bubblewrap, and aarch64 packages
+built on an x86_64 host run under QEMU user emulation through binfmt_misc;
+`make check-tools` reports both, plus `qemu-system-aarch64` and the pinned
+melange/apko. The dev signing key for APKs stays out of git (gitignored); a
+release key is a later decision. Sources and versions are pins like the
+kernel's (ADR-001): `melange/` carries the package definitions, the lockfile
+and the local mirror carry everything else, and nothing is fetched at run time
+on the box. apko runs no package install scripts, so users an image needs
+(M17's postgres) are declared in the image config. Alpine edge is allowed
+package by package, each with a note in DECISIONS.md. Emerge ships no aarch64
+musl NIF (only aarch64 GNU), so M22 needs a source build for aarch64. Out of
+scope here: OCI images and the shim's container mode - the next milestone,
+which the human writes up separately.
+
+**Image size.** Before (hand-built, x86_64): initramfs 44M, rootfs 108M
+(factory 82M, libs 27M), kernel 14.3MiB. After: recorded here when the
+pipeline builds.
+
+**Done when.** `make ci` is green with `MILESTONE=16` on the new x86_64
+image, `make test-qemu-aarch64` passes its smoke set, `make reproducible`
+prints one digest twice, the SBOM check passes, and `make audit` is still 0.
+
+- [ ] Demo recorded: `demos/m16-aarch64.mp4` (`make demo M=16`, driving
+  qemu-system-aarch64).
+
+---
+
+## M17: The system database (Postgres)
 
 **Goal.** A real PostgreSQL runs on Elixos as a system service: reachable from
 the prompt, its data on the persistent disk, and a power-off is a *clean*
@@ -372,7 +425,7 @@ shutdown, not crash recovery. The heavy services stop living in the factory:
 they move to a read-only system image on `/priv`, mounted and started only in
 normal mode.
 
-**Acceptance.** `test/integration/m16_postgres_test.exs`: Postgres answers a
+**Acceptance.** `test/integration/m17_postgres_test.exs`: Postgres answers a
 query from the prompt; it runs as its own uid, never root; `/etc/passwd` has
 that uid and the data directory is owned by it, mode 0700; pgvector and
 TimescaleDB's Apache-only build load and answer; the binaries come from the
@@ -418,11 +471,11 @@ hook, and the disk layout PROTOCOL.md §7 gains - the cluster at
 the three ADRs above are written (system image, uid helper, shutdown hook),
 and PROTOCOL.md §7 carries the layout the ADR decides.
 
-- [ ] Demo recorded: `demos/m16-postgres.mp4` (`make demo M=16`).
+- [ ] Demo recorded: `demos/m17-postgres.mp4` (`make demo M=16`).
 
 ---
 
-## M17: Jobs that survive reboots (Oban)
+## M18: Jobs that survive reboots (Oban)
 
 **Goal.** Oban is Elixos's scheduler: a job enqueued at the prompt runs, a
 failed one is retried, and a machine that powers off mid-queue still has the
@@ -432,12 +485,12 @@ services.
 **Acceptance.** `test/elixos/oban_test.exs` (the `elixos:` key gains
 `oban: [queues: ..., cron: ...]`, validated like `services:`, and a
 declaration becomes Oban options) and
-`test/integration/m17_oban_test.exs`: a worker defined at the prompt writes a
+`test/integration/m18_oban_test.exs`: a worker defined at the prompt writes a
 line to `/priv`, a job scheduled for later survives a power cycle and runs on
 the next boot, and `elixos.safe` runs no Oban.
 
 **Notes.** `oban`, `ecto_sql` and `postgrex` become OS dependencies (ADR; pure
-BEAM, no NIFs), with a Repo against M16's Postgres; Oban's migrations run
+BEAM, no NIFs), with a Repo against M17's Postgres; Oban's migrations run
 before it starts, once, before any queue. `Elixos.Oban` owns the child spec:
 queues with their concurrency and `Oban.Plugins.Cron` entries collected from
 every installed app's `elixos:` declaration (M11's spec machinery, extended),
@@ -449,11 +502,11 @@ image journals it and M15's agents already wrote the pattern down.
 **Done when.** `make ci` is green with `MILESTONE=17`, both test files pass,
 and the ADR for the dependencies is written.
 
-- [ ] Demo recorded: `demos/m17-oban.mp4` (`make demo M=17`).
+- [ ] Demo recorded: `demos/m18-oban.mp4` (`make demo M=17`).
 
 ---
 
-## M18: A browser to call from the prompt
+## M19: A browser to call from the prompt
 
 **Goal.** A headless browser, shipped with the system, callable from IEx and
 from agents: navigate, extract, evaluate JavaScript, screenshot - with no
@@ -461,7 +514,7 @@ download at run time.
 
 **Acceptance.** `test/elixos/browser_test.exs` (the pinned manifest decides
 the argv: a musl-clean adapter is exec'd directly, a glibc one through its
-private loader) and `test/integration/m18_browser_test.exs`: the adapter comes
+private loader) and `test/integration/m19_browser_test.exs`: the adapter comes
 up from the read-only `/system`, navigates to a stub HTTP server on the
 loopback, returns the page's text, evaluates JavaScript, produces a PNG, and
 `elixos.safe` starts none of it.
@@ -471,7 +524,7 @@ time. If it needs glibc, carry a private glibc in the system image and start
 Lightpanda through glibc's own loader
 (`ld-linux-x86-64.so.2 --library-path <dir> lightpanda serve`), exec'd
 directly as a port: a few MB, no rebuild. Building V8 for musl is the last
-resort, and **abandoning M18 is an allowed outcome**; the ADR records which
+resort, and **abandoning M19 is an allowed outcome**; the ADR records which
 arm was taken and why. `agent-browser` is not a portable fallback - it drives
 Chrome for Testing (glibc) or another browser over CDP, so the libc question
 only moves. jido_browser 2.3's adapter is optional and limited (navigation,
@@ -484,14 +537,14 @@ dependency (ADR); `Elixos.Browser` starts the adapter only in normal mode,
 stops it on poweroff, and never lets it block the prompt.
 
 **Done when.** `make ci` is green with `MILESTONE=18`, both test files pass,
-and the ADR records the loader decision - or M18 is explicitly abandoned in
+and the ADR records the loader decision - or M19 is explicitly abandoned in
 the roadmap with the reason.
 
-- [ ] Demo recorded: `demos/m18-browser.mp4` (`make demo M=18`).
+- [ ] Demo recorded: `demos/m19-browser.mp4` (`make demo M=18`).
 
 ---
 
-## M19: Installed packages are Mix dependencies
+## M20: Installed packages are Mix dependencies
 
 **Goal.** A project built on the box sees the system's installed packages as
 its dependencies: after `Elixos.Package.install(:hello_app)` - whose closure
@@ -499,7 +552,7 @@ installs `hello_dep` first (M15) - the build resolves `hello_dep` from
 `/priv/apps` instead of reaching for a repository, so M10's one version per
 package holds for anything built on the box.
 
-**Acceptance.** `test/integration/m19_system_deps_test.exs`: `hello_app`
+**Acceptance.** `test/integration/m20_system_deps_test.exs`: `hello_app`
 installs by name on a box with no network, its dependency's code is the
 *installed* copy (the loaded `HelloDep` lives under `/priv/apps/hello_dep/`),
 and `HelloApp.greet()` answers with the value that dependency provides.
@@ -518,20 +571,20 @@ when this starts, and the test is the contract.
 **Done when.** `make ci` is green with `MILESTONE=19`, the QEMU test passes,
 and the ADR records the mechanism.
 
-- [ ] Demo recorded: `demos/m19-system-deps.mp4` (`make demo M=19`).
+- [ ] Demo recorded: `demos/m20-system-deps.mp4` (`make demo M=19`).
 
 ---
 
-## M20: Ask the human
+## M21: Ask the human
 
 **Goal.** Questions are data in the OS; front-ends are only views. `Elixos.Ask`
 keeps a queue of open questions, any front-end can answer one, and the asking
 process blocks until it is answered - so an agent can ask a person something
-and act on the answer, from IEx, from an ssh session, or (M21) from the GUI.
+and act on the answer, from IEx, from an ssh session, or (M22) from the GUI.
 
 **Acceptance.** `test/elixos/ask_test.exs` (the queue on the host: ordering,
 several askers at once, a timeout, a dismissal, and answers checked against
-the question) and `test/integration/m20_ask_test.exs`: an agent defined at the
+the question) and `test/integration/m21_ask_test.exs`: an agent defined at the
 prompt asks through the Jido action, the console shows the notice, the test
 answers at the prompt, and the action returns the answer.
 
@@ -554,20 +607,20 @@ guesswork, and rescue runs none of it.
 **Done when.** `make ci` is green with `MILESTONE=20`, both test files pass,
 and the notice line and the question shape are in PROTOCOL.md.
 
-- [ ] Demo recorded: `demos/m20-ask.mp4` (`make demo M=20`).
+- [ ] Demo recorded: `demos/m21-ask.mp4` (`make demo M=20`).
 
 ---
 
-## M21: GUI (Emerge on the framebuffer)
+## M22: GUI (Emerge on the framebuffer)
 
 **Goal.** A dialog on the cyberdeck's own screen: Emerge renders the Ask
 queue's questions to the panel, the person answers with the keyboard, and IEx
 stays alive behind it - a GUI that is never in the boot-critical path, whose
-first app is the queue M20 already has.
+first app is the queue M21 already has.
 
 **Acceptance.** `test/elixos/emerge_render_test.exs` (each Ask dialog renders
 with no display and its pixels are checked) and
-`test/integration/m21_gui_test.exs`: a pending question appears on the
+`test/integration/m22_gui_test.exs`: a pending question appears on the
 framebuffer, an injected key answers it, the asking agent gets the answer, and
 the console works again after the GUI exits (rescue stays text-only).
 
@@ -581,7 +634,7 @@ the console works again after the GUI exits (rescue stays text-only).
   embedded FreeType, no Wayland/GPU libraries). It is downloaded, pinned and
   checksum-verified when the image is built, from the release that publishes
   the checksum manifest (ADR-009: the box itself never downloads), and packed
-  into the read-only system image (M16).
+  into the read-only system image (M17).
 - *Rendering off-screen.* `render_tree_to_pixels_nif/2` and
   `render_tree_to_png_nif/2` render a tree synchronously with no window: the
   host test uses the pixel buffer.
@@ -613,7 +666,7 @@ the console works again after the GUI exits (rescue stays text-only).
 **Done when.** `make ci` is green with `MILESTONE=21`, both test files pass,
 and the ADRs (the renderer as a service; the input path) are written.
 
-- [ ] Demo recorded: `demos/m21-gui.mp4` from QEMU screendump frames, next to the console recording (`make demo M=21`).
+- [ ] Demo recorded: `demos/m22-gui.mp4` from QEMU screendump frames, next to the console recording (`make demo M=21`).
 
 ---
 

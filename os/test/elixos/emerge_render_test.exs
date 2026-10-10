@@ -1,12 +1,12 @@
 defmodule Elixos.EmergeRenderTest do
   @moduledoc """
-  The Ask dialogs render with no display (M21): the renderer is headless
+  The Ask dialogs render with no display (M22): the renderer is headless
   raster, and `Elixos.GUI.render_dialog/1` hands the pixels back, so every
   kind of question is tested on the host, not only on the machine's screen.
   """
   use ExUnit.Case, async: true
 
-  @moduletag milestone: 21
+  @moduletag milestone: 22
 
   alias Elixos.Ask.Question
   alias Elixos.GUI

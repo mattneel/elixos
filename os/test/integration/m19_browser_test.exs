@@ -1,6 +1,6 @@
-defmodule Elixos.Integration.M18BrowserTest do
+defmodule Elixos.Integration.M19BrowserTest do
   @moduledoc """
-  M18: a headless browser, shipped with the system. Its argv comes from the
+  M19: a headless browser, shipped with the system. Its argv comes from the
   read-only `/system` mount; it comes up, navigates to a stub HTTP server on
   the loopback, returns the page's text, evaluates JavaScript, produces a
   PNG, and rescue mode starts none of it. Nothing is downloaded at run time.
@@ -8,7 +8,7 @@ defmodule Elixos.Integration.M18BrowserTest do
   use ExUnit.Case, async: false
 
   @moduletag :qemu
-  @moduletag milestone: 18
+  @moduletag milestone: 19
   @moduletag timeout: 900_000
   @moduletag :tmp_dir
 

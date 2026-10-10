@@ -1,13 +1,13 @@
 defmodule Elixos.BrowserTest do
   @moduledoc """
-  How the adapter starts (M18): the pinned manifest decides the argv - a
+  How the adapter starts (M19): the pinned manifest decides the argv - a
   musl-clean binary is exec'd directly, a glibc one through its private
   loader, both directly as ports (ADR-012: no shell). The running adapter is
-  the M18 QEMU acceptance's business.
+  the M19 QEMU acceptance's business.
   """
   use ExUnit.Case, async: true
 
-  @moduletag milestone: 18
+  @moduletag milestone: 19
 
   alias Elixos.Browser
 

@@ -17,12 +17,19 @@ milestone =
       String.to_integer(value)
   end
 
-future = for m <- (milestone + 1)..24//1, do: {:milestone, m}
+future = for m <- (milestone + 1)..26//1, do: {:milestone, m}
 
 # QEMU tests boot real images and are slow; `make test-qemu` sets ELIXOS_QEMU=1
 # and runs only test/integration. Never use `--include qemu`: an include filter
 # would also re-include future milestones.
-exclude = if System.get_env("ELIXOS_QEMU") == "1", do: future, else: [:qemu | future]
+#
+# The aarch64 smoke set runs under TCG emulation (slow) and needs the aarch64
+# image built, so `make test-qemu-aarch64` sets ELIXOS_QEMU_AARCH64=1 for it -
+# and a normal x86_64 run never picks it up.
+arch_excludes = if System.get_env("ELIXOS_QEMU_AARCH64") == "1", do: [], else: [:aarch64]
+
+exclude =
+  if System.get_env("ELIXOS_QEMU") == "1", do: future ++ arch_excludes, else: [:qemu | future]
 
 ExUnit.configure(exclude: exclude)
 ExUnit.start()

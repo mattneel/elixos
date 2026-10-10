@@ -1,13 +1,13 @@
-defmodule Elixos.Integration.M21GuiTest do
+defmodule Elixos.Integration.M22GuiTest do
   @moduledoc """
-  M21: the dialog on the machine's own screen. A pending question appears on
+  M22: the dialog on the machine's own screen. A pending question appears on
   the framebuffer, an injected key answers it, the asker gets the answer, and
   the console is IEx's again once the GUI exits.
   """
   use ExUnit.Case, async: false
 
   @moduletag :qemu
-  @moduletag milestone: 21
+  @moduletag milestone: 22
   @moduletag timeout: 900_000
   @moduletag :tmp_dir
 

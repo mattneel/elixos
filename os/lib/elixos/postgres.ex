@@ -1,6 +1,6 @@
 defmodule Elixos.Postgres do
   @moduledoc """
-  The system PostgreSQL (M16, docs/ROADMAP.md).
+  The system PostgreSQL (M17, docs/ROADMAP.md).
 
   Postgres ships with the machine, in the read-only system image on `/system`,
   and runs as the `postgres` uid - never as root - started directly as a port.
@@ -15,7 +15,7 @@ defmodule Elixos.Postgres do
   one `/etc/passwd` names - or `{:error, :not_running}`.
   """
   @spec status() :: {:ok, pid()} | {:error, :not_running}
-  def status, do: Elixos.NotImplemented.raise!(16, "Elixos.Postgres.status/0")
+  def status, do: Elixos.NotImplemented.raise!(17, "Elixos.Postgres.status/0")
 
   @doc """
   Runs `sql` (one or more statements) through `psql` and returns its output.
@@ -24,5 +24,5 @@ defmodule Elixos.Postgres do
   person would type at a terminal is what a session types here.
   """
   @spec query(String.t()) :: {:ok, String.t()} | {:error, term()}
-  def query(_sql), do: Elixos.NotImplemented.raise!(16, "Elixos.Postgres.query/1")
+  def query(_sql), do: Elixos.NotImplemented.raise!(17, "Elixos.Postgres.query/1")
 end
