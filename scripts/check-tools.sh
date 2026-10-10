@@ -38,6 +38,11 @@ need mkfs.ext4 e2fsprogs "persistent disk image"
 need debugfs e2fsprogs "tests read/write the disk image without root"
 need mformat mtools "ESP image (M13)"
 need ssh-keygen openssh-client "SSH test keys (M12)"
+if [ ! -e /lib/ld-musl-x86_64.so.1 ]; then
+  echo "  MISSING  musl loader           the factory build runs target binaries on this host"
+  echo "                                   install: sudo cp build/toolchain/x86_64-linux-musl-cross/x86_64-linux-musl/lib/libc.so /lib/ld-musl-x86_64.so.1"
+  status=1
+fi
 
 echo "versions:"
 if command -v zig >/dev/null 2>&1; then

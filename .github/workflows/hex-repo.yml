@@ -1,0 +1,68 @@
+name: Hex repo
+
+# Builds the official Elixos Hex repository (ADR-019) and publishes it to
+# GitHub Pages, so the URL the factory preconfigures always serves a signed
+# registry. Packages are the Mix projects under hex/packages/ (each is built
+# with `mix hex.build`) plus any tarballs dropped into hex/prebuilt/.
+#
+# One-time setup on the repository:
+#   * Settings -> Pages -> Source: GitHub Actions
+#   * Settings -> Secrets and variables -> Actions -> New secret:
+#       ELIXOS_HEX_PRIVATE_KEY = the contents of the private key whose public
+#       half is hex/keys/elixos.pub (see hex/README.md; keep a backup, the
+#       factory images ship the public key and cannot verify a new one).
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "hex/**"
+      - ".github/workflows/hex-repo.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: hex-repo
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29.1.1"
+          elixir-version: "1.20.4"
+
+      - name: Install Hex
+        run: mix local.hex --force
+
+      - name: Build package tarballs
+        run: ./hex/build-packages.sh
+
+      - name: Sign the registry
+        env:
+          ELIXOS_HEX_PRIVATE_KEY: ${{ secrets.ELIXOS_HEX_PRIVATE_KEY }}
+        run: ./hex/build-repo.sh
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/hex-repo/public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

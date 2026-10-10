@@ -53,6 +53,25 @@ export CC=x86_64-linux-musl-gcc CXX=x86_64-linux-musl-g++ AR=x86_64-linux-musl-a
 # would pick the musl ones up and fail.
 TARGET_LIBS="$SYS/usr/lib:$CROSS/x86_64-linux-musl/lib"
 
+# --- 0. the host's musl runtime ---------------------------------------------
+# The toolchain's programs (and OTP's own build steps) run *target* binaries on
+# this host, and their ELF interpreter is the absolute /lib/ld-musl-x86_64.so.1:
+# a glibc host does not have it, and LD_LIBRARY_PATH cannot redirect it.
+if [ ! -e /lib/ld-musl-x86_64.so.1 ]; then
+  cat >&2 <<EOF
+build-factory: no musl loader at /lib/ld-musl-x86_64.so.1.
+
+  The toolchain runs target binaries on this host (configure probes, and the
+  ERTS itself while OTP builds). Their interpreter path is absolute, so install
+  the loader once, from the toolchain that ships it:
+
+      sudo cp "$CROSS/x86_64-linux-musl/lib/libc.so" /lib/ld-musl-x86_64.so.1
+
+  \`make check-tools\` reports this too. See docs/notes/factory-build.md.
+EOF
+  exit 1
+fi
+
 # --- 1. the musl cross toolchain ---------------------------------------------
 step "musl cross toolchain"
 if [ ! -x "$CROSS/bin/x86_64-linux-musl-gcc" ]; then
@@ -73,7 +92,10 @@ if [ ! -f "$SYS/usr/lib/libcrypto.so.3" ]; then
     make -j"$JOBS"
     make install_sw DESTDIR="$SYS"
   )
-  # The shim and the release expect one prefix; OpenSSL's libdir is /lib.
+  # The shim and the release expect one prefix; OpenSSL's libdir is /lib. On a
+  # clean build usr/lib does not exist yet (ncurses creates it later), so the
+  # destination comes first.
+  mkdir -p "$SYS/usr/lib"
   ( cd "$SYS" && for l in libcrypto.so.3 libcrypto.so libcrypto.a libssl.so.3 libssl.so libssl.a; do
       ln -sf "../../lib/$l" "usr/lib/$l"; done )
 fi
@@ -128,6 +150,10 @@ ERTS_VERSION="$(ls "$OTP_ROOT" | grep '^erts-' | head -n1)"
 RELEASE_VSN="$(sed -n 's/^  @version "\(.*\)"$/\1/p' "$ROOT/os/mix.exs")"
 (
   cd "$ROOT/os"
+  # Mix keeps an existing erts-<version> directory when it copies the ERTS
+  # (same version, different libc: a host release would survive into a factory
+  # one), so the assembly directory starts empty.
+  rm -rf "$BUILD/rel"
   # Mix.Release takes the *erts* directory, and finds the OTP apps next to it.
   MIX_ENV=prod ELIXOS_ERTS="$OTP_ROOT/$ERTS_VERSION" mix release --overwrite --path "$BUILD/rel"
 )
@@ -151,6 +177,24 @@ ln -sfn "$RELEASE_VSN" "$ROOTFS/factory/releases/current"
 
 # No shells, no release scripts: the shim execs erlexec itself (ADR-012).
 rm -rf "$ROOTFS/factory/bin"
+
+# The official Hex repository: the factory ships its public key and the
+# preconfigured entry, so a box trusts it without anyone adding a repository
+# first (ADR-019). `/data/hex/` is the box's own copy and wins once it exists.
+mkdir -p "$ROOTFS/factory/hex/keys"
+cp "$ROOT/hex/keys/elixos.pub" "$ROOTFS/factory/hex/keys/elixos.pub"
+{
+  echo "# Trusted Hex repositories (PROTOCOL.md §8). This is the whole trust"
+  echo "# decision: a repository is trusted exactly when it appears here."
+  echo "["
+  echo "  elixos: ["
+  echo "    url: \"https://mattneel.github.io/elixos\","
+  echo "    key: \"\"\""
+  cat "$ROOT/hex/keys/elixos.pub"
+  echo "\"\"\""
+  echo "  ]"
+  echo "]"
+} > "$ROOTFS/factory/hex/repos.exs"
 
 echo
 echo "factory: $ROOTFS"

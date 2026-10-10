@@ -42,6 +42,16 @@ build-script change, not an image change.
 (musl's loader *is* its libc). It exports the canonical symbol set, which the
 ERTS, libstdc++ and OpenSSL all need at run time.
 
+## Prerequisites on the build host
+
+* A **musl loader at `/lib/ld-musl-x86_64.so.1`**, installed once:
+  `sudo cp build/toolchain/x86_64-linux-musl-cross/x86_64-linux-musl/lib/libc.so
+  /lib/ld-musl-x86_64.so.1`. The toolchain runs *target* binaries on the host
+  (configure probes, and the ERTS while OTP builds), and their interpreter path
+  is absolute; `LD_LIBRARY_PATH` cannot redirect it. `make check-tools` and
+  `scripts/build-factory.sh` both report it when it is missing.
+* zig cc, make, and the usual kernel-build tools; `make check-tools` lists them.
+
 ## Host pitfalls found the hard way
 
 * **Do not export `LD_LIBRARY_PATH` globally when building the factory.**
