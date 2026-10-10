@@ -100,8 +100,10 @@ The roadmap already exists as tests, gated by the `MILESTONE` file
 | `make qemu ARGS="..."` | boot interactively; Ctrl-A X quits |
 | `cd os && mix test path/to/test.exs:LINE` | one test (set `ELIXOS_MILESTONE` to override) |
 
-No KVM (common on WSL2 without nested virtualization) means TCG: slower but
-fine; raise `ELIXOS_QEMU_SLOWDOWN` if boots time out.
+QEMU picks its accelerator from the host: the helpers pass `-accel kvm -accel
+tcg`, so with `/dev/kvm` (check `make check-tools`) boots take seconds, and
+without it QEMU falls back to TCG - slower but fine. Raise
+`ELIXOS_QEMU_SLOWDOWN` if boots time out.
 
 ## Map
 
