@@ -36,7 +36,7 @@ defmodule Elixos.Integration.M14PackagesTest do
 
     # Trusting the test repository is the consent step: its key, then the name.
     add =
-      ~s|Elixos.Package.add_repo(:fixture, "/hex-repo", key: File.read!("/hex-repo/public_key"))|
+      ~s|Elixos.Package.add_repo(:fixture, "/priv/hex-repo", key: File.read!("/priv/hex-repo/public_key"))|
 
     {out, vm} = QEMU.iex(vm, add)
     assert out =~ ":ok"
@@ -77,7 +77,7 @@ defmodule Elixos.Integration.M14PackagesTest do
 
     vm = QEMU.boot_to_iex(ctx, disk: disk)
 
-    for {name, dir} <- [{":fixture", "/hex-repo"}, {":mirror", "/hex-mirror"}] do
+    for {name, dir} <- [{":fixture", "/priv/hex-repo"}, {":mirror", "/priv/hex-mirror"}] do
       {out, vm} =
         QEMU.iex(
           vm,

@@ -495,6 +495,35 @@ REPL.
 script would require rebuilding the boot script on every install and would not
 help a prompt-defined module restored from an image.
 
+## ADR-029: The M14 packages test reads the disk at the mount point
+
+**Status:** accepted (M14)
+
+**Context.** `test/integration/m14_packages_test.exs` seeds the fixture
+repository with `Elixos.Test.Disk.put_tree!(disk, tree, "/hex-repo")` and then
+reads `/hex-repo/public_key` *inside the guest*. But `put_tree!` takes a path
+on the *disk* - its own moduledoc says so: `/priv/boot.state` in the guest is
+`/boot.state` there - and the disk is mounted at `/priv` (ADR-021), so the
+file the test wrote is `/priv/hex-repo/public_key` in the guest. The test was
+never run against an implementation (that is what M14 is for), and the
+`File.read!("/hex-repo/public_key")` failed with `no such file or directory`
+on the first real run: a transcription slip - the disk-path spelling leaked
+into the guest commands - not a statement about where the disk mounts.
+
+**Decision.** Fix the guest paths: `/priv/hex-repo` and `/priv/hex-mirror`.
+The `put_tree!` calls keep `/hex-repo` and `/hex-mirror`, because those are
+disk paths and the mapping to `/priv/...` in the guest is the point. Every
+assertion keeps its meaning.
+
+**Consequences.** The test exercises what it was written to exercise. The
+mount point stays what ADR-021 and PROTOCOL.md §7 say it is; a future test
+that writes disk paths into guest command lines will fail the same way, which
+is how this one was found.
+
+**Alternatives.** Changing the mount point would be a much larger decision
+(ADR-021) and would not fix the inconsistency; the M11, M12 and M13 tests all
+use `/priv/...` in their guest commands.
+
 ## Open questions
 
 ## ADR-024: Ctrl+C rides with a newline on the console
