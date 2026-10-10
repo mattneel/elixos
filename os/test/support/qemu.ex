@@ -286,20 +286,41 @@ defmodule Elixos.Test.QEMU do
   end
 
   @doc """
-  Evaluates `expr` at an IEx prompt and returns everything printed until the
-  *next* prompt (the echoed input, then the result).
+  Evaluates `expr` at an IEx prompt and returns everything printed from the
+  echo of the line to the *next* prompt (the echoed input, then the result).
 
-  The console must be sitting at a prompt that has already been consumed. IEx
-  redraws the current prompt with the input after Enter (verified on
-  OTP 29 / Elixir 1.20), so this waits for a prompt numbered higher than the
-  last one seen instead of for any prompt.
+  The console must be sitting at a prompt that has already been consumed.
+  IEx redraws the current prompt with the input after Enter (verified on
+  OTP 29 / Elixir 1.20), and that redraw can be numbered like the next prompt
+  before the result is printed; the echo of the line just sent is what marks
+  this expression's output, so this waits for that first.
   """
   @spec iex(t(), String.t(), non_neg_integer()) :: {String.t(), t()}
   def iex(vm, expr, timeout \\ 30_000) do
     current = vm.iex_prompt
     vm = send_line(vm, expr)
     deadline = System.monotonic_time(:millisecond) + scale(timeout)
+
+    # Anchor on the echo of the line just sent, then wait for the next prompt.
+    # IEx redraws the prompt while it evaluates, and that redraw can carry a
+    # *higher* prompt number before the result is printed (verified on OTP 29
+    # / Elixir 1.20 under the QEMU console), so waiting for a number alone can
+    # return the *previous* expression's output, one call late - the m14 flake.
+    # The echo - the bytes just sent, whitespace made flexible because a long
+    # line wraps - belongs to this expression alone; anything before it is
+    # stale and is dropped.
+    {_, _, vm} = do_expect(vm, echo_pattern(expr), deadline)
     next_prompt(vm, current, "", deadline)
+  end
+
+  # The console echoes what was typed, so the line comes back as `send_line/2`
+  # wrote it. A line wider than the terminal wraps, adding its own newlines
+  # anywhere it had a space, hence `\s*` between the words.
+  defp echo_pattern(expr) do
+    expr
+    |> String.split()
+    |> Enum.map_join("\\s*", &Regex.escape/1)
+    |> then(&Regex.compile!(&1))
   end
 
   defp next_prompt(vm, current, acc, deadline) do
