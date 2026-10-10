@@ -1,0 +1,56 @@
+# The Zig PID 1 shim (M16, ADR-041): built by build.zig, packaged as /init.
+#
+# The shim is static and libc-free (ADR-003), so this package needs a compiler
+# and nothing else - no runtime dependencies at all. The Zig version comes from
+# the repo's .zig-version (single source of truth); the tarballs are pinned by
+# sha256 here, taken from ziglang.org's build index on 2026-10-10. `-Dtarget`
+# is passed explicitly so the instruction set can never be inherited from
+# whatever the environment happens to be.
+package:
+  name: elixos-shim
+  version: 0.0.0
+  epoch: 0
+  description: "Elixos PID 1 shim: mounts, plans the factory, runs the BEAM"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime: []
+
+vars:
+  zig-sha256-x86_64: cdecd965d8b8795afbb9f1a780904cba190d257ee7cd1d33347c4026dab5f64c
+  zig-sha256-aarch64: ace7690851068ab61e0c377afe7426565b318b6b22b70f145b30bd30910ad405
+
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    packages:
+      - busybox
+      - curl
+      - tar
+      - xz
+
+pipeline:
+  - runs: |
+      zig_version="$(head -n1 /home/build/.zig-version)"
+
+      case "${{build.arch}}" in
+        x86_64) zig_arch=x86_64; zig_sha="${{vars.zig-sha256-x86_64}}" ;;
+        aarch64) zig_arch=aarch64; zig_sha="${{vars.zig-sha256-aarch64}}" ;;
+        *) echo "elixos-shim: unsupported arch ${{build.arch}}" >&2; exit 1 ;;
+      esac
+
+      curl -fsSL -o /tmp/zig.tar.xz \
+        "https://ziglang.org/builds/zig-${zig_arch}-linux-${zig_version}.tar.xz"
+      echo "${zig_sha}  /tmp/zig.tar.xz" | sha256sum -c -
+      mkdir -p /opt/zig
+      tar -xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1
+      export PATH="/opt/zig:$PATH"
+
+      # The staged source directory is a copy (melange binds it writable at
+      # /home/build), so the build happens right here; the staging is what
+      # keeps it to the files this package needs.
+      cd /home/build
+      zig build -Drelease -Dtest-hooks=true -Dtarget="${{build.arch}}-linux-none"
+
+      install -Dm0755 zig-out/bin/init "${{targets.destdir}}/init"

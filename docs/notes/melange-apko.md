@@ -44,6 +44,14 @@ apko v1.4.10, both by sha256).
 
 ## Packing the initramfs
 
+- `paths` is a top-level key in apko's config, **not** under `contents`; it is
+  how a directory that no package ships exists at all. A missing `/priv` sent
+  the first apko boot straight to rescue (`Elixos.info` said `mode: :rescue`):
+  the shim cannot mount the persistent disk onto a path that is not there.
+- Do not mix pipelines inside one root filesystem. Overlaying the old
+  hand-built `/lib/ld-musl-x86_64.so.1` on Alpine's makes BusyBox segfault
+  (exit 139) while the old factory still runs. During the transition, keep
+  Alpine's loader and let the old ERTS use it.
 - `gen_init_cpio` list syntax, per entry kind:
   - `dir <name> <mode> <uid> <gid>`
   - `file <name> <location> <mode> <uid> <gid>` - location before the mode,

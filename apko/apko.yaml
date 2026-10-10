@@ -15,6 +15,26 @@ contents:
     - alpine-baselayout
     - busybox
     - alpine-release
+    # Our own APKs (melange's output, added as a build repository by
+    # scripts/build-image.sh). elixos-shim installs /init.
+    - elixos-shim
+
+# apko runs no install scripts: anything a package's script would have created
+# has to be declared. /priv is the persistent disk's mount point - the shim
+# mounts it before the BEAM starts, and a missing mount point sends the boot to
+# rescue; /dev/shm is dynamic shared memory's (M17's Postgres mounts a tmpfs
+# over it, so the directory has to exist).
+paths:
+  - path: /priv
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /dev/shm
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o1777
 
 archs:
   - x86_64
