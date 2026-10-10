@@ -536,6 +536,14 @@ fn execErts(
         "ERL_CRASH_DUMP_BYTES=" ++ crash_dump_bytes,
     } else .{ null, null };
 
+    // The toolchain package (ADR-009, M11) lives on the disk and acts as
+    // `cc`/`c++` through symlinks to zig, so a build on the box finds it on
+    // PATH. Without the disk there is nothing but the initramfs.
+    const path_env = if (disk_mounted)
+        "PATH=/priv/toolchain:/bin:/usr/bin"
+    else
+        "PATH=/bin:/usr/bin";
+
     const envp = [_]?[*:0]const u8{
         "ROOTDIR=" ++ factory_path,
         "BINDIR=" ++ bindir_path,
@@ -544,6 +552,7 @@ fn execErts(
         "HOME=/priv/home",
         "TERM=linux",
         "LANG=C.UTF-8",
+        path_env,
         zeroed(&generation, "ELIXOS_GENERATION={d}", .{plan.launch.generation}),
         zeroed(&mode, "ELIXOS_MODE={t}", .{plan.launch.mode}),
         zeroed(&attempt, "ELIXOS_ATTEMPT={d}", .{plan.next_state.attempts}),

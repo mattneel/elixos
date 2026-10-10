@@ -200,6 +200,10 @@ cp -a "$(dirname "$ELIXIR_LIB")/mix" "$BUILD/rel/lib/"
 # headers the OTP build installed travel with the release.
 mkdir -p "$BUILD/rel/erts-${ERTS_VERSION#erts-}/usr/include"
 cp -a "$OTP_ROOT/usr/include/." "$BUILD/rel/erts-${ERTS_VERSION#erts-}/usr/include/"
+# ...and at the path ERTS itself reports: a NIF compiler asks :code.root_dir()
+# for erts-<vsn>/include, not the usr/ layout of the build tree, so both must
+# exist on the box.
+cp -a "$OTP_ROOT/usr/include" "$BUILD/rel/erts-${ERTS_VERSION#erts-}/include"
 
 rm -rf "$ROOTFS"
 mkdir -p "$ROOTFS/factory" "$ROOTFS/lib"

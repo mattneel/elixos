@@ -243,7 +243,7 @@ doc has a verified approach. Remember Elixir's `~> 0.1` means `< 1.0.0`.
   and records the modules in the image.
 - Ship a CA bundle so Hex works; the acceptance test itself needs no network.
 
-- [ ] Demo recorded: `demos/m11-self-hosting.mp4` (`make demo M=11`).
+- [x] Demo recorded: `demos/m11-self-hosting.mp4` (`make demo M=11`).
 
 ---
 

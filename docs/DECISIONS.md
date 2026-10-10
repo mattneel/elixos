@@ -439,6 +439,62 @@ BEAM exists, and a broken one is what the shim's log is for.
 
 ---
 
+## ADR-027: The toolchain package is on PATH
+
+**Status:** accepted (M11)
+
+**Context.** A build on the box runs `cc` (the NIF fixture's compiler task
+looks it up with `System.find_executable/1`), and the toolchain package
+(ADR-009) is exactly that: the disk's `/priv/toolchain/`, where `cc` and `c++`
+are symlinks to `zig`. Without it on `PATH`, nothing on the box can find a
+compiler - and `Elixos.Zig` deliberately never touches the VM's environment
+(ADR-016), so the PATH has to come from the launch contract.
+
+**Decision.** The shim's launch environment (PROTOCOL.md §3) includes `PATH`:
+`/priv/toolchain:/bin:/usr/bin` when the persistent disk is mounted, and
+`/bin:/usr/bin` without it, since there is nothing to build with then. The
+variable is additive: `Elixos.Boot.Env.parse/1` ignores what it does not know,
+so the boot is unaffected.
+
+**Consequences.** A session's `System.find_executable("cc")` finds the
+toolchain; a build that must not see it can pass its own `PATH`. On the host
+there is no `/priv`, and a host build keeps using the host's PATH.
+
+**Alternatives.** Appending the toolchain directory in `Elixos.Zig.init/1`
+with `System.put_env/2` would change the VM's environment, which ADR-016
+forbids; a shell wrapper is banned by ADR-012.
+
+## ADR-028: The emulator runs `-mode interactive`
+
+**Status:** accepted (M11)
+
+**Context.** ERTS defaults to `-mode embedded` when it is given `-boot`, and
+the embedded code server loads only what the boot script names: every call into
+a module the system did not start with fails with `undef`, and
+`Code.append_path/1` has no effect. Elixos loads code at run time in two
+places - the live image restores modules that were defined at a prompt
+(M6), and the box builds and installs Mix projects, whose compiled BEAM files
+must be loadable the moment they are built (M11). With `-mode interactive`,
+`Elixos.Package.install/1` reached the child build and then returned
+`{:error, {:load_failed, :ebin, ...}}` before the fix; after it, the install,
+the service start and `SampleApp.where/0` all work, which is what
+`test/integration/m11_self_hosting_test.exs` (the acceptance test) exercises.
+Interactive mode is what the release's own `start` script uses on a normal
+machine; embedding is an optimisation for appliances that never load code.
+
+**Decision.** The shim launches ERTS with `-mode interactive`
+(PROTOCOL.md §3). The Elixir side parses no new variable: the flag is consumed
+by ERTS itself, and `Elixos.Boot.Env` is unaffected.
+
+**Consequences.** Code loaded at run time is loadable; a session may install
+new code without a restart. Startup is marginally less eager than embedded
+mode's, which changes nothing on a system that restores an image and opens a
+REPL.
+
+**Alternatives.** Preloading every installed app's modules from the boot
+script would require rebuilding the boot script on every install and would not
+help a prompt-defined module restored from an image.
+
 ## Open questions
 
 ## ADR-024: Ctrl+C rides with a newline on the console

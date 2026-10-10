@@ -38,7 +38,9 @@ defmodule Elixos.Package do
 
     with {:ok, spec} <- spec(root),
          {:ok, app, version, ebin} <- build(root),
-         :ok <- load(app, ebin),
+         :ok <- apply_config(root),
+         :ok <- install_tree(app, ebin, root),
+         :ok <- load(app, installed_ebin(app)),
          :ok <- start_services(spec.services),
          :ok <- record(app, version, spec) do
       {:ok, app}
@@ -84,7 +86,10 @@ defmodule Elixos.Package do
 
     # -eval is Erlang, so this calls the Elixir Mix.Own entry point the way
     # the mix script itself does: a list of binaries, no shell anywhere.
-    code = ~s|'Elixir.Mix.CLI':main([<<"compile">>, <<"--no-deps-check">>])|
+    # A failure makes the eval fail, which ends the child non-zero on its own;
+    # a success has to say so, or the release's boot leaves the child running
+    # as a daemon and System.cmd waits forever.
+    code = ~s|'Elixir.Mix.CLI':main([<<"compile">>, <<"--no-deps-check">>]), erlang:halt(0)|
 
     # The release's boot script resolves $RELEASE_LIB against the boot_var the
     # shim passes, so a child ERTS has to pass it too.
@@ -125,18 +130,59 @@ defmodule Elixos.Package do
     end
   end
 
+  # The build dir names both: _build/elixos_prod/lib/<app>-<version>/ebin.
   defp app_of(ebin) do
-    Path.basename(ebin)
-    |> String.split("-")
-    |> hd()
-    |> String.to_atom()
+    ebin |> Path.dirname() |> Path.basename() |> String.split("-") |> hd() |> String.to_atom()
   end
 
   defp version_of(ebin) do
-    Path.basename(ebin)
-    |> String.split("-")
-    |> List.last()
+    ebin |> Path.dirname() |> Path.basename() |> String.split("-") |> List.last()
   end
+
+  # The app's own config/*.exs is its settings (ADR-010): read it the way mix
+  # does - env and target set - and put every value into this VM, so the app
+  # behaves as built. Case 1's SampleApp.where() is exactly this.
+  defp apply_config(root) do
+    path = Path.join(root, "config/config.exs")
+
+    if File.regular?(path) do
+      for {app, settings} <- Config.Reader.read!(path, env: :prod, target: :elixos),
+          {key, value} <- settings do
+        Application.put_env(app, key, value)
+      end
+    end
+
+    :ok
+  rescue
+    error -> {:error, {:config_failed, Exception.message(error)}}
+  end
+
+  # The build's artifacts are part of the image: the whole app directory -
+  # ebin for the code path, priv for what ebin loads (a NIF, for one) - is
+  # copied to the disk, where the next boot finds it (PROTOCOL.md §7).
+  defp install_tree(app, ebin, root) do
+    dest = installed_dir(app)
+    File.rm_rf!(dest)
+    File.mkdir_p!(Path.dirname(dest))
+    File.cp_r!(Path.dirname(ebin), dest)
+
+    # Mix links a project's priv into the build dir when the build starts; a
+    # compiler that creates priv while compiling (the NIF fixture does) is
+    # later than that, so the project's priv is what ebin loads from at run
+    # time. Copy it beside ebin.
+    priv = Path.join(root, "priv")
+    if File.dir?(priv), do: File.cp_r!(priv, Path.join(dest, "priv"))
+
+    :ok
+  end
+
+  # Where an installed app lives on the disk: its whole build dir (ebin and
+  # priv) under /priv/apps (PROTOCOL.md §7).
+  defp installed_dir(app), do: Path.join([os_priv(), "apps", Atom.to_string(app)])
+
+  defp installed_ebin(app), do: Path.join(installed_dir(app), "ebin")
+
+  defp os_priv, do: Application.get_env(:elixos, :priv_dir, "/priv")
 
   defp load(app, ebin) do
     :code.add_paths([String.to_charlist(ebin)])
@@ -156,7 +202,7 @@ defmodule Elixos.Package do
   """
   @spec start_service(term()) :: :ok | {:error, term()}
   def start_service(service) do
-    case DynamicSupervisor.start_child(Elixos.Supervisor, child_spec(service)) do
+    case DynamicSupervisor.start_child(Elixos.Package.Services, child_spec(service)) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
       {:error, reason} -> {:error, {:service_failed, service, reason}}
@@ -176,12 +222,14 @@ defmodule Elixos.Package do
     {:error, reason} -> {:error, reason}
   end
 
+  # A service is what the elixos: key wrote: a module, or a {module, arg}. A
+  # dynamic supervisor wants exactly that - the module's own child_spec/1
+  # (which `use GenServer` writes) carries the id and the restart policy.
   defp service_child({module, _arg}) when is_atom(module), do: true
   defp service_child(module) when is_atom(module), do: true
   defp service_child(_other), do: false
 
-  defp child_spec({module, arg}), do: %{id: module, start: {module, :start_link, [arg]}}
-  defp child_spec(module), do: %{id: module, start: {module, :start_link, []}}
+  defp child_spec(service), do: service
 
   defp record(app, version, spec) do
     case Process.whereis(Elixos.Image) do

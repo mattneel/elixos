@@ -1,0 +1,13 @@
+# What the M11 demo must show, in order: the toolchain is on the box, a Mix
+# project builds in a child ERTS, and its service runs in this VM.
+elixos-shim: pid 1, version
+iex(1)> File.mkdir_p!
+iex(2)> File.write!("/priv/src/demo/mix.exs"
+iex(3)> File.write!("/priv/src/demo/lib/worker.ex"
+iex(4)> Zig.version()
+{:ok, "0.18.0-dev.
+iex(5)> Elixos.Package.install("/priv/src/demo")
+{:ok, :demo}
+iex(6)> Demo.Worker.ping()
+:pong
+elixos-shim: shutdown poweroff

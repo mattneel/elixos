@@ -48,7 +48,9 @@ run every line, and valid lines must round-trip through encode.
 The shim forks and execs `erlexec` from the generation's ERTS directly. No
 shell script runs, ever (ADR-012); set what the release's `bin/` scripts would
 have set (like Nerves' erlinit does): `ROOTDIR`, `BINDIR`, `EMU`, `PROGNAME`,
-plus `HOME=/priv/home`, `TERM=linux`, `LANG=C.UTF-8`, and:
+plus `HOME=/priv/home`, `TERM=linux`, `LANG=C.UTF-8`,
+`PATH=/priv/toolchain:/bin:/usr/bin` when the persistent disk is mounted
+(`/bin:/usr/bin` otherwise), and:
 
 | variable            | value                                                  |
 |---------------------|--------------------------------------------------------|

@@ -35,6 +35,8 @@ defmodule Elixos.Application do
   # application out of the generated boot script. Its ebin is in the factory,
   # so the path is put right before anything can need Mix - the package
   # installer, and the elixos: reader that runs before it.
+  defp os_priv, do: Application.get_env(:elixos, :priv_dir, "/priv")
+
   defp add_mix_to_path do
     factory = Application.get_env(:elixos, :factory_dir, "/factory")
     path = Path.join([factory, "lib", "mix", "ebin"])
@@ -51,6 +53,10 @@ defmodule Elixos.Application do
   def start(_type, _args) do
     add_mix_to_path()
 
+    # Installed apps' code lives on the disk; put it back before anything
+    # (the restore, the services) can try to load a module.
+    for dir <- Path.wildcard(Path.join(os_priv(), "apps/*/ebin")), do: Code.append_path(dir)
+
     case Elixos.Boot.Env.current() do
       # On the dev host (unit tests) there is no shim and nothing to start.
       {:ok, :host} ->
@@ -62,6 +68,10 @@ defmodule Elixos.Application do
 
         with {:ok, image} <- open_image() do
           children = [
+            # Services from installed apps' elixos: keys live here, under the
+            # system's tree; the restore below starts the ones the image knows,
+            # so this has to come first (M11).
+            {DynamicSupervisor, name: Elixos.Package.Services, strategy: :one_for_one},
             # The control channel first: heartbeats start before anything can
             # hang, and the shim's boot grace is running until the first one.
             {Elixos.Shim.Control,

@@ -1,0 +1,59 @@
+#!/usr/bin/expect -f
+# M11: the box builds and installs Mix projects by itself (ADR-009). One
+# power-on of a pristine disk copy shows the whole loop, with no network:
+# a project is written at the prompt, the toolchain on the persistent disk
+# compiles it in a child ERTS (never a shell, never the VM's own directory),
+# and the service it names starts in this VM.
+
+set timeout 600
+set send_human {.1 .3 10 .05 2}
+
+spawn -noecho qemu-system-x86_64 \
+    -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+
+expect "iex(1)> "
+sleep 1
+
+# A project, written at the prompt: an ordinary Mix app that opts into
+# Elixos with the elixos: key. Long lines are sent at once - send_human is
+# for the lines a human would type - but every line ends in a carriage
+# return, or the console never sees a complete line.
+set mkdir {File.mkdir_p!("/priv/src/demo/lib")}
+send "$mkdir\r"
+expect "iex(2)> "
+sleep 1
+
+set mixexs {File.write!("/priv/src/demo/mix.exs", "defmodule Demo.MixProject do\n  use Mix.Project\n  def project, do: [app: :demo, version: \"0.1.0\", elixir: \"~> 1.20\", elixos: [services: [Demo.Worker]]]\n  def application, do: [extra_applications: []]\nend\n")}
+send "$mixexs\r"
+expect "iex(3)> "
+sleep 1
+
+set worker {File.write!("/priv/src/demo/lib/worker.ex", "defmodule Demo.Worker do\n  use GenServer\n  def start_link(arg), do: GenServer.start_link(__MODULE__, arg, name: __MODULE__)\n  def ping, do: GenServer.call(__MODULE__, :ping)\n  def init(arg), do: {:ok, arg}\n  def handle_call(:ping, _from, state), do: {:reply, :pong, state}\nend\n")}
+send "$worker\r"
+expect "iex(4)> "
+sleep 1
+
+# The toolchain is the disk's, on PATH: zig reports itself before building.
+send "Zig.version()\r"
+expect "iex(5)> "
+sleep 1
+
+# The install compiles the project in a child ERTS and starts its service.
+set install {Elixos.Package.install("/priv/src/demo")}
+send "$install\r"
+expect "{:ok, :demo}"
+sleep 2
+send "Demo.Worker.ping()\r"
+expect ":pong"
+sleep 2
+
+send "Elixos.poweroff()\r"
+expect "elixos-shim: shutdown poweroff"
+expect "reboot: Power down"
+expect eof
+sleep 1
