@@ -403,9 +403,79 @@ here (`musl-gcc` links statically only, which breaks `dlopen` and ADR-008).
 old to bootstrap 29.1.1. (d) A prebuilt musl OTP: ADR-008 allows it as a
 temporary stand-in, but a checked-in binary is worse than a pinned download.
 
+## ADR-023: The shim validates BEAM-side parameters; it does not apply them
+
+**Status:** accepted (2026-10-09, from the human's review)
+
+**Context.** PROTOCOL.md §5 splits the kernel command line between the two
+sides of the launch contract: the shim's parameters (device, generations,
+attempts, timeouts, the test hooks) and the BEAM's own (`elixos.commit_after`).
+The shim counted every `elixos.*` token it did not *apply* as invalid, so a
+boot with `elixos.commit_after=2` — a perfectly good parameter — logged
+`ignored 1 invalid elixos.* parameters`. The line exists to catch typos, and a
+valid parameter of the other side is not one.
+
+**Decision.** The shim knows the *names* and the syntax of the BEAM-side
+parameters as well as its own. For a BEAM-side parameter it checks the syntax
+and never applies it (the BEAM reads `/proc/cmdline` itself, §5). `invalid`
+counts only what neither side defines, plus values that are malformed by the
+rule of whichever side defines them.
+
+**Consequences.** `elixos.commit_after=2` boots quietly;
+`elixos.commit_after=abc`, `elixos.commit_after=0` and `elixos.nonsense=1` are
+still counted and logged. PROTOCOL.md §5 marks which side owns each parameter,
+and the shim's parser tests cover a BEAM-side parameter: valid is silent, a
+malformed value is counted. Adding a BEAM-side parameter means teaching the
+shim its name and syntax, which is the point — the shim is the only thing that
+can say anything about the command line before the BEAM exists.
+
+**Alternatives considered.** (a) Ignore unknown `elixos.*` keys silently: loses
+exactly the typo the line is for (`elixos.mx_attempts=3` would boot without a
+word). (b) The shim applies BEAM-side values and passes them in the launch
+environment: two sources of truth for one setting, and the BEAM's own
+`/proc/cmdline` reading is what `Elixos.Boot.Cmdline` already tests. (c) Let
+the BEAM do the validating and logging: the command line is read before the
+BEAM exists, and a broken one is what the shim's log is for.
+
 ---
 
 ## Open questions
+
+## ADR-024: Ctrl+C rides with a newline on the console
+
+**Status:** accepted
+
+**Context.** The M5 Ctrl+C test sent a raw `^C` and, with no gap, the next
+expression, expecting the interrupted prompt back and that expression to
+evaluate. It failed; so does plain OTP + Elixir. Findings (OTP 29.1.1
+sources, reproduced with stock `iex --erl "+Bc"` on a pty):
+
+- With `+Bc` ERTS clears the tty's `VINTR` (`erts_replace_intr` in
+  erts/emulator/sys/unix/sys.c), so ^C is no signal: the byte reaches the
+  program.
+- `user_drv` classifies each *read*: a chunk that *contains* Ctrl+C (with
+  more bytes after it) is `ctrl_c`, which exits the console's group with
+  `interrupt` and **discards the rest of that chunk**; a lone Ctrl+C byte is
+  `none` and forwarded as ordinary input (kernel/src/user_drv.erl,
+  `contains_ctrl_g_or_ctrl_c`).
+- The console tty is **cooked**: only a tty that starts user_drv *with* an
+  initial shell gets raw input; `-noshell`'s default is `input => cooked`, so
+  the kernel line-edits and delivers a line at a time. A lone ^C waits in the
+  kernel's buffer until a newline arrives.
+
+So `^C` + Enter interrupts (and anything after the ^C in that chunk is lost),
+while a lone ^C does nothing until a line is completed. `input: :raw` was
+tried in the guest and is worse: a lone ^C is then `none`, and Ctrl+C stops
+interrupting at all.
+
+**Decision.** The console keeps OTP's default (cooked — the reference `iex`
+behaviour), and the test types Ctrl+C the way a keyboard does on it, `\x03\r`,
+then waits for the interrupt's visible effect (`** (EXIT) interrupted`, what
+stock IEx prints) before typing the next expression, which arrives as its own
+chunk and evaluates. What the test asserts is unchanged: the interrupt aborts
+the runaway expression and the prompt comes back usable.
+`Elixos.Boot.Login` spawns `IEx.Server.run/1` and lets IEx handle the break
+itself (`{:EXIT, _, :interrupt}`), exactly as the reference does.
 
 Decide these with the human. Until then, follow the proposed default.
 
