@@ -42,10 +42,10 @@ spawn -noecho ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -i $key -p $port elixos@127.0.0.1
 expect "iex(1)> "
 sleep 1
-send "Agent.get(:shared, & &1)\r"
+send -h "Agent.get(:shared, & &1)\r"
 expect "iex(2)> "
 sleep 1
-send "Node.self()\r"
+send -h "Node.self()\r"
 expect "iex(3)> "
 sleep 1
 
