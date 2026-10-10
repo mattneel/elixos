@@ -29,6 +29,23 @@ apko v1.4.10, both by sha256).
 - The build environment needs its own packages (busybox, curl, tar, xz for the
   shim); the repositories in the YAML are the same pinned Alpine release apko
   uses.
+- A melange APK is a plain tar stream as far as `tar` is concerned: `tar -xzf
+  pkg.apk` works, without apk-tools on the host (`apk` itself is not installed
+  here). The checksum xattr is just a warning (`--warning=no-unknown-keyword`),
+  and naming the directories wanted (`tar -xzf pkg.apk -C dir toolchain`) skips
+  the `.PKGINFO`, signature and SBOM metadata.
+- Kernel fragments are named after melange's `build.arch` values - `x86_64`
+  and `aarch64` - because the kernel package reads
+  `kernel/config.${{build.arch}}`. An `arm64` file builds nothing and fails
+  with "The merge file .../config.aarch64 does not exist".
+- The common kernel fragment must stay arch-neutral: `CONFIG_I6300ESB_WDT` and
+  `CONFIG_SERIAL_8250*` are x86 symbols, and the per-architecture guard fails
+  the arm64 build on them (that is the guard doing its job).
+- Kernel fragments can be pre-flighted on the host in seconds - `make
+  ARCH=arm64 defconfig`, `merge_config.sh`, `make olddefconfig`, then
+  `scripts/check-kernel-config.sh` - before paying for an emulated build.
+  `unset LLVM` first: this machine's environment exports `LLVM`, and kbuild
+  refuses ("Invalid value for LLVM").
 
 ## apko
 
@@ -86,13 +103,15 @@ apko v1.4.10, both by sha256).
 
 ## Test hygiene
 
-- The QEMU harness reads prompts off the console and counts them: it waits for
-  a prompt numbered higher than the last one it saw. On the Alpine-built OTP
-  a redrawn prompt can arrive with the *result* text still to come, and
-  `QEMU.iex/3` then returns early with only the echoed input - M14's two-repo
-  test caught this. Keep test expressions short (one per call, key material in
-  a variable) and, before M16 is done, make `iex/3` wait for the expression's
-  output rather than for the next prompt number.
+- The QEMU harness reads prompts off the console and counts them. IEx redraws
+  the prompt while it evaluates, and that redraw can carry a *higher* prompt
+  number before the result is printed, so waiting for a number alone returned
+  the *previous* expression's output one call late - M14's two-repo test
+  caught it. `QEMU.iex/3` now anchors on the echo of the line it sent first
+  (the exact bytes, whitespace flexible because a long line wraps), which
+  belongs to that expression alone, and only then waits for the next prompt.
+  Keep test expressions short anyway: one per call, key material in a
+  variable.
 - A killed QEMU run leaves its `@moduletag :tmp_dir` behind, and each holds a
   copy of the disk image: `os/tmp` reached 19G once. When the disk looks
   wrong, `rm -rf os/tmp/*` is safe - the tests recreate it.
