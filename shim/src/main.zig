@@ -317,6 +317,10 @@ const Session = struct {
     first_heartbeat_pending: bool = true,
     buffer: [protocol.max_line_len * 2]u8 = undefined,
     pending: usize = 0,
+    /// True while an over-long line is being discarded: everything up to and
+    /// including the next newline is ignored (PROTOCOL.md §2), however many
+    /// reads that takes.
+    discarding: bool = false,
 
     /// Forks and execs `plan` with a fresh control pipe, then arms the
     /// heartbeat deadline with the boot grace (PROTOCOL.md §2 and §3).
@@ -341,6 +345,7 @@ const Session = struct {
         self.beam = @intCast(child);
         self.ctl_fd = pipe_fds[0];
         self.pending = 0;
+        self.discarding = false;
         self.first_heartbeat_pending = true;
         self.plan = plan;
         self.state = plan.next_state;
@@ -368,7 +373,13 @@ const Session = struct {
         self.pending += rc;
         var start: usize = 0;
         while (std.mem.indexOfScalarPos(u8, self.buffer[0..self.pending], start, '\n')) |newline| {
-            self.applyLine(self.buffer[start..newline]);
+            if (self.discarding) {
+                // The rest of an over-long line: discard it and resume
+                // framing after its newline.
+                self.discarding = false;
+            } else {
+                self.applyLine(self.buffer[start..newline]);
+            }
             start = newline + 1;
         }
         const remaining = self.pending - start;
@@ -378,9 +389,12 @@ const Session = struct {
         self.pending = remaining;
 
         if (self.pending == self.buffer.len) {
-            // A line that does not fit cannot be valid (PROTOCOL.md §2).
+            // A line that does not fit cannot be valid (PROTOCOL.md §2): it is
+            // discarded up to its next newline, which may still be in a later
+            // read, so framing does not resume at the buffer boundary.
             log("ignored control line (TooLong)", .{});
             self.pending = 0;
+            self.discarding = true;
         }
     }
 
