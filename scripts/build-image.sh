@@ -39,6 +39,13 @@ APKO="${APKO:-$TOOLS/apko}"
 KEY="$BUILD/apk/melange.rsa"
 MIRROR="$BUILD/mirror"
 SRC="$BUILD/melange-src"
+ZIG_CACHE="$BUILD/melange-cache"
+HOST_ARCH="$(uname -m)"
+case "$HOST_ARCH" in
+  x86_64|aarch64) ;;
+  arm64) HOST_ARCH=aarch64 ;;
+  *) echo "build-image: unsupported build host $HOST_ARCH" >&2; exit 1 ;;
+esac
 # One date for every assembly: file timestamps are the only thing that would
 # otherwise differ between two builds of the same lockfile.
 BUILD_DATE="${BUILD_DATE:-2026-01-01T00:00:00Z}"
@@ -63,21 +70,54 @@ stage() {
         "$ROOT/shim" "$ROOT/spec" "$ROOT/kernel" "$ROOT/scripts" "$ROOT/hex" "$ROOT/toolchain" \
         "$SRC/"
   cp -r "$ROOT/os/mix.exs" "$ROOT/os/mix.lock" "$ROOT/os/lib" "$ROOT/os/config" "$ROOT/os/priv" "$SRC/os/"
+  cp -r "$ROOT/melange" "$SRC/"
+}
+
+shim_inputs() { # The staged native inputs, not HEAD or unrelated userland.
+  {
+    printf 'target=%s\nhost=%s\n' "$1" "$HOST_ARCH"
+    sha256sum "$MELANGE" "$KEY.pub"
+    (
+      cd "$SRC"
+      sha256sum .zig-version build.zig build.zig.zon melange/shim.yaml scripts/build-image.sh
+      find shim spec -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+    )
+  } | sha256sum | cut -d' ' -f1
 }
 
 build_packages() { # build_packages <arch>
-  local arch="$1" repo="$BUILD/apk/$arch" pkg pname file
+  local arch="$1" repo="$BUILD/apk/$arch" pkg pname file inputs stamp cached_inputs cached_sha cached_apk actual_sha
+  local -a extra apks
   # Dependency order, not glob order: OTP before Elixir and the factory (they
   # build against it), the kernel and the shim independent, the toolchain last
   # (it needs only a compiler).
   for pkg in kernel otp elixir factory shim toolchain; do
-    file="$ROOT/melange/$pkg.yaml"
+    file="$SRC/melange/$pkg.yaml"
     [ -f "$file" ] || continue
     pname="elixos-$pkg"
-    # An architecture's OTP build is expensive (aarch64 runs emulated on an
-    # x86_64 host), so a built APK is kept: delete build/apk (or the one APK)
-    # to rebuild from source, the way the old toolchain cache worked.
-    if [ -z "${FORCE:-}" ] && ls "$repo/$arch/$pname"-*.apk >/dev/null 2>&1; then
+    extra=()
+    if [ "$pkg" = shim ]; then
+      inputs="$(shim_inputs "$arch")"
+      stamp="$repo/$arch/.elixos-shim.inputs"
+      cached_inputs="" cached_sha="" cached_apk=""
+      if [ -f "$stamp" ]; then
+        read -r cached_inputs cached_sha cached_apk < "$stamp" || true
+      fi
+      if [ -z "${FORCE:-}" ] && [ "$inputs" = "$cached_inputs" ] &&
+         [ -n "$cached_apk" ] && [ -f "$repo/$arch/$cached_apk" ]; then
+        actual_sha="$(sha256sum "$repo/$arch/$cached_apk" | cut -d' ' -f1)"
+        if [ "$actual_sha" = "$cached_sha" ]; then
+          echo "build-image: [$arch] $pname native inputs unchanged (APK cache hit)"
+          continue
+        fi
+      fi
+      mkdir -p "$ZIG_CACHE"
+      printf 'ELIXOS_ZIG_HOST_ARCH=%s\n' "$HOST_ARCH" > "$ZIG_CACHE/host.env"
+      extra=(--cache-dir "$ZIG_CACHE" --env-file "$ZIG_CACHE/host.env")
+      # Publish only this recipe's APK; an old higher version must not win.
+      rm -f "$repo/$arch/$pname"-*.apk "$stamp"
+    elif [ -z "${FORCE:-}" ] && ls "$repo/$arch/$pname"-*.apk >/dev/null 2>&1; then
+      # Other expensive native packages retain their existing explicit cache.
       echo "build-image: [$arch] $pname already built (FORCE=1 rebuilds)"
       continue
     fi
@@ -86,7 +126,17 @@ build_packages() { # build_packages <arch>
     # needs OTP and Elixir; melange would otherwise only see Alpine).
     "$MELANGE" build "$file" --arch "$arch" --source-dir "$SRC" \
       --out-dir "$repo" --signing-key "$KEY" \
-      -r "$repo" -k "$KEY.pub" >/dev/null
+      -r "$repo" -k "$KEY.pub" "${extra[@]}" >/dev/null
+    if [ "$pkg" = shim ]; then
+      apks=("$repo/$arch/$pname"-*.apk)
+      [ "${#apks[@]}" -eq 1 ] && [ -f "${apks[0]}" ] || {
+        echo "build-image: [$arch] expected one newly built $pname APK" >&2
+        return 1
+      }
+      actual_sha="$(sha256sum "${apks[0]}" | cut -d' ' -f1)"
+      printf '%s %s %s\n' "$inputs" "$actual_sha" "${apks[0]##*/}" > "$stamp.tmp"
+      mv "$stamp.tmp" "$stamp"
+    fi
   done
 }
 

@@ -122,6 +122,29 @@ apko v1.4.10, both by sha256).
   ERTS and copies the headers to `erts-<vsn>/include`, which is where
   `:code.root_dir()` sends a NIF build.
 
+## Caching native builds (M19)
+
+- The pinned Zig compiler used to be downloaded inside melange's *workspace*,
+  which melange deletes after every build (`os.RemoveAll(WorkspaceDir)`), and
+  the shim APK was cached on "an APK exists" - so `make image` rebuilt Zig for
+  both architectures and a source change to an unrelated file still paid for
+  both.
+- Next to the APK cache, key the shim on its real inputs: `.zig-version`,
+  `build.zig`, `build.zig.zon`, `melange/shim.yaml`, `scripts/build-image.sh`,
+  everything under `shim/` and `spec/`, the melange binary and the signing key.
+  A stamp file holds `sha256(inputs) sha256(apk) filename`, and a hit also
+  re-checks the APK hash - a stamp cannot outlive the bytes it describes.
+- `--cache-dir` is bind-mounted at `/var/cache/melange` and survives the
+  workspace wipe: keep the compiler SDK under `.../zig/sdk/<tarball sha256>`
+  (one download for both architectures; only `-Dtarget` differs) and Zig's own
+  caches under `.../zig/global/<sha>` and `.../zig/local/<arch>`, so a
+  one-line Zig change recompiles instead of rebooting the toolchain.
+- The Zig compiler for a melange build runs on the *build host*, not in the
+  package's target environment: an aarch64 package environment still needs an
+  x86_64 compiler when the host is x86_64. The host architecture travels in
+  `--env-file` (`ELIXOS_ZIG_HOST_ARCH`), and `-Dtarget=<arch>-linux-none` does
+  the crossing (ADR-003: the shim has no libc).
+
 ## Test hygiene
 
 - The QEMU harness reads prompts off the console, and `QEMU.iex/3`'s contract

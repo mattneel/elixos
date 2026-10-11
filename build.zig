@@ -9,9 +9,9 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     // ADR-041: x86_64 and aarch64 both. The shim is static and libc-free
     // (ADR-003), so the target changes only the instruction set. The default
-    // follows the host this build runs on - each architecture's melange
-    // package runs inside that architecture's build environment - and
-    // `-Dtarget=<arch>-linux-none` overrides it explicitly.
+    // follows the compiler's host, not the package root's architecture.
+    // melange uses a pinned host-native compiler and always overrides this
+    // with `-Dtarget=<arch>-linux-none`, including for ARM64 packages.
     const host = b.graph.host.result;
     const target = b.standardTargetOptions(.{
         .default_target = .{ .cpu_arch = host.cpu.arch, .os_tag = .linux, .abi = .none },

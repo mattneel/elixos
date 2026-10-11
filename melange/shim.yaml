@@ -35,24 +35,40 @@ pipeline:
   - runs: |
       zig_version="$(head -n1 /home/build/.zig-version)"
 
-      case "${{build.arch}}" in
+      # The compiler runs natively on the build host even in an ARM package
+      # environment. Zig cross-compiles the explicitly selected target.
+      case "${ELIXOS_ZIG_HOST_ARCH:?build-image must supply the host compiler architecture}" in
         x86_64) zig_arch=x86_64; zig_sha="${{vars.zig-sha256-x86_64}}" ;;
         aarch64) zig_arch=aarch64; zig_sha="${{vars.zig-sha256-aarch64}}" ;;
-        *) echo "elixos-shim: unsupported arch ${{build.arch}}" >&2; exit 1 ;;
+        *) echo "elixos-shim: unsupported compiler host $ELIXOS_ZIG_HOST_ARCH" >&2; exit 1 ;;
       esac
 
-      curl -fsSL -o /tmp/zig.tar.xz \
-        "https://ziglang.org/builds/zig-${zig_arch}-linux-${zig_version}.tar.xz"
-      echo "${zig_sha}  /tmp/zig.tar.xz" | sha256sum -c -
-      mkdir -p /opt/zig
-      tar -xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1
-      export PATH="/opt/zig:$PATH"
+      # --cache-dir is mounted here, outside melange's discarded workspace.
+      cache=/var/cache/melange/zig
+      sdk="$cache/sdk/$zig_sha"
+      if [ ! -x "$sdk/zig" ]; then
+        temporary="$cache/sdk/.${zig_sha}.$$"
+        mkdir -p "$temporary"
+        trap 'rm -rf "$temporary"' EXIT
+        curl -fsSL -o "$temporary/zig.tar.xz" \
+          "https://ziglang.org/builds/zig-${zig_arch}-linux-${zig_version}.tar.xz"
+        echo "${zig_sha}  $temporary/zig.tar.xz" | sha256sum -c -
+        mkdir "$temporary/sdk"
+        tar -xJf "$temporary/zig.tar.xz" -C "$temporary/sdk" --strip-components=1
+        mv "$temporary/sdk" "$sdk"
+        echo "elixos-shim: cached pinned compiler $zig_version ($zig_arch)"
+      else
+        echo "elixos-shim: pinned compiler cache hit $zig_version ($zig_arch)"
+      fi
+      export PATH="$sdk:$PATH"
+      export ZIG_GLOBAL_CACHE_DIR="$cache/global/$zig_sha"
 
       # The staged source directory is a copy (melange binds it writable at
       # /home/build), so the build happens right here; the staging is what
       # keeps it to the files this package needs.
       cd /home/build
-      zig build -Drelease -Dtest-hooks=true -Dtarget="${{build.arch}}-linux-none"
+      zig build -Drelease -Dtest-hooks=true -Dtarget="${{build.arch}}-linux-none" \
+        --cache-dir "$cache/local/${{build.arch}}" --summary all
 
       install -Dm0755 zig-out/bin/init "${{targets.destdir}}/init"
       install -Dm0755 zig-out/bin/elixos-postgres-init "${{targets.destdir}}/usr/bin/elixos-postgres-init"
