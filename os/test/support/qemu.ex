@@ -289,6 +289,9 @@ defmodule Elixos.Test.QEMU do
   Evaluates `expr` at an IEx prompt and returns everything printed from the
   echo of the line to the *next* prompt (the echoed input, then the result).
 
+  Multiline input is one parenthesized block: the next completed prompt must
+  follow the whole supplied expression, not its first top-level statement.
+
   The console must be sitting at a prompt that has already been consumed.
   IEx redraws the current prompt with the input after Enter (verified on
   OTP 29 / Elixir 1.20), and that redraw can be numbered like the next prompt
@@ -298,6 +301,7 @@ defmodule Elixos.Test.QEMU do
   @spec iex(t(), String.t(), non_neg_integer()) :: {String.t(), t()}
   def iex(vm, expr, timeout \\ 30_000) do
     current = vm.iex_prompt
+    expr = if String.contains?(expr, "\n"), do: "(\n" <> expr <> "\n)", else: expr
     vm = send_line(vm, expr)
     deadline = System.monotonic_time(:millisecond) + scale(timeout)
 

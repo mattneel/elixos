@@ -117,7 +117,7 @@ defmodule Elixos.Integration.M18PostgresTest do
     {out, vm} = QEMU.iex(vm, ~s|Elixos.Postgres.query("select 1")|, 120_000)
     assert out =~ ~r/^\s*1\s*$/m
 
-    {out, _vm} =
+    {out, vm} =
       QEMU.iex(
         vm,
         """
@@ -130,6 +130,8 @@ defmodule Elixos.Integration.M18PostgresTest do
 
     assert out =~ "database system was shut down at", out
     refute out =~ "database system was interrupted"
+
+    power_off(vm)
 
     # Rescue is the factory with /priv mounted: the database is not part of
     # the minimum.

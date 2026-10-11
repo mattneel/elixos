@@ -1371,8 +1371,9 @@ lifecycle/retention evidence, not a capacity result.
 
 **Context.** The factory must remain the rescue minimum. PostgreSQL 17 alone
 adds 15.2 MiB installed; its Apache-only TimescaleDB extension adds 11.6 MiB
-before the client and shared-library closure. Both shipped kernels already
-provide built-in loop devices and gzip SquashFS.
+before the client and shared-library closure. Both targets require built-in
+loop devices and gzip SquashFS; the common kernel fragment requires them.
+Changing that fragment requires rebuilding the cached kernel APK.
 
 **Decision.** Assemble a separate, architecture-specific Alpine package set
 with apko and committed lockfiles, then pack a reproducible gzip SquashFS.
@@ -1382,6 +1383,10 @@ PID 1 opens the root-owned, non-writable regular file without following
 symlinks, attaches it to a read-only loop device and mounts it at `/system`
 only for normal launches. Rescue starts without that mount or its services.
 Mount failure disables the service, not the prompt. No kernel patches.
+The image also supplies ICU and timezone data at Alpine's compiled-in
+absolute paths. PID 1 exports just those two read-only directories into
+empty factory mount points, and releases the exports before `/system`.
+Neither the factory nor the BEAM carries a mutable duplicate of the data.
 
 Keep PostgreSQL 17 from Alpine v3.24. The current v3.24 extensions require
 PostgreSQL 18, so select only the PG17-compatible extensions from a tagged
@@ -1418,8 +1423,8 @@ environment; nothing changes the main VM's cwd or environment.
 
 The postmaster listens only on loopback with local trust authentication,
 loads `timescaledb` before accepting queries, and writes persistent logs.
-The Elixir service starts asynchronously in normal mode after the prompt's
-machinery; readiness requires a successful real database query. A failed
+The Elixir manager starts asynchronously in normal mode before either login
+frontend can issue a query; readiness requires a successful real query. A failed
 start is non-critical and remains visible to callers and the console.
 
 On halt, reboot or power-off, the BEAM stops first while its database remains
@@ -1432,3 +1437,40 @@ same shutdown policy.
 **Consequences.** An initialized cluster survives boots without rerunning
 `initdb`. Oban's Repo can use the database until the VM stops. Rescue is still
 the factory with the persistent disk, not a database-dependent boot.
+
+## ADR-054: QEMU expression evaluation consumes the whole multiline block
+
+**Status:** accepted (M18)
+
+**Problem.** `QEMU.iex/3` returned at the first completed prompt after sending
+several top-level statements. M18's unchanged ownership probe consequently
+returned only `Elixos.Postgres.status/0`, before its final assertion map.
+The VM cursor then disagreed with the console's actual evaluation state.
+
+**Decision.** Wrap multiline `iex/3` input in one parenthesized IEx block.
+The next completed prompt now follows the entire supplied expression.
+Keep single-line input and the raw interactive input helpers unchanged.
+No acceptance assertion, matching expression or timeout is weakened.
+
+**Consequences.** Existing multiline probes exercise all their statements
+and retain their IEx bindings. The unchanged M18 integration test covers
+this path through real database ownership, extensions and shutdown checks.
+
+## ADR-055: Power off each database guest before the next boot
+
+**Status:** accepted (M18)
+
+**Problem.** M18's reference fixture checked the second boot's clean
+PostgreSQL log, then launched rescue with the same writable disk while that
+guest was still alive. QEMU correctly refused the second writer's disk lock.
+All preceding database assertions passed; rescue never started.
+
+**Decision.** Thread the final normal-mode VM handle and use the fixture's
+existing power-off helper before booting rescue. It asserts QEMU's zero
+exit status and absence of a kernel panic. Keep every database and rescue
+assertion, regex and timeout unchanged.
+
+**Consequences.** The fixture represents three sequential power-ons rather
+than two concurrent writers. This acceptance-fixture correction is committed
+separately from the M18 implementation.
+

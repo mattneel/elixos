@@ -29,3 +29,11 @@ and a test that wants a reboot must expect the process to exit first.
 log lines can arrive while a test waits for something else). IEx redraws the
 prompt with the typed input after Enter, so `iex/3` waits for a prompt numbered
 higher than the last one seen.
+
+`iex/3` groups multiline input in parentheses. Without a block, IEx completes
+the first top-level statement and prints a new prompt while the remaining
+statements are still queued. M18's database ownership probe exposed this:
+the returned output contained only the postmaster pid, not the final map.
+Grouping keeps bindings in the same session and makes the returned output
+cover the whole expression. `send_line/2` and `send_raw/2` remain ungrouped
+for tests which intentionally drive interactive input (ADR-054).
