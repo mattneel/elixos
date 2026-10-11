@@ -1745,3 +1745,41 @@ covers that change to the shipped tests), set `MILESTONE` back to 21 and work
 the tests in order. Nothing in M25-M27 depends on the toolset: the browser
 test's two toolset references are re-scoped to `Elixos.Browser` directly, and
 M26's tests never mention it.
+
+## ADR-064: M25 ships Lightpanda with a private glibc, not a musl rebuild
+
+**Status:** accepted (M25)
+
+**Context.** M25 wants a headless browser in the image, callable from IEx:
+navigate, extract, evaluate JavaScript, screenshot, nothing downloaded at run
+time. The milestone's own gate is to run `ldd` on the pinned binary first, and
+explicitly allows abandoning M25.
+
+**Gate (measured).** Lightpanda 1.0.0's published `lightpanda-x86_64-linux` is
+an ELF "for GNU/Linux" whose only `NEEDED` entries are `libc.so.6`,
+`libm.so.6` and `ld-linux-x86-64.so.2` - and it prints `1.0.0` when run through
+a *private* copy of exactly those three files:
+
+    ./glibc/lib/ld-linux-x86-64.so.2 --library-path /tmp/lp/glibc/lib ./lp version
+    1.0.0
+
+That is the roadmap's second arm. Alpine ships no glibc (`gcompat` is a shim,
+not a libc), and rebuilding Lightpanda means rebuilding V8 for musl - the last
+resort the roadmap names.
+
+**Decision.** Ship the pinned upstream binary, stripped (188 MB → 70 MB), at
+`/system/browser/lightpanda`, and beside it the three glibc files it needs from
+Debian stable's `libc6` package (2.41-12+deb13u4, 2.8 MB amd64 / 2.5 MB arm64,
+pinned by SHA-256, LGPL, unmodified, in a directory of its own). The image ships
+a `manifest.json` naming the loader, `Elixos.Browser.command/1` turns it into
+argv - `[ld, "--library-path", lib, binary | args]` for the glibc case,
+`[binary | args]` for a musl-clean one - and the adapter is exec'd directly as
+a port (ADR-012: no shell). The aarch64 binary takes `ld-linux-aarch64.so.1`.
+
+**Consequences.** Each image grows by about 73 MB (70 MB browser, 3 MB glibc),
+which the initramfs carries too. Only Lightpanda sees the private glibc: it
+lives under `/system/browser/glibc`, the system stays musl, and nothing else
+links against it. `Elixos.Browser` starts the adapter in normal mode only and
+stops it on poweroff, so rescue never has a browser running - and the QEMU
+acceptance asserts exactly that. The musl rebuild stays possible, but the
+pinned upstream binary is what the milestone asked to evaluate first.
