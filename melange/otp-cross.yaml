@@ -39,6 +39,7 @@ environment:
       # The bootstrap ERTS: same version, built by the x86_64 recipe. OTP's
       # cross build runs *this* `erl` to compile the target's Erlang sources.
       - elixos-otp
+      - apk-tools
       - bash
       - bison
       - build-base
