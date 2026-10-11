@@ -323,18 +323,18 @@
         "version": "1.20.4-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-690",
-          "checksum": "sha1-zUx6wpG9aG4D7Ww9fRWxqkcxd9g="
+          "range": "bytes=0-687",
+          "checksum": "sha1-XBIoH7hkbdCa2vkgn9CCo5rxfBU="
         },
         "control": {
-          "range": "bytes=691-2475",
-          "checksum": "sha1-F9PzFTpCF4sHqGHKVTdghpETGAo="
+          "range": "bytes=688-2473",
+          "checksum": "sha1-pMmTwwHiCA8JVzvLcB6hViUgrao="
         },
         "data": {
-          "range": "bytes=2476-7344196",
-          "checksum": "sha256-WnjFdhmECQQwPrCq8z2TilA6pyoy2NfP+nsnzbgGLkw="
+          "range": "bytes=2474-7333503",
+          "checksum": "sha256-WIBG6NleixjRD3FfFhP+JPUHw/4BcFxt/0MyhNeaKPQ="
         },
-        "checksum": "Q1F9PzFTpCF4sHqGHKVTdghpETGAo="
+        "checksum": "Q1pMmTwwHiCA8JVzvLcB6hViUgrao="
       },
       {
         "name": "libformw",
@@ -457,17 +457,17 @@
         "architecture": "aarch64",
         "signature": {
           "range": "bytes=0-688",
-          "checksum": "sha1-kyZmG2Z2AZJOA/sWIVyi04sCdQM="
+          "checksum": "sha1-RgUhb2eG8oWz8p4DOeH7IVdhJxE="
         },
         "control": {
-          "range": "bytes=689-2583",
-          "checksum": "sha1-T0ps/S4I4MutCWxec5Wk9BO/9Sw="
+          "range": "bytes=689-2581",
+          "checksum": "sha1-yW5bL6RBF1T5zSuWGMmlUypZQbQ="
         },
         "data": {
-          "range": "bytes=2584-5308777",
-          "checksum": "sha256-jTHi9ZyHb6rV5Tx8K1U9/ikSt/sc7yh2fyphRewkU8E="
+          "range": "bytes=2582-5323240",
+          "checksum": "sha256-K5q48yi27eJg4JRFXzGwOrHqy4kI/IgiDzKGEdqbvDQ="
         },
-        "checksum": "Q1T0ps/S4I4MutCWxec5Wk9BO/9Sw="
+        "checksum": "Q1yW5bL6RBF1T5zSuWGMmlUypZQbQ="
       },
       {
         "name": "elixos-kernel",
@@ -476,17 +476,17 @@
         "architecture": "aarch64",
         "signature": {
           "range": "bytes=0-688",
-          "checksum": "sha1-eVJgDZQ8SWTH5mCB+lVi9sFr7c4="
+          "checksum": "sha1-SLdDUyIGv0JP2MUCL0Bc3hYpu0w="
         },
         "control": {
-          "range": "bytes=689-2716",
-          "checksum": "sha1-jBnb57JDxSLQIiRGzt2wtRmjoa0="
+          "range": "bytes=689-2720",
+          "checksum": "sha1-LTo3N8U3CB+eDXj2ISTZJjSP4uY="
         },
         "data": {
-          "range": "bytes=2717-16253318",
-          "checksum": "sha256-HkzFq8Jm+2uA9JTqa6NAQjQqEMbL0fTRmydKZ71vOvI="
+          "range": "bytes=2721-16253323",
+          "checksum": "sha256-klVSGE5JnCMRtUZ0g5pqoowteP3JZoFCiFq8w6THghA="
         },
-        "checksum": "Q1jBnb57JDxSLQIiRGzt2wtRmjoa0="
+        "checksum": "Q1LTo3N8U3CB+eDXj2ISTZJjSP4uY="
       },
       {
         "name": "elixos-shim",

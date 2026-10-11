@@ -93,8 +93,6 @@ package_inputs() { # package_inputs <arch> <package>: hash of everything the rec
     sha256sum "$MELANGE" "$KEY.pub"
     (
       cd "$SRC"
-      # This script is the recipe's other half and never changes an APK.
-      sha256sum scripts/build-image.sh
       for path in "${paths[@]}"; do
         [ -e "$path" ] || continue
         if [ -d "$path" ]; then
@@ -113,7 +111,6 @@ kernel_cross_inputs() { # kernel_cross_inputs: what the native arm64 build reads
     sha256sum "$MELANGE" "$KEY.pub" "$ROOT/melange/kernel-cross.yaml"
     (
       cd "$SRC"
-      sha256sum scripts/build-image.sh
       for path in kernel scripts; do
         find "$path" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
       done
@@ -364,7 +361,29 @@ if missing:
 PY
 }
 
-build_arch() { # build_arch <arch>
+image_inputs() { # image_inputs <arch>: everything the assembled image is made of
+  local arch="$1" apk
+  {
+    printf 'arch=%s\nbuild_date=%s\n' "$arch" "$BUILD_DATE"
+    sha256sum "$APKO" "$ROOT/apko/apko.yaml" "$ROOT/apko/apko.lock.$arch.json" \
+      "$ROOT/apko/system.yaml" "$ROOT/apko/system.lock.$arch.json" \
+      "$ROOT/scripts/mkinitramfs.sh" "$ROOT/scripts/build-image.sh"
+    sha256sum "$BUILD/apk/$arch/$arch/APKINDEX.tar.gz"
+    for apk in "$BUILD/apk/$arch/$arch"/elixos-*.apk; do sha256sum "$apk"; done
+  } | sha256sum | cut -d' ' -f1
+}
+
+publish_host_artifacts() { # publish_host_artifacts <arch> <work>
+  local arch="$1" work="$2"
+  # x86_64 writes the paths the QEMU tests look for by default.
+  if [ "$arch" = x86_64 ]; then
+    cp "$work/bzImage" "$BUILD/bzImage"
+    cp "$work/initramfs.cpio.gz" "$BUILD/initramfs.cpio.gz"
+  fi
+}
+
+
+assemble_arch() { # assemble_arch <arch>: root filesystem, initramfs, kernel
   local arch="$1" work="$BUILD/$arch" digest second
   mkdir -p "$work"
   build_system "$arch"
@@ -414,17 +433,31 @@ build_arch() { # build_arch <arch>
   echo "$digest" > "$work/rootfs.digest"
   echo "build-image: [$arch] rootfs digest $digest (two builds agree)"
 
-  # x86_64 writes the paths the QEMU tests look for by default.
-  if [ "$arch" = x86_64 ]; then
-    cp "$work/bzImage" "$BUILD/bzImage"
-    cp "$work/initramfs.cpio.gz" "$BUILD/initramfs.cpio.gz"
+  publish_host_artifacts "$arch" "$work"
+}
+
+build_arch() { # build_arch <arch>
+  local arch="$1" work="$BUILD/$arch" inputs stamp
+  inputs="$(image_inputs "$arch")"
+  stamp="$work/.image.inputs"
+  if [ -z "${FORCE:-}" ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$inputs" ] &&
+     [ -f "$work/initramfs.cpio.gz" ] && [ -f "$work/rootfs.digest" ]; then
+    echo "build-image: [$arch] image inputs unchanged (cache hit)"
+    publish_host_artifacts "$arch" "$work"
+    return 0
   fi
+
+  assemble_arch "$arch"
+  printf '%s\n' "$inputs" > "$stamp"
 }
 
 stage
 
 if [ "$#" -eq 0 ]; then
-  set -- x86_64 aarch64
+  # This machine's own image. The other architecture's packages are built
+  # under emulation (ADR-041) and cost many minutes, so it is asked for
+  # explicitly: `scripts/build-image.sh aarch64`, or `make images`.
+  set -- "$HOST_ARCH"
 fi
 
 for arch in "$@"; do
