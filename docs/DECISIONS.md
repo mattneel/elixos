@@ -1659,3 +1659,31 @@ saves it and power-cycles - and the kernel's own config guard still runs on
 the cross-compiled config. A cross-built artifact is part of the package
 inputs, so changing the kernel config or the OS source invalidates exactly the
 packages it should.
+
+## ADR-061: The M20 fixture unwraps the AgentServer state it polls
+
+**Status:** accepted (M20)
+
+**Problem.** `m20_ask_test.exs`'s state poll reads
+
+    Jido.AgentServer.state(Elixos.Agents.whereis("asker")).agent.state
+
+but the pinned Jido (2.4.0) returns `{:ok, %Jido.AgentServer{}}` from
+`state/1`; calling `.agent` on that tuple raises `BadMapError` inside the
+guest, so the expression can never return `true` and the poll times out. The
+M15 acceptance - same library, same call - unwraps the tuple first
+(`{:ok, state} = Jido.AgentServer.state(...)`), which is what the API does.
+Every earlier assertion in the M20 test passes: the agent starts, the
+question reaches the queue, the console prints the notice line, `answer/2`
+returns `:ok`, and the guest's dump shows `state: %{answer: "matt"}` - the
+action does return the answer into the agent's state; only the fixture's
+reading of it is wrong.
+
+**Decision.** Unwrap the tuple in the polling expression, exactly as the M15
+fixture does, and keep the assertion identical (the state must contain the
+answer). No assertion, regex, retry count or timeout is weakened, and the
+test still fails if the action does not put the answer into the state.
+
+**Consequences.** The M20 acceptance tests the claim it was written to test.
+The commit that changes it carries this ADR, as the audit requires; the change
+is committed on its own, separately from the milestone's implementation.

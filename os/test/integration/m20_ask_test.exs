@@ -79,7 +79,8 @@ defmodule Elixos.Integration.M20AskTest do
         QEMU.iex(
           vm,
           """
-          Jido.AgentServer.state(Elixos.Agents.whereis("asker")).agent.state
+          {:ok, state} = Jido.AgentServer.state(Elixos.Agents.whereis("asker"))
+          state.agent.state
           |> inspect()
           |> String.contains?(#{inspect(value)})
           """
