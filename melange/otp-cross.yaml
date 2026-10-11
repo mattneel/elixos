@@ -1,0 +1,235 @@
+# Erlang/OTP for arm64, cross-compiled on the build host (ADR-060).
+#
+# This is the last piece of an aarch64 image build that used to run every
+# compiler process under emulation. OTP has a documented cross mode: configure
+# for another machine, answer its runtime probes from `erl_xcomp_*`, and compile
+# the Erlang sources with a native ERTS for the build machine - the x86_64
+# `elixos-otp` package, installed here as a build dependency, is that ERTS.
+#
+# The compiler is Alpine's clang, which is a cross compiler by nature and the
+# same compiler family the emulated aarch64 build uses. The target's headers,
+# libraries and GCC runtime - crt objects, libgcc, libstdc++ - come from
+# Alpine's own aarch64 packages, installed into a sysroot by apk, so what links
+# here is what the image will run. The triplet is Alpine's own, because that is
+# the name the GCC installation inside the sysroot answers to.
+#
+# Zig was tried first and abandoned: its driver resolves -L and -isystem
+# against the sysroot in a way that makes a complete sysroot look empty
+# (`-L$sysroot/usr/lib` becomes `$sysroot/$sysroot/usr/lib`), and it pairs a
+# C++ standard library the target does not use.
+package:
+  name: elixos-otp-cross
+  version: "29.1.1"
+  epoch: 0
+  description: "Erlang/OTP for arm64, cross-compiled on the build host (build tool)"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime: []
+
+vars:
+  sha256: 054e0143e39c780e091107fc9b345792a9c1a55f6bac1eca1c1101510fc06bf6
+  # The aarch64 packages the target links against: libc and its headers, the
+  # GCC runtime and C++ standard library clang links, and the libraries the
+  # ERTS links (openssl, ncurses, zlib). Pinned to the same Alpine release the
+  # image installs from.
+  target-packages: musl musl-dev gcc g++ libstdc++ openssl-dev openssl libcrypto3 libssl3 ncurses-dev ncurses-libs libncursesw libformw libmenuw zlib-dev zlib pkgconf linux-headers
+
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+    packages:
+      - alpine-release=3.24.2-r0
+      - alpine-keys
+      # The bootstrap ERTS: the same version, built natively by the x86_64
+      # recipe. OTP's cross build runs *this* erl to compile the target's
+      # Erlang sources, which is what keeps emulation out of the build.
+      - elixos-otp
+      - apk-tools
+      - bash
+      - bison
+      - build-base
+      # The cross compiler: clang is multi-target, lld links any target, and
+      # the llvm tools handle foreign-architecture objects.
+      - clang21
+      - lld21
+      - llvm21
+      - curl
+      - file
+      - flex
+      - gawk
+      - m4
+      - perl
+      - tar
+      - xz
+
+pipeline:
+  - runs: |
+      version="$(sed -n 's/^erlang //p' /home/build/.tool-versions)"
+      if [ "$version" != "${{package.version}}" ]; then
+        echo "otp-cross: .tool-versions says $version, this package says ${{package.version}}" >&2
+        exit 1
+      fi
+
+      # --- the cross compiler ---------------------------------------------
+      clang_bin=""
+      for c in clang clang-21 clang21; do
+        if command -v "$c" >/dev/null 2>&1; then clang_bin="$c"; break; fi
+      done
+      [ -n "$clang_bin" ] || {
+        echo "otp-cross: no clang on PATH" >&2; ls -d /usr/lib/llvm* 2>/dev/null >&2; exit 1; }
+      # The versioned packages keep the toolkit in /usr/lib/llvmNN/bin: put that
+      # first so ld.lld, llvm-ar and llvm-strip are found beside the compiler.
+      llvm_bin="$(dirname "$(readlink -f "$(command -v "$clang_bin")")")"
+      export PATH="$llvm_bin:$PATH"
+      if command -v clang++ >/dev/null 2>&1; then
+        cxx_bin=clang++
+      else
+        cxx_bin="$clang_bin --driver-mode=g++"
+      fi
+      echo "otp-cross: compiler $llvm_bin/$clang_bin - $("$clang_bin" --version | head -n1)"
+
+      # --- the target's own packages (the sysroot) ------------------------
+      sysroot=/tmp/sysroot
+      mkdir -p "$sysroot" /tmp/sysroot-apks /etc/apk/keys
+      # Alpine signs each architecture's index with its own key and the guest's
+      # alpine-keys package carries only x86_64's, so the aarch64 index would
+      # come back UNTRUSTED. Install the published aarch64 key and fetch
+      # normally - verifying, not bypassing.
+      curl -fsSL -o /etc/apk/keys/alpine-devel@lists.alpinelinux.org-616ae350.rsa.pub \
+        https://alpinelinux.org/keys/alpine-devel@lists.alpinelinux.org-616ae350.rsa.pub
+      ( cd /tmp/sysroot-apks && apk fetch --arch aarch64 --no-cache --recursive ${{vars.target-packages}} >/dev/null )
+      # apk extracts, not tar: an apk's data stream is a third tar inside the
+      # gzip file, and tar stops at the first end-of-archive marker - which
+      # leaves a sysroot that has headers and .so symlinks but no libraries.
+      apk add --root "$sysroot" --initdb --no-scripts --usermode --arch aarch64 \
+        --keys-dir /etc/apk/keys /tmp/sysroot-apks/*.apk || {
+        echo "otp-cross: apk add into the sysroot failed" >&2; exit 1; }
+      for lib in libncursesw.so.6 libcrypto.so.3 libssl.so.3 libstdc++.so.6; do
+        [ -e "$sysroot/usr/lib/$lib" ] || {
+          echo "otp-cross: the sysroot has no $lib" >&2; exit 1; }
+      done
+      [ -f "$sysroot/usr/include/openssl/ssl.h" ] || {
+        echo "otp-cross: the sysroot has no openssl headers" >&2; exit 1; }
+
+      # --- the cross toolchain, proved before it is trusted ---------------
+      target=aarch64-alpine-linux-musl
+      # -fuse-ld=lld belongs in LDFLAGS, not in CC: configure compiles with
+      # -Werror, and clang turns "argument unused during compilation" into an
+      # error for compile-only steps - which made configure's own feature
+      # probes fail and took configure down with them. A `ld` beside the
+      # toolkit is the belt to those suspenders.
+      cflags="--target=$target --sysroot=$sysroot"
+      # --export-dynamic: the ERTS's NIF and driver API symbols are declared
+      # with default visibility, but a link that does not ask for dynamic
+      # exports leaves them out of .dynsym - and then every NIF fails to
+      # relocate with "symbol not found", which is a boot failure, not a build
+      # failure. The native build exports them; this one has to say so.
+      ldflags="-fuse-ld=lld -Wl,--export-dynamic"
+      cc="$clang_bin $cflags"
+      cxx="$cxx_bin $cflags"
+      mkdir -p /tmp/cross-bin
+      ln -sfn "$(command -v ld.lld)" /tmp/cross-bin/ld
+      export PATH="/tmp/cross-bin:$PATH"
+      ar=ar; ranlib=ranlib; strip=true
+      command -v llvm-ar >/dev/null 2>&1 && ar=llvm-ar
+      command -v llvm-ranlib >/dev/null 2>&1 && ranlib=llvm-ranlib
+      command -v llvm-strip >/dev/null 2>&1 && strip=llvm-strip
+      echo "otp-cross: cc=$cc"
+      echo "otp-cross: ld=$(readlink -f /tmp/cross-bin/ld) LDFLAGS=$ldflags"
+      echo "otp-cross: ar=$ar ranlib=$ranlib strip=$strip"
+
+      printf 'int main(void){return 0;}\n' > /tmp/cc.c
+      printf '#include <string>\n#include <arm_neon.h>\nint main(){std::string s;uint8x16_t v;return (int)(s.size()+sizeof(v));}\n' > /tmp/cc.cpp
+      printf '#include <openssl/ssl.h>\n#include <zlib.h>\n#include <ncurses.h>\nint main(void){SSL_CTX *c=SSL_CTX_new(TLS_method());if(c)SSL_CTX_free(c);initscr();endwin();return (int)zlibVersion()[0];}\n' > /tmp/clibs.c
+      # A compile-only step with -Werror, the shape configure uses: a flag that
+      # only belongs on the link line shows up here and nowhere else.
+      $cc -c -Werror -g -O2 /tmp/cc.c -o /tmp/cc.o || {
+        echo "otp-cross: a compile-only step with -Werror fails" >&2; exit 1; }
+      $cc /tmp/cc.c -o /tmp/cc-test $ldflags || {
+        echo "otp-cross: the C cross compiler does not link" >&2; exit 1; }
+      $cxx /tmp/cc.cpp -o /tmp/ccpp-test $ldflags || {
+        echo "otp-cross: the C++ cross compiler does not compile the target's headers" >&2; exit 1; }
+      $cc /tmp/clibs.c -o /tmp/clibs-test $ldflags -lssl -lcrypto -lz -lncursesw || {
+        echo "otp-cross: the target's libraries do not link" >&2; exit 1; }
+      file /tmp/cc-test /tmp/ccpp-test /tmp/clibs-test
+      echo "otp-cross: the toolchain compiles C and C++, and links the target's openssl, zlib and ncurses"
+
+      # --- the OTP sources -------------------------------------------------
+      # melange's build cache is mounted at /var/cache/melange: the tarball and
+      # the sysroot's apks survive between runs.
+      cache=/var/cache/melange
+      tarball="$cache/otp_src_${version}.tar.gz"
+      if [ ! -f "$tarball" ] || ! echo "${{vars.sha256}}  $tarball" | sha256sum -c - >/dev/null 2>&1; then
+        curl -fsSL -o "$tarball.tmp" \
+          "https://github.com/erlang/otp/releases/download/OTP-${version}/otp_src_${version}.tar.gz"
+        echo "${{vars.sha256}}  $tarball.tmp" | sha256sum -c -
+        mv "$tarball.tmp" "$tarball"
+      fi
+      mkdir -p /tmp/otp
+      tar -xzf "$tarball" -C /tmp/otp --strip-components=1
+      cd /tmp/otp
+
+      # `erl_xcomp_*` answers what configure would otherwise learn by running a
+      # target binary. The values are an aarch64 musl Linux's; the JIT is asked
+      # for explicitly instead of probed. ERL_TOP and the `elixos-otp` install
+      # on PATH are the bootstrap: the same version, running natively.
+      export ERL_TOP=/tmp/otp
+      export CC="$cc" CXX="$cxx" AR="$ar" RANLIB="$ranlib" STRIP="$strip" LDFLAGS="$ldflags"
+      export erl_xcomp_bigendian=no
+      export erl_xcomp_doubles_middle_endian=no
+      export erl_xcomp_linux_clock_gettime_correction=yes
+      export erl_xcomp_linux_nptl=yes
+      export erl_xcomp_linux_usable_sigaltstack=yes
+      export erl_xcomp_linux_usable_pthread_thread_num=yes
+      export erl_xcomp_stack_overflow=no
+      export erl_xcomp_sysroot="$sysroot"
+      export erl_xcomp_isysroot="$sysroot"
+
+      ./otp_build configure --host=aarch64-linux-musl --build=x86_64-linux-musl \
+        --enable-jit --enable-dynamic-ssl-lib --with-ssl \
+        --without-javac --without-wx --without-odbc --without-observer \
+        --without-debugger --without-et --without-megaco || {
+        echo "otp-cross: configure failed; the erts log says:" >&2
+        grep -A40 "checking if we can add -fvisibility=hidden" /tmp/otp/erts/config.log >&2 || true
+        echo "--- tail of /tmp/otp/erts/config.log" >&2
+        tail -25 /tmp/otp/erts/config.log >&2 || true
+        exit 1; }
+
+      make -j"$(nproc)" > /tmp/otp-build.log 2>&1 || {
+        echo "otp-cross: make failed; first errors:"
+        grep -nE "error:|Error [0-9]+|fatal error" /tmp/otp-build.log | sed -n '1,12p'
+        n=$(grep -nE "error:|Error [0-9]+|fatal error" /tmp/otp-build.log | sed -n '1p' | cut -d: -f1)
+        [ -n "$n" ] && sed -n "$((n>6?n-6:1)),$((n+8))p" /tmp/otp-build.log
+        exit 1; }
+      make install DESTDIR="${{targets.destdir}}" > /tmp/otp-install.log 2>&1 || {
+        echo "otp-cross: install failed"; tail -40 /tmp/otp-install.log; exit 1; }
+
+      # The two fixes the native recipe makes, applied to the cross build: erl
+      # is erlexec (ADR-012), and the ERTS headers live where
+      # :code.root_dir() sends a NIF build.
+      for erts in "${{targets.destdir}}"/usr/local/lib/erlang/erts-*; do
+        ln -sfn erlexec "$erts/bin/erl"
+        cp -a "${{targets.destdir}}/usr/local/lib/erlang/usr/include" "$erts/include"
+      done
+
+      # --- what an ERTS must be able to do ---------------------------------
+      # A cross-built libc check that would otherwise only show up as a boot
+      # failure: without dlopen in the emulator, every NIF load fails with
+      # "Dynamic loading not supported" and the system cannot start crypto.
+      erts="$(ls -d "${{targets.destdir}}"/usr/local/lib/erlang/erts-* | sed -n '1p')"
+      beam="$erts/bin/beam.smp"
+      readelf -h "$beam" | grep -q AArch64 || {
+        echo "otp-cross: the emulator is not an AArch64 binary" >&2; exit 1; }
+      n=$(readelf --dyn-syms "$beam" | grep -cE 'dlopen|dlsym|dlerror')
+      [ "$n" -ge 1 ] || {
+        echo "otp-cross: the emulator has no dlopen; NIF loading would be disabled" >&2; exit 1; }
+      # The NIF API has to be in .dynsym, or crypto and every other NIF fails
+      # to relocate at load time ("enif_get_tuple: symbol not found").
+      e=$(readelf --dyn-syms "$beam" | grep -c enif_)
+      [ "$e" -ge 100 ] || {
+        echo "otp-cross: the emulator exports only $e enif_* symbols; NIFs would not load" >&2; exit 1; }
+      echo "otp-cross: $beam is AArch64 with $n dynamic-loader and $e NIF API symbols"
+      echo "otp-cross: installed $(du -sh "${{targets.destdir}}" | cut -f1) of OTP"

@@ -1636,11 +1636,16 @@ have the aarch64 package install them:
   `scripts/build-image.sh`, a `prebuilt/` branch in each recipe). One build
   serves both architectures, and an emulated `mix release` disappears.
 * **Shim and toolchain** were already native (`zig build -Dtarget=…`).
-* **OTP** stays emulated for now: cross-compiling OTP means a target sysroot
-  for openssl/ncurses/zlib, a matching build-host ERTS as bootstrap, and
-  `erl_xcomp_*` overrides for configure's runtime probes. That is a project of
-  its own, and it is the only emulated step left (docs/notes/melange-apko.md
-  records the plan).
+* **OTP** - `melange/otp-cross.yaml`, the same shape as the kernel's: OTP's
+  own cross mode (`erl_xcomp_*` answers configure's runtime probes), the
+  x86_64 `elixos-otp` package as the bootstrap ERTS that compiles the target's
+  Erlang sources, Alpine's clang as the compiler, and a sysroot of Alpine's own
+  aarch64 packages - libc, GCC's runtime and C++ standard library, and
+  openssl/ncurses/zlib - installed by apk. About 80 seconds instead of about 13
+  minutes. Two properties only a boot would otherwise reveal are checked at
+  build time: `dlopen` present in the emulator (without it every NIF fails with
+  "Dynamic loading not supported"), and the NIF API in `.dynsym` (without it
+  every NIF fails to relocate).
 
 Zig is the cross compiler where the build system is ours: the shim and
 `postgres-init` are `zig build -Dtarget=aarch64-linux-none`. For the kernel it
@@ -1652,8 +1657,8 @@ so those builds stay their own build systems, with the *compiler* and the
 *host* doing the crossing.
 
 **Consequences.** An aarch64 image rebuild costs about five minutes of kernel
-plus the assembly, instead of an hour; the only emulated work left is OTP. The
-artifacts are verifiable the same way as before - `test-qemu-aarch64` boots
+plus the assembly, instead of an hour, and nothing in that path emulates a
+compiler for the kernel, Elixir, the factory or OTP. The artifacts are verifiable the same way as before - `test-qemu-aarch64` boots
 the image on `qemu-system-aarch64` and the M16 acceptance defines a module,
 saves it and power-cycles - and the kernel's own config guard still runs on
 the cross-compiled config. A cross-built artifact is part of the package

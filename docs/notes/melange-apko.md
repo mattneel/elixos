@@ -272,7 +272,7 @@ skip melange's target environment for its *Erlang* half, so the recipe has to
 run the bootstrap `erl` from the native OTP install - which is why the plan
 above names every input rather than pointing at a flag.
 
-### Where the OTP cross attempt stopped
+### Trusting the target's indexes, and unpacking its packages
 
 Two attempts, both run as a standalone `--arch x86_64` melange build (the
 shape `kernel-cross.yaml` uses), got the sysroot and the compiler search paths
@@ -312,14 +312,16 @@ right and reached `erts/configure`:
   Diagnostics meant for the host have to go to stderr, which melange keeps in
   its own log.
 
-### Where the cross build stands now
+### The Zig attempt, kept for the record
 
-The recipe below is the working state: nothing before `make` fails any more,
-and every failure found on the way is fixed in it. It is kept here rather than
-in `melange/` because it does not finish yet - an unrun recipe in the build
-tree is dead weight.
+Two attempts at this with Zig got as far as `make` compiling, and their traps
+are recorded here because most of them are not Zig-specific: sysroot
+extraction, index trust and dependency resolution are the same story for any
+cross build. The recipe at the end of this file is that state, kept only as a
+record; the working one is `melange/otp-cross.yaml` in the tree.
 
-What got it from "configure cannot find libraries" to "make is compiling":
+What the Zig attempts got from "configure cannot find libraries" to "make is
+compiling":
 
 * the aarch64 signing key (above), so the target indexes verify;
 * the sysroot installed by `apk add --root --usermode`, not by `tar` (below);
@@ -333,20 +335,32 @@ What got it from "configure cannot find libraries" to "make is compiling":
   driver turns the asmjit precompiled-header rule into a link
   (`ld.lld: error: ...core.o: unknown file type`).
 
-The remaining failure is the C++ include path inside the build. `make` reports
+**What finished it was dropping Zig for clang.** Alpine's clang is a cross
+compiler by nature, it obeys `-L`, `-isystem` and `--sysroot` literally, and it
+uses the same C++ standard library as the emulated aarch64 build (libstdc++,
+from the target's own packages, rather than Zig's bundled libc++). With the
+sysroot populated by `apk add --root` and the target's `gcc`/`g++` packages in
+it, configure and the whole build went through - in about 80 seconds, and the
+result boots the aarch64 image with a passing M16 acceptance. Three details
+were needed for the link and the boot:
 
-    beam/jit/arm/beam_asm.hpp:23:10: fatal error: 'string' file not found
-    zstd/common/compiler.h:228:14: fatal error: 'arm_neon.h' file not found
-    .../asmjit/core/api-config.h:45:10: fatal error: 'initializer_list' file not found
+* `-fuse-ld=lld` in **LDFLAGS**, never in `CC`: configure probes with `-Werror`,
+  and clang's "argument unused during compilation" is an error for a
+  compile-only step, so `-fuse-ld` in `CC` made configure's own feature probes
+  fail ("Compiler option -fvisibility=hidden not supported"). A `ld` symlink
+  next to the compiler is the belt to those suspenders.
+* `-Wl,--export-dynamic`: the NIF and driver API symbols have default
+  visibility, but a link that does not ask for dynamic exports leaves them out
+  of `.dynsym` - and then every NIF fails to relocate at load time
+  (`enif_get_tuple: symbol not found`), which is a boot failure, not a build
+  failure. The build now asserts both that and `dlopen` before it declares
+  success.
+* `--target=aarch64-alpine-linux-musl`: Alpine's own triplet is the name the
+  GCC installation inside the sysroot answers to, and that is where clang looks
+  for crt objects, libgcc and the C++ headers. (`--host` stays
+  `aarch64-linux-musl` for OTP and autoconf, which must canonicalize it.)
 
-and yet the same `zig c++ --target=aarch64-linux-musl` in the same environment
-prints a search list that contains all of them (`<sdk>/lib/libcxx/include`,
-`<sdk>/lib/include`, the musl dirs) - and a bare `#include <string>` probe
-compiles. The build therefore invokes something other than what a hand-written
-`zig c++` produces. Next step, and it is a small one: keep `V=1`, print the
-*verbatim* command line for one of those objects (`grep -n 'beam_asm_global'` in
-the build log), and compare it against `zig c++ -E -v`. Everything it needs is
-in the SDK, so the difference is a flag.
+### The Zig recipe, as it stood
 
 ```yaml
 # Erlang/OTP for arm64, cross-compiled on the *build host* (ADR-060).

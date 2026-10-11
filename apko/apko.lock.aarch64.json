@@ -304,18 +304,18 @@
         "version": "29.1.1-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-691",
-          "checksum": "sha1-WFQNlu7k+6fbtAHz1JZTdgsO1Ao="
+          "range": "bytes=0-685",
+          "checksum": "sha1-CYFEbH3gLOmwni5Rj18jcGAWDB4="
         },
         "control": {
-          "range": "bytes=692-2527",
-          "checksum": "sha1-ir+OWx06TtmjkVqw7yuUubGq12Y="
+          "range": "bytes=686-2689",
+          "checksum": "sha1-MSXI0DA6YViVi31YGXlapdBVL1E="
         },
         "data": {
-          "range": "bytes=2528-64560315",
-          "checksum": "sha256-dpVDNqworoUpbtBkSUrqxF6tz5S+iVB7+a//eHFDok8="
+          "range": "bytes=2690-53673565",
+          "checksum": "sha256-UXvM5DkclrYGpaieCz2Khj5k2F0qOC7os4sOMnkh7RU="
         },
-        "checksum": "Q1ir+OWx06TtmjkVqw7yuUubGq12Y="
+        "checksum": "Q1MSXI0DA6YViVi31YGXlapdBVL1E="
       },
       {
         "name": "elixos-elixir",

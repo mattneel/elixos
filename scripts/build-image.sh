@@ -78,7 +78,16 @@ package_inputs() { # package_inputs <arch> <package>: hash of everything the rec
   local -a paths
   case "$pkg" in
     kernel) paths=(kernel melange/kernel.yaml prebuilt/kernel) ;;
-    otp) paths=(.tool-versions melange/otp.yaml) ;;
+    # The aarch64 ERTS comes from the cross build (ADR-060), so the tree that
+    # build staged is one of this package's inputs. The x86_64 build must not
+    # see it: it is another architecture's binaries.
+    otp)
+      if [ "$arch" = aarch64 ]; then
+        paths=(.tool-versions melange/otp.yaml prebuilt/otp prebuilt/otp.links)
+      else
+        paths=(.tool-versions melange/otp.yaml)
+      fi
+      ;;
     elixir) paths=(.tool-versions melange/elixir.yaml prebuilt/elixir prebuilt/elixir.links) ;;
     factory) paths=(os hex .tool-versions melange/factory.yaml prebuilt/factory prebuilt/factory.links) ;;
     shim) paths=(shim spec .zig-version build.zig build.zig.zon melange/shim.yaml) ;;
@@ -451,6 +460,11 @@ build_arch() { # build_arch <arch>
     # Keyed on what the recipes read, not on whole directories: editing an
     # unrelated script must not rebuild a kernel.
     cross_build kernel "$ROOT/melange/kernel-cross.yaml" kernel scripts/check-kernel-config.sh
+    # The ERTS is the one package that is pure compiled C, so a cross build
+    # needs a real cross toolchain - and OTP has a native cross mode for it
+    # (ADR-060). This runs on the build machine, in this architecture's own
+    # environment; the aarch64 elixos-otp package installs what it produces.
+    cross_build otp "$ROOT/melange/otp-cross.yaml" .tool-versions melange/otp.yaml
     native_reuse
   fi
   build_packages "$arch"
@@ -475,9 +489,10 @@ build_arch() { # build_arch <arch>
 stage
 
 if [ "$#" -eq 0 ]; then
-  # This machine's own image. The other architecture's packages are built
-  # under emulation (ADR-041) and cost many minutes, so it is asked for
-  # explicitly: `scripts/build-image.sh aarch64`, or `make images`.
+  # This machine's own image. The other architecture's takes several minutes
+  # even with the native cross builds (kernel, ERTS) and the reused trees
+  # (Elixir, the factory), so it is asked for explicitly:
+  # `scripts/build-image.sh aarch64`, or `make images`.
   set -- "$HOST_ARCH"
 fi
 
