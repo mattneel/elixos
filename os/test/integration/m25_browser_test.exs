@@ -95,7 +95,10 @@ defmodule Elixos.Integration.M25BrowserTest do
 
     assert out =~ ~r{/system\s+\S+\s+ro[, ]}, out
 
-    # Rescue is the factory with /priv mounted: no browser.
+    # Rescue is the factory with /priv mounted: no browser. The first VM has to
+    # go first - the disk is one file, and its mount is a running qemu's
+    # (ADR-067).
+    QEMU.stop(vm)
     vm = QEMU.boot(ctx, disk: disk, append: ["elixos.safe"])
     {_, vm} = QEMU.expect(vm, QEMU.iex_prompt(), 300_000)
 

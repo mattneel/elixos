@@ -91,6 +91,7 @@ package_inputs() { # package_inputs <arch> <package>: hash of everything the rec
     elixir) paths=(.tool-versions melange/elixir.yaml prebuilt/elixir prebuilt/elixir.links) ;;
     factory) paths=(os hex .tool-versions melange/factory.yaml prebuilt/factory prebuilt/factory.links) ;;
     shim) paths=(shim spec .zig-version build.zig build.zig.zon melange/shim.yaml) ;;
+    browser) paths=(melange/browser.yaml) ;;
     toolchain) paths=(toolchain .zig-version melange/toolchain.yaml) ;;
     *) paths=(melange) ;;
   esac
@@ -202,7 +203,9 @@ stage_prebuilt() { # stage_prebuilt <name> <apk>
 # Elixir and the factory are architecture-neutral: bytecode, shell scripts and
 # symlinks into the machine's own OTP install (ADR-060). The x86_64 build
 # already builds them natively, so the aarch64 packages install that same tree
-# instead of rebuilding it under emulation.
+# instead of rebuilding it under emulation. That holds as long as no dependency
+# carries a NIF - the moment one does, the factory has to be built for the
+# target (ADR-066).
 native_reuse() {
   local pkg pname repo="$BUILD/apk/x86_64" apk
   for pkg in elixir factory; do
@@ -224,9 +227,9 @@ build_packages() { # build_packages <arch>
   local cached_inputs="" cached_sha="" cached_apk=""
   local -a extra apks
   # Dependency order, not glob order: OTP before Elixir and the factory (they
-  # build against it), the kernel and the shim independent, the toolchain last
-  # (it needs only a compiler).
-  for pkg in kernel otp elixir factory shim toolchain; do
+  # build against it), the kernel and the shim independent, the browser a
+  # download-and-repack, the toolchain last (it needs only a compiler).
+  for pkg in kernel otp elixir factory shim browser toolchain; do
     file="$SRC/melange/$pkg.yaml"
     [ -f "$file" ] || continue
     pname="elixos-$pkg"
@@ -315,7 +318,8 @@ except (OSError, KeyError, ValueError):
 sys.exit(0 if current == checksum else 1)
 PY
   then
-    "$APKO" lock "$config" --arch "$arch" --cache-dir "$MIRROR" --output "$lockfile"
+    "$APKO" lock "$config" --arch "$arch" --cache-dir "$MIRROR" \
+      -r "$BUILD/apk/$arch" -k "$KEY.pub" --output "$lockfile"
   fi
 }
 
@@ -325,6 +329,7 @@ assemble_system() { # assemble_system <arch> <work directory>
   mkdir -p "$work"
   "$APKO" build --lockfile "$ROOT/apko/system.lock.$arch.json" --arch "$arch" \
     --build-date "$BUILD_DATE" --sbom-path "$work" --cache-dir "$MIRROR" \
+    -r "$BUILD/apk/$arch" -k "$KEY.pub" \
     "$ROOT/apko/system.yaml" "elixos-system:$arch" "$work/rootfs.tar"
   rm -rf "$work/oci" "$work/rootfs"
   mkdir -p "$work/oci" "$work/rootfs"

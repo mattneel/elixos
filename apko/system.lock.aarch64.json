@@ -1,8 +1,8 @@
 {
   "version": "v1",
   "config": {
-    "name": "apko/system.yaml",
-    "checksum": "sha256-4qXamA+BkyNtFA55AkBx7jbYTJZ9gwvTy8rTqFftL6E="
+    "name": "/home/autark/src/elixos/apko/system.yaml",
+    "checksum": "sha256-wLJLec0rQIXUyzHtpXgU9d/QDlgLKWxuBjn8kII0Pho="
   },
   "contents": {
     "keyring": [
@@ -74,6 +74,25 @@
           "checksum": "sha256-aSzrU6l+LeW8i5YxjfP9wM7WGFRV0yI7jMVtbF/yABQ="
         },
         "checksum": "Q1tH9vSL07Dtx6XeOS8n1bskUv+1M="
+      },
+      {
+        "name": "elixos-browser",
+        "url": "/home/autark/src/elixos/build/apk/aarch64/aarch64/elixos-browser-1.0.0-r0.apk",
+        "version": "1.0.0-r0",
+        "architecture": "aarch64",
+        "signature": {
+          "range": "bytes=0-688",
+          "checksum": "sha1-ZZhBhNfGcuonN1GZUHt2c2cBT1c="
+        },
+        "control": {
+          "range": "bytes=689-2741",
+          "checksum": "sha1-lelXWAwRRaK0TRjmPtl6HxwUu7s="
+        },
+        "data": {
+          "range": "bytes=2742-29438408",
+          "checksum": "sha256-cn5WDdoOr8zZANP/Mlm/jkO9hoAripBREMnPtDxRruM="
+        },
+        "checksum": "Q1lelXWAwRRaK0TRjmPtl6HxwUu7s="
       },
       {
         "name": "musl",

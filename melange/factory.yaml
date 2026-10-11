@@ -47,7 +47,8 @@ pipeline:
       # into the machine's own OTP install (include_erts: false, ADR-041), so
       # it is architecture-neutral: scripts/build-image.sh builds it once, in
       # the native x86_64 environment, and the aarch64 package installs that
-      # tree (ADR-060). Without it the build below still works.
+      # tree (ADR-060). Without it the build below still works. A dependency
+      # that carries a NIF would end this (ADR-066) - there is none today.
       if [ -d /home/build/prebuilt/factory ]; then
         cp -a /home/build/prebuilt/factory/. "${{targets.destdir}}/"
       # The symlink layout the native build had (links into the machine's

@@ -6,7 +6,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="${ELIXOS_BUILD:-$ROOT/build}"
-SIZE="${DISK_SIZE:-1G}"
+SIZE="${DISK_SIZE:-2G}"
 ARCH="${1:-x86_64}"
 case "$ARCH" in
   x86_64) DISK="$BUILD/disk.img" ;;

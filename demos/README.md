@@ -24,6 +24,7 @@ means a failing test first, then the fix).
 | `m18-postgres.mp4` | M18 | PostgreSQL 17 answers from the prompt as uid 70, both extensions load from the read-only `/system` image, and a row survives the power cycle with a clean shutdown |
 | `m19-oban.mp4` | M19 | a worker defined at the prompt runs a job now, and a job scheduled for later survives a power cycle and runs on the next boot |
 | `m20-ask.mp4` | M20 | an agent asks the human through the Jido action, the console shows the notice line, the prompt answers, and the answer returns into the agent's state |
+| `m25-browser.mp4` | M25 | the headless browser ships in the read-only image, comes up with the system, and answers the four verbs - navigate, evaluate, screenshot - over jido_browser and a CDP connection from Hex |
 
 ## Play, record, check
 

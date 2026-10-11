@@ -2,27 +2,27 @@ defmodule Elixos.Browser do
   @moduledoc """
   The headless browser (M25, docs/ROADMAP.md).
 
-  The stack is the ecosystem's, not ours (ADR-065): `jido_browser`'s Lightpanda
-  adapter speaks CDP through `light_cdp`, which owns the process. What this
-  module owns is the trust decision - *which* binary, pinned and verified - and
-  the two facts a caller should not have to know: the adapter starts only in
-  normal mode, and it must not keep the prompt waiting or take it down with it.
+  The protocol is the ecosystem's: `cdp_ex` speaks CDP over a WebSocket, and
+  `Elixos.Browser.CDP` is the little session/page interface around it - the same
+  one `jido_browser`'s Lightpanda adapter expects, which keeps that adapter one
+  line away if its dependency situation ever changes (ADR-065). The process is
+  started here, as a `Port`: no launcher that wants a shell (ADR-012).
 
   The binary ships in the read-only system image under `/system/browser`,
-  verified when the image is built, never downloaded at run time (ADR-064). Its
-  manifest decides the argv: a musl-clean binary is exec'd directly, a glibc one
-  through glibc's own loader - and the image installs the private glibc at the
-  standard paths, so in practice the upstream binary runs directly and the
-  adapter can spawn it by path. `command/1` is that decision, pure and testable.
+  pinned and verified when the image is built, never downloaded at run time
+  (ADR-064), with its private glibc at the paths glibc itself expects so the
+  unmodified upstream binary runs as itself. The manifest decides the argv;
+  `command/1` is that decision, pure and testable. Starting is asynchronous, so
+  a slow or missing adapter never delays the prompt, and a failure leaves
+  `status/0` at `{:error, :not_running}` instead of taking anything down.
   """
 
   use GenServer
 
   require Logger
 
-  alias Jido.Browser, as: JidoBrowser
+  alias Elixos.Browser.CDP
 
-  @adapter Jido.Browser.Adapters.Lightpanda
   @manifest "/system/browser/manifest.json"
   @call_timeout 120_000
 
@@ -142,29 +142,17 @@ defmodule Elixos.Browser do
   @impl true
   def init(opts) do
     if Keyword.get(opts, :mode, :normal) == :normal do
-      {:ok, %{session: nil}, {:continue, :start}}
+      {:ok, %{session: nil, page: nil}, {:continue, :start}}
     else
       :ignore
     end
   end
 
-  # Starting is asynchronous on purpose: a slow or missing adapter never delays
-  # the prompt, and a failure leaves `status/0` at not_running instead of taking
-  # anything down with it. Calls that arrive first simply queue.
   @impl true
   def handle_continue(:start, state) do
-    with {:ok, [exec | _args]} <- command(),
-         :ok <- check_binary(exec),
-         {:ok, session} <-
-           JidoBrowser.start_session(
-             adapter: @adapter,
-             binary_path: exec,
-             # The adapter's own defaults are `light_cdp`, which would spawn the
-             # browser through `erlexec` and wants SHELL set (ADR-012). These
-             # two are the same contract over `cdp_ex` and a Port.
-             light_cdp_module: Elixos.Browser.CDP,
-             page_module: Elixos.Browser.CDP.Page
-           ) do
+    with {:ok, argv} <- command(),
+         :ok <- check_command(argv),
+         {:ok, session} <- CDP.start(command: argv) do
       {:noreply, %{state | session: session}}
     else
       {:error, reason} ->
@@ -177,15 +165,10 @@ defmodule Elixos.Browser do
     end
   end
 
-  # The ecosystem's server spawns the binary itself, so the manifest must name
-  # the binary - not a loader that would need arguments of ours (ADR-065: the
-  # private glibc lives at the standard paths for exactly this reason).
-  defp check_binary(exec) do
-    cond do
-      not File.regular?(exec) -> {:error, {:missing_binary, exec}}
-      Path.basename(exec) =~ "ld-linux" -> {:error, {:loader_manifest, exec}}
-      true -> :ok
-    end
+  # The manifest's argv is what gets spawned - a loader first for a glibc
+  # binary, with its libraries beside it under /system (ADR-064).
+  defp check_command([exec | _args]) do
+    if File.regular?(exec), do: :ok, else: {:error, {:missing_program, exec}}
   end
 
   @impl true
@@ -197,25 +180,29 @@ defmodule Elixos.Browser do
     do: {:reply, {:error, :not_running_adapter}, state}
 
   def handle_call({:navigate, url}, _from, state) do
-    with {:ok, session, _nav} <- JidoBrowser.navigate(session(state), url),
-         {:ok, session, %{content: text}} <- JidoBrowser.extract_content(session, format: :text) do
-      {:reply, {:ok, text}, %{state | session: session}}
+    with {:ok, page, state} <- page(state),
+         :ok <- CDP.Page.navigate(page, url),
+         {:ok, text} <- CDP.Page.text(page) do
+      {:reply, {:ok, text}, state}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
   def handle_call({:eval, script}, _from, state) do
-    case JidoBrowser.evaluate(session(state), script) do
-      {:ok, session, %{result: value}} -> {:reply, {:ok, value}, %{state | session: session}}
-      {:ok, session, other} -> {:reply, {:ok, other}, %{state | session: session}}
+    with {:ok, page, state} <- page(state),
+         {:ok, value} <- CDP.Page.evaluate(page, script) do
+      {:reply, {:ok, value}, state}
+    else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
   def handle_call(:screenshot, _from, state) do
-    case JidoBrowser.screenshot(session(state)) do
-      {:ok, session, %{bytes: png}} -> {:reply, {:ok, png}, %{state | session: session}}
+    with {:ok, page, state} <- page(state),
+         {:ok, png} <- CDP.Page.screenshot(page) do
+      {:reply, {:ok, png}, state}
+    else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
@@ -225,9 +212,17 @@ defmodule Elixos.Browser do
 
   @impl true
   def terminate(_reason, state) do
-    if state.session, do: JidoBrowser.end_session(state.session)
+    if state.session, do: CDP.stop(state.session)
     :ok
   end
 
-  defp session(%{session: session}), do: session
+  # One page per session, made on first use: Lightpanda's serve mode keeps one.
+  defp page(%{page: nil} = state) do
+    case CDP.new_page(state.session) do
+      {:ok, page} -> {:ok, page, %{state | page: page}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp page(%{page: page} = state), do: {:ok, page, state}
 end

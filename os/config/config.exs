@@ -29,14 +29,6 @@ config :elixos, Elixos.Oban.Repo,
   pool_size: 5,
   log: false
 
-# extractous_ex - jido_browser's document extractor - publishes NIFs for glibc
-# only, so on this musl system it is built from source, by the Rust the box
-# carries (ADR-066). Rustler needs Rust, exactly as Zigler needs Zig; the
-# toolchain's own `cc` is the linker, which Elixos.Rust arranges. The value is
-# a keyword list keyed by package: `force_build: true` is not the same thing and
-# makes the macro crash while it reads its own configuration.
-config :rustler_precompiled, force_build: [extractous_ex: true]
-
 if config_target() == :elixos do
   import_config "elixos.exs"
 end

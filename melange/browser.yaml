@@ -1,0 +1,127 @@
+# A headless browser for the prompt (M25, ADR-064).
+#
+# Lightpanda's upstream binary is glibc-linked ("for GNU/Linux") and needs only
+# libc.so.6, libm.so.6 and the loader - the milestone's gate ran `ldd` and found
+# exactly those three, and the binary runs when they are put where its ELF
+# interpreter already points (/lib64/ld-linux-x86-64.so.2, and
+# /lib/x86_64-linux-gnu/ for the libraries; arm64 uses
+# /lib/ld-linux-aarch64.so.1 and /lib/aarch64-linux-gnu/). Alpine has nothing
+# at those paths - musl lives in /lib/ld-musl-*.so.1 - so nothing is shadowed
+# and the unmodified upstream binary needs no wrapper, no loader arguments and
+# no shell (ADR-012). The private glibc comes from Debian's libc6, pinned by
+# SHA-256, unmodified, LGPL, in the standard directories glibc itself expects.
+#
+# The binary ships stripped: 188 MB becomes 70 MB, which the image pays once.
+# Nothing here is fetched on the box: the image is built, verified and sealed.
+package:
+  name: elixos-browser
+  version: "1.0.0"
+  epoch: 0
+  description: "Lightpanda: the headless browser the prompt drives over CDP (M25)"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime: []
+
+vars:
+  # https://github.com/lightpanda-io/browser/releases/tag/1.0.0
+  lp-sha256-x86_64: aa5a4b8ed53d1e38b3c73f5b2647d0a84a82e6744557f45f9a9c85858aa031c3
+  lp-sha256-aarch64: 69791924bcee43b13b224af4c845622c5fe66fdbc1b8143bfaa39ca8f85244f5
+  # Debian 13 (trixie) libc6, version 2.41-12+deb13u4.
+  libc-sha256-x86_64: 967aa62605721081c3eb2a17650611a792aa802d76a6511d1840242623d204c9
+  libc-sha256-aarch64: 8784eda966b189c777a384dac5ce009e8fc9b52d006926c5a013e7fa8aa688cc
+
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    packages:
+      - alpine-release=3.24.2-r0
+      - bash
+      - binutils
+      - curl
+      # To describe what was shipped in the build log.
+      - file
+      - tar
+      # For whichever compressor a libc6 .deb uses (xz today, zstd tomorrow).
+      - xz
+      - zstd
+
+pipeline:
+  - runs: |
+      case "${{build.arch}}" in
+        x86_64)
+          lp_arch=x86_64
+          lp_sha="${{vars.lp-sha256-x86_64}}"
+          libc_sha="${{vars.libc-sha256-x86_64}}"
+          libc_url="http://deb.debian.org/debian/pool/main/g/glibc/libc6_2.41-12+deb13u4_amd64.deb"
+          triple=x86_64-linux-gnu
+          loader=ld-linux-x86-64.so.2
+          ;;
+        aarch64)
+          lp_arch=aarch64
+          lp_sha="${{vars.lp-sha256-aarch64}}"
+          libc_sha="${{vars.libc-sha256-aarch64}}"
+          libc_url="http://deb.debian.org/debian/pool/main/g/glibc/libc6_2.41-12+deb13u4_arm64.deb"
+          triple=aarch64-linux-gnu
+          loader=ld-linux-aarch64.so.1
+          ;;
+        *)
+          echo "elixos-browser: unsupported arch ${{build.arch}}" >&2
+          exit 1
+          ;;
+      esac
+
+      mkdir -p /tmp/browser
+      cd /tmp/browser
+
+      curl -fsSL -o lightpanda \
+        "https://github.com/lightpanda-io/browser/releases/download/${{package.version}}/lightpanda-${lp_arch}-linux"
+      echo "${lp_sha}  lightpanda" | sha256sum -c -
+      chmod 0755 lightpanda
+      # 188 MB of release binary carry a symbol table nothing on the box reads.
+      strip --strip-all lightpanda
+
+      curl -fsSL -o libc6.deb "$libc_url"
+      echo "${libc_sha}  libc6.deb" | sha256sum -c -
+      ar x libc6.deb
+      # Debian 13 compresses the data member with xz; a later libc6 may use
+      # zstd. Take whichever is there and let tar pick the decompressor from
+      # the suffix.
+      tar -xf "$(ls data.tar.*)"
+
+      dest="${{targets.destdir}}"
+      install -d "$dest/browser/glibc"
+
+      # The three files the binary's ELF interpreter and glibc's own search
+      # rules name, kept together with the binary: the manifest below starts
+      # the loader explicitly with --library-path pointing here, so nothing has
+      # to be placed at the root filesystem's glibc paths - which this musl
+      # system does not have and should not grow (ADR-064).
+      install -m 0755 "usr/lib/$triple/$loader" "$dest/browser/glibc/$loader"
+      install -m 0644 "usr/lib/$triple/libc.so.6" "usr/lib/$triple/libm.so.6" \
+        "$dest/browser/glibc/"
+      install -m 0755 lightpanda "$dest/browser/lightpanda"
+
+      # What the system reads to decide the argv (Elixos.Browser.command/0):
+      # a glibc binary, so the loader is named and started with the libraries
+      # beside it.
+      printf '%s\n' \
+        '{' \
+        '  "binary": "/system/browser/lightpanda",' \
+        '  "args": ["serve", "--port", "9222"],' \
+        '  "loader": {' \
+        '    "ld": "/system/browser/glibc/'"$loader"'",' \
+        '    "lib": "/system/browser/glibc"' \
+        '  }' \
+        '}' > "$dest/browser/manifest.json"
+
+      # Evidence in the build log: what was shipped, and what it needs. The
+      # binary cannot *run* in this build guest - the glibc it asks for is only
+      # in the package's own tree, not at the guest's /lib64 - so what is
+      # checked here is its shape. Where it runs is the QEMU acceptance.
+      file "$dest/browser/lightpanda"
+      ls -l "$dest/browser/glibc/$loader" "$dest/browser/glibc/libc.so.6" \
+        "$dest/browser/manifest.json"
+      cat "$dest/browser/manifest.json"
+      du -sh "$dest/browser"

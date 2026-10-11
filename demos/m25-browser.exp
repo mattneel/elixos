@@ -1,0 +1,105 @@
+#!/usr/bin/expect -f
+# M25: a browser to call from the prompt. It is in the read-only system image
+# (nothing is downloaded on the box), it comes up with the system, and the four
+# verbs work: navigate, evaluate, screenshot - over the ecosystem's stack, with
+# the process spawned as a Port.
+set timeout 300
+expect_after {
+    timeout {
+        puts stderr "\nDEMO ABORTED waiting for a pattern. Last output:\n$expect_out(buffer)"
+        exit 1
+    }
+}
+
+proc boot {} {
+    global env spawn_id
+    spawn -noecho qemu-system-x86_64 \
+        -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+        -nographic -no-reboot \
+        -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+        -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+        -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+        -device virtio-rng-pci -nic none
+    expect "iex(1)> "
+    send {IEx.configure(colors: [enabled: false])}
+    send "\r"
+    expect -re {iex\([0-9]+\)> }
+    sleep 1
+}
+
+boot
+
+# The adapter is running, and the argv came from the image.
+send {Elixos.Browser.status()}
+send "\r"
+expect -re {[\r\n]+\{:ok, #PID<[0-9]+\.[0-9]+\.[0-9]+>\}[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+send {Elixos.Browser.command()}
+send "\r"
+expect -re {[\r\n]+\{:ok, \["/system/browser/lightpanda"}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# "Shipped, never downloaded": the binary lives on the read-only image.
+send {File.read!("/proc/mounts") |> String.split("\n") |> Enum.find(&String.contains?(&1, " /system "))}
+send "\r"
+expect -re {[\r\n]+".* /system \S+ ro[, ].*"[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# A page to render, served from the box's own loopback.
+send {defmodule Demo.Page do
+  def start(port) do
+    {:ok, listen} = :gen_tcp.listen(port, [:binary, active: false, reuseaddr: true])
+    spawn_link(fn -> loop(listen) end)
+    :ok
+  end
+
+  defp loop(listen) do
+    {:ok, socket} = :gen_tcp.accept(listen)
+    _ = :gen_tcp.recv(socket, 0, 5_000)
+    body = "<html><head><title>stub page</title></head><body><h1>hello from the stub</h1><p>rendered by Lightpanda</p></body></html>"
+    :gen_tcp.send(socket, [
+      "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: ",
+      Integer.to_string(byte_size(body)),
+      "\r\nconnection: close\r\n\r\n",
+      body
+    ])
+    :gen_tcp.close(socket)
+    loop(listen)
+  end
+end}
+send "\r"
+expect -exact "{:module, Demo.Page,"
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+send {Demo.Page.start(4040)}
+send "\r"
+expect -re {[\r\n]+:ok[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+send {Elixos.Browser.navigate("http://127.0.0.1:4040/")}
+send "\r"
+expect -re {[\r\n]+\{:ok, "[^"]*hello from the stub}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+send {Elixos.Browser.eval("document.title")}
+send "\r"
+expect -re {[\r\n]+\{:ok, "stub page"\}[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+send {with {:ok, png} <- Elixos.Browser.screenshot(), do: {byte_size(png), binary_part(png, 0, 4)}}
+send "\r"
+expect -re {[\r\n]+\{\d+, <<137, 80, 78, 71>>\}[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+send {Elixos.poweroff()}
+send "\r"
+expect eof

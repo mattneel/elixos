@@ -278,6 +278,11 @@ defmodule Elixos.Agents do
   # module itself only has `start_link/1`, and naming it is how an agent joins
   # the instance the OS calls `Jido` - that is what `jido: Jido` means.
   defp start_jido(instance) do
+    # `function_exported?/3` answers false for a module that is not loaded, so
+    # an instance nothing has touched yet looks like one without a start_link
+    # and the agent fails with :no_start_link. Ask the code server first.
+    _ = Code.ensure_loaded(instance)
+
     cond do
       Process.whereis(instance) ->
         :ok

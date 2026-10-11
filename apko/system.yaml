@@ -17,6 +17,10 @@ contents:
     - postgresql-pgvector=0.6.2-r1@pg17
     # Alpine's APKBUILD uses -DAPACHE_ONLY=ON; no Timescale License code.
     - postgresql-timescaledb=2.17.2-r1@pg17
+    # The headless browser (M25): a service asset like the extensions above,
+    # so /system carries it - binary, private glibc and manifest - and the
+    # rootfs does not (ADR-064).
+    - elixos-browser
 
 accounts:
   users:

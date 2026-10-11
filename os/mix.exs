@@ -54,24 +54,24 @@ defmodule Elixos.MixProject do
   # M19). Pure BEAM, no NIFs: the postmaster is a shim helper and the BEAM
   # reaches it as an ordinary PostgreSQL client over loopback.
   #
-  # The browser (M25, ADR-065) is the ecosystem's stack rather than ours:
-  # jido_browser's adapter does the driving, over a CDP client from Hex, with
-  # the process started here as an ordinary Port (ADR-012: no shell, and no
-  # launcher that wants one). `light_cdp` is deliberately *not* the client:
-  # it spawns the browser through `erlexec`, which refuses to start unless the
-  # SHELL environment variable is set - the one variable this OS must not have
-  # to invent. `erlexec` is C++ built by `elixir_make`, and `extractous_ex`
-  # - jido_browser's document extractor - publishes glibc-only NIFs, so on this
-  # musl system it is built from source: Rustler needs Rust, exactly as Zigler
-  # needs Zig (ADR-066).
+  # The browser (M25, ADR-065) speaks the ecosystem's protocol: `cdp_ex` is the
+  # CDP client, and `Elixos.Browser.CDP` gives it the same little interface
+  # jido_browser's Lightpanda adapter expects, with the process started here as
+  # an ordinary Port (ADR-012: no shell, and no launcher that wants one).
+  #
+  # Two packages are deliberately *not* dependencies. `light_cdp` spawns the
+  # browser through `erlexec`, which refuses to start unless SHELL is set - the
+  # one variable this OS must not invent. `jido_browser` hard-depends on
+  # `extractous_ex`, whose Rust crate downloads a GraalVM JDK and Apache Tika
+  # natives and does not build on musl: a JVM-shaped payload is not worth it for
+  # a browser, and the interface implemented here means either is one line away
+  # if that changes.
   defp deps,
     do: [
       {:jido, "~> 2.4"},
       {:oban, "~> 2.24"},
       {:ecto_sql, "~> 3.14"},
       {:postgrex, "~> 0.22"},
-      {:jido_browser, "~> 2.3"},
-      {:cdp_ex, "~> 0.10"},
-      {:rustler, "~> 0.37", runtime: false}
+      {:cdp_ex, "~> 0.10"}
     ]
 end

@@ -119,6 +119,11 @@ defmodule Elixos.Application do
             # action and every front-end sees the same queue. Not boot-critical,
             # and rescue runs none of it.
             {Elixos.Ask, mode: env.mode},
+            # The headless browser (M25): the ecosystem's stack over a Port,
+            # given the binary the image ships. Not boot-critical and rescue
+            # runs none of it, so a broken adapter costs the browser and not
+            # the prompt.
+            {Elixos.Browser, mode: env.mode},
             # Key-only SSH into the user's REPL (M12). Not boot-critical: with
             # no network, or in rescue, it logs and steps aside (the prompt
             # still comes up).

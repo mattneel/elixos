@@ -1768,21 +1768,26 @@ not a libc), and rebuilding Lightpanda means rebuilding V8 for musl - the last
 resort the roadmap names.
 
 **Decision.** Ship the pinned upstream binary, stripped (188 MB → 70 MB), at
-`/system/browser/lightpanda`, and beside it the three glibc files it needs from
+`/system/browser/lightpanda`, and with it the three glibc files it needs from
 Debian stable's `libc6` package (2.41-12+deb13u4, 2.8 MB amd64 / 2.5 MB arm64,
-pinned by SHA-256, LGPL, unmodified, in a directory of its own). The image ships
-a `manifest.json` naming the loader, `Elixos.Browser.command/1` turns it into
-argv - `[ld, "--library-path", lib, binary | args]` for the glibc case,
-`[binary | args]` for a musl-clean one - and the adapter is exec'd directly as
-a port (ADR-012: no shell). The aarch64 binary takes `ld-linux-aarch64.so.1`.
+pinned by SHA-256, LGPL, unmodified) - installed at the paths glibc itself
+insists on: the loader at `/lib64/ld-linux-x86-64.so.2` (arm64:
+`/lib/ld-linux-aarch64.so.1`) and the libraries in `/lib/<triple>/`, which is
+where the ELF interpreter embedded in the binary looks. Alpine keeps nothing
+there (musl lives in `/lib/ld-musl-*.so.1`), so nothing is shadowed and the
+*unmodified* upstream binary runs as itself. That matters beyond tidiness: the
+ecosystem's server spawns the program it is handed without arguments of ours,
+so a loader indirection would not fit. `command/1` still understands a
+`loader` entry - the milestone's tests cover that arm - but the shipped manifest
+needs no loader. The aarch64 binary takes `ld-linux-aarch64.so.1`.
 
 **Consequences.** Each image grows by about 73 MB (70 MB browser, 3 MB glibc),
 which the initramfs carries too. Only Lightpanda sees the private glibc: it
-lives under `/system/browser/glibc`, the system stays musl, and nothing else
-links against it. `Elixos.Browser` starts the adapter in normal mode only and
-stops it on poweroff, so rescue never has a browser running - and the QEMU
-acceptance asserts exactly that. The musl rebuild stays possible, but the
-pinned upstream binary is what the milestone asked to evaluate first.
+sits in the standard glibc directories, which nothing else on this musl system
+reads, and the system stays musl. `Elixos.Browser` starts the adapter in normal
+mode only and stops it on poweroff, so rescue never has a browser running - and
+the QEMU acceptance asserts exactly that. The musl rebuild stays possible, but
+the pinned upstream binary is what the milestone asked to evaluate first.
 
 ## ADR-065: The browser leans on the ecosystem, and the box carries Rust
 
@@ -1799,22 +1804,50 @@ wrapper. Hex has the pieces, inspected before adopting:
 
 | package | role | deps |
 |---|---|---|
-| `lightpanda` | owns the process: `config :lightpanda, path:`, `Lightpanda.Server`, `ws_url/1` | `castore` |
-| `light_cdp` | the minimal CDP client; what `jido_browser`'s Lightpanda adapter uses | `websockex`, `jason`, `req`, `erlexec`, `telemetry` |
 | `jido_browser` | the adapter layer the roadmap named as an OS dependency | `jido`, `jido_action`, `zoi`, `splode`, `req`, `jason`, `uniq`, `floki`, `html2markdown`, `extractous_ex`, `nimble_pool`, `domainatrex`, `typed_struct` |
+| `cdp_ex` | the CDP client: attach mode (`connect:`), `navigate`, `evaluate`, `html`, `screenshot` | `mint_web_socket`, `jason`, `telemetry` |
+| `light_cdp` | what the adapter reaches for by default | `websockex`, `jason`, `req`, **`erlexec`**, `telemetry` |
+| `lightpanda` | installer and `Server` for the binary | `castore` |
 
 **Decision.** `Elixos.Browser` stays the surface the milestone's tests describe
-(`command/0,1`, `status/0`, `navigate/1`, `eval/1`, `screenshot/0`) and becomes
-a wrapper over `jido_browser`, whose Lightpanda adapter is a wrapper over
-`light_cdp`, with `lightpanda` owning the process. The hand-written
-`Elixos.Browser.CDP` is deleted.
+(`command/0,1`, `status/0`, `navigate/1`, `eval/1`, `screenshot/0`). The
+protocol is the ecosystem's - `cdp_ex`, whose dependencies are `mint_web_socket`,
+`jason` and `telemetry` - wrapped in `Elixos.Browser.CDP`: the *same* session
+and page interface `jido_browser`'s Lightpanda adapter expects, with the browser
+process started here as a `Port`. Two packages are deliberately not
+dependencies, each for a reason worth recording:
 
-Two dependencies carry native code and that is now deliberate policy, not an
-accident: `erlexec` (a small C++ NIF, built by `elixir_make`) and
-`extractous_ex`, whose published NIFs are **glibc-only** (`x86_64`/`aarch64
--unknown-linux-gnu`) and therefore must be built from source on a musl system
-(`rustler_precompiled` with `force_build`). So the OS needs Rust - at image
-build time *and* in the live image, exactly as Zigler needs Zig - see ADR-066.
+* `light_cdp` (the adapter's default client) spawns the browser through
+  `erlexec`, which prints `SHELL environment variable not set! [exec.cpp:658]`
+  and exits 4 before any browser exists. `SHELL` is precisely the variable this
+  OS must not invent (ADR-012: no shell in the system), and it would be set for
+  a launcher whose whole job here is to start one binary - which a `Port` does,
+  and which the shim already does for PID 1.
+* `jido_browser` itself hard-depends on `extractous_ex`, whose Rust crate
+  downloads a **GraalVM JDK** and **Apache Tika** natives and whose build
+  script fails on musl:
+
+      Extracting GraalVM JDK archive …/graalvm-ce-archive.tar.gz
+      error: failed to run custom build command for `extractous v0.3.0`
+
+  A JVM-shaped, glibc-shaped document extractor is not something to force into
+  this image for a browser.
+
+Because the interface implemented here *is* the one that adapter calls, either
+package is one line away if that changes - `{:jido_browser, "~> 2.3"}` and the
+two `light_cdp_module:`/`page_module:` options already point at the modules
+above. `lightpanda` (the package) is not a dependency either: it exists to
+download the binary and to own it, and both are this milestone's own business -
+the binary is pinned and verified by `melange/browser.yaml` (ADR-064).
+
+The Rust toolchain in the image (ADR-066) is *not* a M25 requirement: it was
+built because the human asked for it as a capability, and M25 turned out not to
+need a Rust NIF at all.
+
+Native dependencies are not ruled out - the on-box toolchain carries Rust
+precisely so the box can build Rustler NIFs (ADR-066) - but each one has to be
+worth the build chain it drags along, and for a browser, `extractous_ex`'s
+GraalVM and Tika were not.
 
 **Consequences.** The OS gains a dependency tree it does not control, in
 exchange for not maintaining a protocol implementation; the milestone's tests
@@ -1854,13 +1887,39 @@ is the toolchain's own `cc`, the Zig bridge, declared in a `config.toml`
 command (ADR-019, ADR-020).
 
 **Consequences.** The disk toolchain grows from about 407 MB to about 630 MB
-(rust is 202 MB installed, cargo 22 MB), which the 1 GB data image absorbs but
+(rust is 202 MB installed, cargo 22 MB), which the 2 GB data image absorbs but
 should not be forgotten. Nothing in the factory or the shim changes: the
 toolchain is still a tool on the data disk, never in the root filesystem
 (ADR-009), and PID 1 stays Zig. The Rust that runs on the box is the box's own
 architecture, from the distribution, so there is no second compiler to
 cross-build for the toolchain itself. Rust NIFs are architecture-specific,
-which is the one thing this costs elsewhere: from here on the aarch64 image
-cannot reuse the x86_64 factory byte-for-byte when a dependency has a NIF - the
-factory is built per architecture, or its NIFs are cross-built with the Zig and
-clang cross toolchain that ADR-060 already established.
+which is the one thing this capability costs elsewhere: the day a dependency
+carries one, the aarch64 image can no longer reuse the x86_64 factory
+byte-for-byte - the factory would be built per architecture, or its NIFs
+cross-built with the Zig and clang cross toolchain ADR-060 established. Today
+no dependency carries a NIF, so that day is not here; M25 was expected to
+bring one and did not (ADR-065).
+
+## ADR-067: M25's acceptance releases the disk before its rescue boot
+
+**Status:** accepted (M25)
+
+**Context.** The browser milestone's acceptance checks two boots of one disk:
+the normal system, where the browser runs, and the rescue system, where it must
+not. It booted the second the way other milestones do, and QEMU refused:
+
+    Is another process using the image [.../disk.img]?
+
+The VMs in other tests can share a disk file across boots because the *guest*
+shuts itself down first. Here the first VM was still running - nothing had
+asked it to stop - and a qemu holds its disk image while it lives.
+
+**Decision.** Stop the first VM (`QEMU.stop/1`) before booting the rescue one.
+The disk's *contents* are what the second boot is about; the first VM has no
+further role in the test.
+
+**Consequences.** The assertion is unchanged - rescue runs no browser,
+`{:error, :not_running}` - and the test no longer depends on QEMU's tolerance
+for a second opener, which it does not have. This is a change to a test shipped
+in the roadmap, so it is called out here and lands in its own commit
+(AGENTS.md).
