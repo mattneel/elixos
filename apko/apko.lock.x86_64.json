@@ -305,17 +305,17 @@
         "architecture": "x86_64",
         "signature": {
           "range": "bytes=0-686",
-          "checksum": "sha1-IYgda1e2Cgj2oriLy+wIkI1fnTU="
+          "checksum": "sha1-VIQtVmshnKSes/9xwq6hzaCXi5I="
         },
         "control": {
-          "range": "bytes=687-2695",
-          "checksum": "sha1-YiuQgeD1jzDBs4gePCMl8mj1QlY="
+          "range": "bytes=687-2685",
+          "checksum": "sha1-uZo3/YS3HucHc624EVFShNWXNY0="
         },
         "data": {
-          "range": "bytes=2696-66124958",
-          "checksum": "sha256-/STnx62LRSDbNY3O8i2kQJRRdXFyMccpNBYT1+7pR20="
+          "range": "bytes=2686-67717807",
+          "checksum": "sha256-hSPsfYxLKdzKvX98YK1VPXN6z6SfD54WnVAPVgFVgIk="
         },
-        "checksum": "Q1YiuQgeD1jzDBs4gePCMl8mj1QlY="
+        "checksum": "Q1uZo3/YS3HucHc624EVFShNWXNY0="
       },
       {
         "name": "elixos-elixir",

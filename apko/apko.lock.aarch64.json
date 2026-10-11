@@ -304,18 +304,18 @@
         "version": "29.1.1-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-685",
-          "checksum": "sha1-CYFEbH3gLOmwni5Rj18jcGAWDB4="
+          "range": "bytes=0-686",
+          "checksum": "sha1-3r/IT29cmGT16LLndgpnkp4NPAU="
         },
         "control": {
-          "range": "bytes=686-2689",
-          "checksum": "sha1-MSXI0DA6YViVi31YGXlapdBVL1E="
+          "range": "bytes=687-2678",
+          "checksum": "sha1-Mue1Cz359dsvdQarMBoSmk4JD3c="
         },
         "data": {
-          "range": "bytes=2690-53673565",
-          "checksum": "sha256-UXvM5DkclrYGpaieCz2Khj5k2F0qOC7os4sOMnkh7RU="
+          "range": "bytes=2679-55311971",
+          "checksum": "sha256-7w7Q88I9l5kDwVJV2Uqluvzn7Y/m/l4Ws0+bBBTkMGY="
         },
-        "checksum": "Q1MSXI0DA6YViVi31YGXlapdBVL1E="
+        "checksum": "Q1Mue1Cz359dsvdQarMBoSmk4JD3c="
       },
       {
         "name": "elixos-elixir",
@@ -456,18 +456,18 @@
         "version": "0.1.0-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-690",
-          "checksum": "sha1-ZrBH0f2OLlZJ4FoQ8CZM/Jcg5ek="
+          "range": "bytes=0-688",
+          "checksum": "sha1-4Yh3EqsFZr3OEEixDAMebBUvOiE="
         },
         "control": {
-          "range": "bytes=691-2585",
-          "checksum": "sha1-CAldTezsoXbommo2kPzSZpQYHGU="
+          "range": "bytes=689-2582",
+          "checksum": "sha1-hYN2BsOYnSRLn4NqZBRyT5WVgxY="
         },
         "data": {
-          "range": "bytes=2586-5323187",
-          "checksum": "sha256-KdNYl21nC9Yr3585wdXNf4L185VMt1JRONIDQe0LYdw="
+          "range": "bytes=2583-5323181",
+          "checksum": "sha256-R3EOw2mEPjpGd1WE5MTa/Vx2YCJApNl3zRumhpHoP7s="
         },
-        "checksum": "Q1CAldTezsoXbommo2kPzSZpQYHGU="
+        "checksum": "Q1hYN2BsOYnSRLn4NqZBRyT5WVgxY="
       },
       {
         "name": "elixos-kernel",

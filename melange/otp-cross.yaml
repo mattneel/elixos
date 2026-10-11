@@ -190,8 +190,8 @@ pipeline:
 
       ./otp_build configure --host=aarch64-linux-musl --build=x86_64-linux-musl \
         --enable-jit --enable-dynamic-ssl-lib --with-ssl \
-        --without-javac --without-wx --without-odbc --without-observer \
-        --without-debugger --without-et --without-megaco || {
+        --without-javac --without-wx --without-odbc \
+        --without-debugger --without-megaco || {
         echo "otp-cross: configure failed; the erts log says:" >&2
         grep -A40 "checking if we can add -fvisibility=hidden" /tmp/otp/erts/config.log >&2 || true
         echo "--- tail of /tmp/otp/erts/config.log" >&2

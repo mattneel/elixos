@@ -74,9 +74,13 @@ pipeline:
       # Dynamic ssl from the system OpenSSL (the same choice the old factory
       # made, so the image carries openssl and the ERTS links it), and none of
       # the applications a cyberdeck has no use for.
+      # Observer ships, without wx: in OTP 29 wx is an *optional*
+      # application of observer, so the node can be observed from another
+      # machine's Observer GUI - and from etop on its own console - while this
+      # image stays free of wxWidgets and a display (that is M27's business).
       ./configure --enable-dynamic-ssl-lib --with-ssl \
-        --without-javac --without-wx --without-odbc --without-observer \
-        --without-debugger --without-et --without-megaco
+        --without-javac --without-wx --without-odbc \
+        --without-debugger --without-megaco
       make -j"$(nproc)"
       make install DESTDIR="${{targets.destdir}}"
 
