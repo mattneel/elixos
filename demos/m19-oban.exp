@@ -47,7 +47,7 @@ send {defmodule Demo.Job do
   end
 end}
 send "\r"
-expect -re {\{:module, Demo.Job\}}
+expect -exact "{:module, Demo.Job,"
 expect -re {iex\([0-9]+\)> }
 sleep 1
 
@@ -73,7 +73,7 @@ sleep 1
 
 send {Elixos.Postgres.query("select queue, state from oban_jobs order by id")}
 send "\r"
-expect -re {default \| scheduled}
+expect -exact {default|scheduled}
 expect -re {iex\([0-9]+\)> }
 sleep 2
 
@@ -102,7 +102,9 @@ sleep 1
 # The scheduled job comes due after the power cycle and runs.
 send {Enum.find(1..120, fn _ -> Process.sleep(1000); File.read!("/priv/jobs.log") =~ "after" end)}
 send "\r"
-expect -re {[\r\n]+1[\r\n]+}
+# The index the wait loop succeeded on is a timing detail; that it stopped
+# waiting means the job ran.
+expect -re {[\r\n]+[0-9]+[\r\n]+}
 expect -re {iex\([0-9]+\)> }
 sleep 1
 

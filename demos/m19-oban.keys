@@ -1,21 +1,13 @@
 # A prompt-defined worker runs a job now; a scheduled job is a Postgres row that
 # survives a power cycle and runs on the next boot.
-Elixos.Oban.status()
 {:ok, #PID<
-defmodule Demo.Job
-{:module, Demo.Job}
-Elixos.Oban.enqueue(Demo.Job, %{"line" => "before"})
+{:module, Demo.Job,
 {:ok, 1}
 "before\n"
-Elixos.Oban.enqueue(Demo.Job, %{"line" => "after"}, schedule_in: 45)
 {:ok, 2}
-select queue, state from oban_jobs
-default | scheduled
-Elixos.save()
+default|scheduled
 {:ok, 1}
 elixos-shim: shutdown poweroff
-Code.ensure_loaded?(Demo.Job)
 true
-Enum.find(1..120, fn _ ->
 "before\nafter\n"
 elixos-shim: shutdown poweroff

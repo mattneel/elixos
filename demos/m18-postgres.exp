@@ -43,7 +43,7 @@ expect -re {Uid:[ \t]+70[ \t]+70[ \t]+70[ \t]+70}
 expect -re {iex\([0-9]+\)> }
 sleep 2
 
-send {File.read!("/proc/mounts") |> String.split("\n") |> Enum.find(&String.contains?(&1, " /system "))}
+send {File.read!("/proc/mounts") |> String.split("\n") |> Enum.find(&String.contains?(&1, " /system ")) |> IO.puts()}
 send "\r"
 expect -re {/system squashfs ro,}
 expect -re {iex\([0-9]+\)> }
@@ -76,9 +76,10 @@ expect -re {[\r\n]+42[\r\n]+}
 expect -re {iex\([0-9]+\)> }
 sleep 2
 
-send {Path.wildcard("/priv/postgres/log/*.log") |> Enum.map(&File.read!/1) |> Enum.any?(&String.contains?(&1, "database system was shut down at"))}
+send {log = Path.wildcard("/priv/postgres/log/*.log") |> Enum.max_by(&File.stat!(&1).mtime) |> File.read!(); IO.puts("shutdown line: " <> (log |> String.split("\n") |> Enum.find(&String.contains?(&1, "database system was shut down at"))))}
 send "\r"
-expect -re {[\r\n]+true[\r\n]+}
+expect -exact {shutdown line: }
+expect -exact {database system was shut down at}
 expect -re {iex\([0-9]+\)> }
 sleep 2
 
