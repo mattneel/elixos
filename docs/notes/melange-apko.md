@@ -360,3 +360,30 @@ Two rules for the scripts themselves, learned the hard way:
   already hashes both scripts, so an edit re-assembles (cheap) without
   rebuilding any package (expensive) - which is the behaviour you want when
   the change is to the orchestration rather than to a recipe's inputs.
+
+### Why the cross-built ERTS cannot load NIFs yet
+
+The cross build of OTP 29.1.1 now succeeds end to end - native clang, a sysroot
+built from the target's own Alpine packages, `erl_xcomp_*` answering the
+probes - and the resulting `beam.smp` boots the VM, starts the supervision tree
+and runs Elixir. It cannot load NIFs, and the failure is precise:
+
+    Failed to load NIF library /factory/lib/crypto-5.10/priv/lib/crypto:
+    'Dynamic loading not supported'
+
+That text is `erl_ddll`'s message for `ERL_DE_ERROR_NO_DDLL_FUNCTIONALITY`,
+which `erts/emulator/sys/unix/erl_unix_sys_ddll.c` returns from the `#else` of
+`#if defined(HAVE_DLOPEN)`. The build's generated header says
+`#define HAVE_DLOPEN 1` (set with `ac_cv_func_dlopen=yes`, since a cross build
+cannot run that probe and musl has `dlopen` in libc), and yet the installed
+binary references `dlopen` **zero** times (`readelf --dyn-syms`; the native
+x86_64 build has `dlopen`/`dlsym`/`dlerror`), so that one translation unit was
+compiled without the macro.
+
+That makes the next step small: build with `V=1` and read the command line for
+`erl_unix_sys_ddll.o` - which `config.h` it actually includes, and whether the
+object predates the header - instead of re-running the whole configure. The
+sysroot, the compiler, the `erl_xcomp_*` set, the JIT, libc++, the libunwind
+link and the Erlang half are all known to work. Until that file is right the
+aarch64 image keeps the emulated OTP, which is verified, and nothing else in an
+aarch64 image build emulates a compiler.

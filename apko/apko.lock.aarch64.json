@@ -185,6 +185,82 @@
         "checksum": "Q1FGTYu4SxbeFGQyIqvXBBZvKmLPY="
       },
       {
+        "name": "llvm-libunwind",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/llvm-libunwind-22.1.3-r0.apk",
+        "version": "22.1.3-r0",
+        "architecture": "aarch64",
+        "signature": {
+          "range": "bytes=0-721",
+          "checksum": "sha1-zEiqHRKxoY8BRMMYUpplqGw0O8Y="
+        },
+        "control": {
+          "range": "bytes=722-1254",
+          "checksum": "sha1-c2ZSb5YNHoTyrO53Z0qVqDnWlBw="
+        },
+        "data": {
+          "range": "bytes=1255-24669",
+          "checksum": "sha256-R7SR8Jr41gUaXwmaakDrMycGsoH/qgIW2suYpquE+9g="
+        },
+        "checksum": "Q1c2ZSb5YNHoTyrO53Z0qVqDnWlBw="
+      },
+      {
+        "name": "libc++",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libc++-22.1.3-r0.apk",
+        "version": "22.1.3-r0",
+        "architecture": "aarch64",
+        "signature": {
+          "range": "bytes=0-723",
+          "checksum": "sha1-ZCKhZDXJsS0Mgrvj23Ni4lMsFno="
+        },
+        "control": {
+          "range": "bytes=724-1256",
+          "checksum": "sha1-QJ/V3/TyRopMQamvrNu2vLahZOM="
+        },
+        "data": {
+          "range": "bytes=1257-427830",
+          "checksum": "sha256-KkqS8BISczbMF9PsM2TQs9bF3W7FhKWF8155thMx8Yg="
+        },
+        "checksum": "Q1QJ/V3/TyRopMQamvrNu2vLahZOM="
+      },
+      {
+        "name": "xz-libs",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/xz-libs-5.8.4-r0.apk",
+        "version": "5.8.4-r0",
+        "architecture": "aarch64",
+        "signature": {
+          "range": "bytes=0-721",
+          "checksum": "sha1-N35Y5fCcYcoSeZsvEIgZc9y1nFw="
+        },
+        "control": {
+          "range": "bytes=722-1307",
+          "checksum": "sha1-Fees+uhwysD9zTWYVVONXWbxQCA="
+        },
+        "data": {
+          "range": "bytes=1308-119422",
+          "checksum": "sha256-rgEHQLcCuYYsX4Mhvk0mzjYFibdyuWSNRmFqa7PFOvI="
+        },
+        "checksum": "Q1Fees+uhwysD9zTWYVVONXWbxQCA="
+      },
+      {
+        "name": "libunwind",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libunwind-1.8.3-r0.apk",
+        "version": "1.8.3-r0",
+        "architecture": "aarch64",
+        "signature": {
+          "range": "bytes=0-722",
+          "checksum": "sha1-zSALUdyXxG1r/MlUlT3kM7nwJ7s="
+        },
+        "control": {
+          "range": "bytes=723-1332",
+          "checksum": "sha1-tU3/iy1Ou2z8StGes9SP1wPov+8="
+        },
+        "data": {
+          "range": "bytes=1333-87560",
+          "checksum": "sha256-yliuWR++rN1QLUFKMMD/llb5/WFMdqypeml46pSkf2g="
+        },
+        "checksum": "Q1tU3/iy1Ou2z8StGes9SP1wPov+8="
+      },
+      {
         "name": "libcrypto3",
         "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libcrypto3-3.5.9-r0.apk",
         "version": "3.5.9-r0",
@@ -261,25 +337,6 @@
         "checksum": "Q1wNl5+kek1M3VEWlcXl8M4+jPHqI="
       },
       {
-        "name": "libstdc++",
-        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libstdc++-15.2.0-r5.apk",
-        "version": "15.2.0-r5",
-        "architecture": "aarch64",
-        "signature": {
-          "range": "bytes=0-721",
-          "checksum": "sha1-MxHve54n2zEIHXGNXrXOxwVvi1Q="
-        },
-        "control": {
-          "range": "bytes=722-1289",
-          "checksum": "sha1-6WWaNCGe8kVn4lkwb/3DGo6OyqY="
-        },
-        "data": {
-          "range": "bytes=1290-908983",
-          "checksum": "sha256-1Ijl/NKbqpRxpFwQZ3+SlaH55hlTIZKbD4H0wdPwKbU="
-        },
-        "checksum": "Q16WWaNCGe8kVn4lkwb/3DGo6OyqY="
-      },
-      {
         "name": "zlib",
         "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/zlib-1.3.2-r1.apk",
         "version": "1.3.2-r1",
@@ -304,18 +361,18 @@
         "version": "29.1.1-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-684",
-          "checksum": "sha1-ioalSgWC3kvgsWA9RNgqPbV0S/o="
+          "range": "bytes=0-687",
+          "checksum": "sha1-ME0RgOZKOOmbMgGcg4sQQvoz1cE="
         },
         "control": {
-          "range": "bytes=685-2520",
-          "checksum": "sha1-W20EoiC+vW7XsfNfgaepir5vWe8="
+          "range": "bytes=688-2716",
+          "checksum": "sha1-Iu7Ctn26IR3nR6q4TWCHlnjHBOA="
         },
         "data": {
-          "range": "bytes=2521-64560306",
-          "checksum": "sha256-vMmVhA9RhG35x5TZYTKzH6RuCg4B4d6d1gnk55ebIHM="
+          "range": "bytes=2717-61431745",
+          "checksum": "sha256-LtJBj2YF9omdUM/8QLPICdIqJxeuAyvQUknkgfII7RM="
         },
-        "checksum": "Q1W20EoiC+vW7XsfNfgaepir5vWe8="
+        "checksum": "Q1Iu7Ctn26IR3nR6q4TWCHlnjHBOA="
       },
       {
         "name": "elixos-elixir",
@@ -335,6 +392,25 @@
           "checksum": "sha256-mYOPxQOk2r6sE6athhtRlzKSDM1SphWdK/hmNfRhiMU="
         },
         "checksum": "Q1ukESsxzOSTgdY/lgzDVhr0zXgB0="
+      },
+      {
+        "name": "libstdc++",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libstdc++-15.2.0-r5.apk",
+        "version": "15.2.0-r5",
+        "architecture": "aarch64",
+        "signature": {
+          "range": "bytes=0-721",
+          "checksum": "sha1-MxHve54n2zEIHXGNXrXOxwVvi1Q="
+        },
+        "control": {
+          "range": "bytes=722-1289",
+          "checksum": "sha1-6WWaNCGe8kVn4lkwb/3DGo6OyqY="
+        },
+        "data": {
+          "range": "bytes=1290-908983",
+          "checksum": "sha256-1Ijl/NKbqpRxpFwQZ3+SlaH55hlTIZKbD4H0wdPwKbU="
+        },
+        "checksum": "Q16WWaNCGe8kVn4lkwb/3DGo6OyqY="
       },
       {
         "name": "libformw",
@@ -475,18 +551,18 @@
         "version": "7.2.9-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-689",
-          "checksum": "sha1-1/A20EC9k2+mSVCImX0LMMhuvJk="
+          "range": "bytes=0-691",
+          "checksum": "sha1-NFB+SLONYS8u8jQ+65IqY7J+fwI="
         },
         "control": {
-          "range": "bytes=690-2722",
-          "checksum": "sha1-PbkVEwlVsuVzoe4IGJGX50R0EXM="
+          "range": "bytes=692-2722",
+          "checksum": "sha1-gcSumYWBuUTyUR0g7MbJK8rOxZk="
         },
         "data": {
-          "range": "bytes=2723-16253324",
-          "checksum": "sha256-c9WXlm7dTgWI02OFAsqgGsfQ2xIrihVsASbdZRtuZrc="
+          "range": "bytes=2723-16253326",
+          "checksum": "sha256-gWwpfItLWhCBMZGOorqfEuLQud9gugssV0axqaqYJIQ="
         },
-        "checksum": "Q1PbkVEwlVsuVzoe4IGJGX50R0EXM="
+        "checksum": "Q1gcSumYWBuUTyUR0g7MbJK8rOxZk="
       },
       {
         "name": "elixos-shim",

@@ -105,30 +105,40 @@ package_inputs() { # package_inputs <arch> <package>: hash of everything the rec
   } | sha256sum | cut -d' ' -f1
 }
 
-kernel_cross_inputs() { # kernel_cross_inputs: what the native arm64 build reads
+cross_inputs() { # cross_inputs <name> <recipe> <paths...>: everything that build reads
+  local name="$1" recipe="$2" path
+  shift 2
   {
-    printf 'package=kernel-cross\n'
-    sha256sum "$MELANGE" "$KEY.pub" "$ROOT/melange/kernel-cross.yaml"
+    printf 'package=%s\n' "$name"
+    sha256sum "$MELANGE" "$KEY.pub" "$recipe"
     (
       cd "$SRC"
-      for path in kernel scripts; do
-        find "$path" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+      for path in "$@"; do
+        [ -e "$path" ] || continue
+        if [ -d "$path" ]; then
+          find "$path" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+        else
+          sha256sum "$path"
+        fi
       done
     )
   } | sha256sum | cut -d' ' -f1
 }
 
-# The arm64 kernel, compiled natively on the build host (ADR-060): a melange
-# pipeline runs inside the target rootfs, so the only way to cross is a
-# separate, native step whose artifact the aarch64 package installs. This is
-# the kernel's own LLVM=1 cross mode; the kernel is freestanding, so no
-# sysroot and no target packages are involved.
-kernel_cross() {
-  # A build tool, not an image package: it lives in its own repository, so no
-  # image glob (elixos-kernel-*.apk) can ever pick it up as a kernel.
-  local repo="$BUILD/apk-cross" stamp="$BUILD/apk-cross/.kernel-cross.inputs" inputs apk
+# A native cross build (ADR-060): a melange pipeline runs inside the target
+# rootfs, so building for arm64 there means emulating every compiler process.
+# These recipes run in this machine's own x86_64 environment instead and emit
+# the target's artifacts, which the target's package installs. Each keeps its
+# APK in its own repository, keyed on its inputs, so nothing is rebuilt that
+# has not changed.
+cross_build() { # cross_build <name> <recipe> <paths...>
+  local name="$1" recipe="$2"
+  shift 2
+  # One repository per cross build: clearing a shared one to rebuild, say, OTP
+  # would throw away the kernel's cached APK and rebuild it for nothing.
+  local repo="$BUILD/apk-cross/$name" stamp="$BUILD/apk-cross/$name/.inputs" inputs apk
   local cached_inputs="" cached_sha="" cached_apk=""
-  inputs="$(kernel_cross_inputs)"
+  inputs="$(cross_inputs "$name" "$recipe" "$@")"
   if [ -f "$stamp" ]; then
     read -r cached_inputs cached_sha cached_apk < "$stamp" || true
   fi
@@ -136,29 +146,29 @@ kernel_cross() {
   apk="$repo/x86_64/$cached_apk"
   if [ -n "${FORCE:-}" ] || [ "$inputs" != "$cached_inputs" ] || [ ! -f "$apk" ] ||
      [ "$(sha256sum "$apk" 2>/dev/null | cut -d' ' -f1)" != "$cached_sha" ]; then
-    echo "build-image: melange kernel-cross.yaml (arm64 kernel, native cross)"
+    echo "build-image: melange $(basename "$recipe") (native cross)"
     rm -rf "$repo/x86_64" "$stamp"
     mkdir -p "$repo/x86_64"
-    # The same compiler cache and host-arch variable the shim package uses:
-    # one pinned Zig SDK, shared, outside melange's per-build workspace.
+    # The shared compiler cache and the host-arch variable: one pinned Zig SDK
+    # for the shim and the kernel, outside melange's per-build workspace.
     mkdir -p "$ZIG_CACHE"
     printf 'ELIXOS_ZIG_HOST_ARCH=%s\n' "$HOST_ARCH" > "$ZIG_CACHE/host.env"
-    "$MELANGE" build "$ROOT/melange/kernel-cross.yaml" --arch x86_64 --source-dir "$SRC" \
-      --out-dir "$repo" --signing-key "$KEY" -r "$repo" -k "$KEY.pub" \
+    "$MELANGE" build "$recipe" --arch x86_64 --source-dir "$SRC" \
+      --out-dir "$repo" --signing-key "$KEY" -r "$BUILD/apk/$HOST_ARCH" -k "$KEY.pub" \
       --cache-dir "$ZIG_CACHE" --env-file "$ZIG_CACHE/host.env" >/dev/null
-    apk="$(ls "$repo"/x86_64/elixos-kernel-cross-*.apk | head -n1)"
-    [ -f "$apk" ] || { echo "build-image: no elixos-kernel-cross APK was produced" >&2; return 1; }
+    apk="$(ls "$repo/x86_64/elixos-$name-cross"-*.apk | head -n1)"
+    [ -f "$apk" ] || { echo "build-image: no elixos-$name-cross APK was produced" >&2; return 1; }
     printf '%s %s %s\n' "$inputs" "$(sha256sum "$apk" | cut -d' ' -f1)" "$(basename "$apk")" > "$stamp"
   else
-    echo "build-image: elixos-kernel-cross inputs unchanged (cache hit)"
+    echo "build-image: elixos-$name-cross inputs unchanged (cache hit)"
   fi
 
-  stage_prebuilt kernel "$apk"
+  stage_prebuilt "$name" "$apk"
 }
 
 # Adopt a native build: unpack the APK it produced into the staging area the
 # architecture's package installs from. melange APKs are tar streams a plain
-# tar reads (mkdisk.sh does the same for the toolchain).
+# tar reads (mkdisk.sh reads one the same way).
 stage_prebuilt() { # stage_prebuilt <name> <apk>
   local name="$1" archive="$2" dir="$SRC/prebuilt/$1" tmp="$SRC/prebuilt/.$1.$$"
   rm -rf "$tmp"
@@ -171,7 +181,7 @@ stage_prebuilt() { # stage_prebuilt <name> <apk>
   }
   # melange's workspace copy does not carry symlinks whose target is outside
   # the tree (the release's links into /usr/local/lib/erlang, Elixir's bin
-  # links): record them here so the package can recreate them itself.
+  # links): record them here so the package recreates them itself.
   ( cd "$tmp" && find . -type l -printf '%P\t%l\n' ) | LC_ALL=C sort > "$dir.links.tmp"
 
   rm -rf "$dir"
@@ -180,9 +190,10 @@ stage_prebuilt() { # stage_prebuilt <name> <apk>
   echo "build-image: staged the native $name build ($(wc -l < "$dir.links") symlink(s) recorded)"
 }
 
-# Elixir and the factory are architecture-neutral (ADR-060): build them once
-# in the native x86_64 environment - the same recipes the x86_64 image uses -
-# and hand the aarch64 packages the tree instead of rebuilding it emulated.
+# Elixir and the factory are architecture-neutral: bytecode, shell scripts and
+# symlinks into the machine's own OTP install (ADR-060). The x86_64 build
+# already builds them natively, so the aarch64 packages install that same tree
+# instead of rebuilding it under emulation.
 native_reuse() {
   local pkg pname repo="$BUILD/apk/x86_64" apk
   for pkg in elixir factory; do
@@ -437,7 +448,9 @@ build_arch() { # build_arch <arch>
   # moved. The image key below must see the APKs this run would actually
   # install, so it cannot be checked before them.
   if [ "$arch" = aarch64 ]; then
-    kernel_cross
+    # Keyed on what the recipes read, not on whole directories: editing an
+    # unrelated script must not rebuild a kernel.
+    cross_build kernel "$ROOT/melange/kernel-cross.yaml" kernel scripts/check-kernel-config.sh
     native_reuse
   fi
   build_packages "$arch"
