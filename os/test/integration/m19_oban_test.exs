@@ -95,8 +95,11 @@ defmodule Elixos.Integration.M19ObanTest do
     assert out =~ ~r/^true$/m
 
     vm = await_line(vm, "after", 180)
-    {out, _vm} = QEMU.iex(vm, ~s|File.read!("/priv/jobs.log")|)
+    {out, vm} = QEMU.iex(vm, ~s|File.read!("/priv/jobs.log")|)
     assert out =~ "after", "the scheduled job ran after the power cycle"
+
+    # The next boot needs the disk to itself (ADR-055, ADR-058).
+    power_off(vm)
 
     # Rescue runs no Oban.
     vm = QEMU.boot(ctx, disk: disk, append: ["elixos.safe"])

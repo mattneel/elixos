@@ -57,15 +57,20 @@ defmodule Elixos.Oban do
 
   @doc """
   Inserts `worker` with `args` (keyword `opts` go to `Oban.Job.new/3`: queue,
-  `schedule_in`, priority, and so on).
+  `schedule_in`, priority, and so on) and returns `{:ok, id}` - the job's id
+  in the database, where the rest of it can be read (`Elixos.Oban.Repo`).
 
   Like `status/0`, this waits for bounded startup, then returns Oban's real
-  insert result; `{:error, :not_running}` when there is no scheduler.
+  insert result; `{:error, :not_running}` when there is no scheduler, and
+  Oban's own errors (a rejected changeset, a conflict) unchanged.
   """
-  @spec enqueue(module(), map(), keyword()) :: {:ok, term()} | {:error, term()}
+  @spec enqueue(module(), map(), keyword()) :: {:ok, pos_integer()} | {:error, term()}
   def enqueue(worker, args, opts \\ []) do
     with {:ok, instance} <- await_instance() do
-      Oban.insert(instance, worker.new(args, opts))
+      case Oban.insert(instance, worker.new(args, opts)) do
+        {:ok, %Oban.Job{id: id}} -> {:ok, id}
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 

@@ -54,7 +54,7 @@ sleep 1
 # Enqueued now: it runs now, in the same VM.
 send {Elixos.Oban.enqueue(Demo.Job, %{"line" => "before"})}
 send "\r"
-expect -re {\{:ok, %Oban.Job\{}
+expect -re {[\r\n]+\{:ok, 1\}[\r\n]+}
 expect -re {iex\([0-9]+\)> }
 sleep 2
 
@@ -67,7 +67,7 @@ sleep 1
 # Scheduled for later: the job is a row in Postgres, and it has not run.
 send {Elixos.Oban.enqueue(Demo.Job, %{"line" => "after"}, schedule_in: 45)}
 send "\r"
-expect -re {\{:ok, %Oban.Job\{}
+expect -re {[\r\n]+\{:ok, 2\}[\r\n]+}
 expect -re {iex\([0-9]+\)> }
 sleep 1
 

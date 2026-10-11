@@ -5,9 +5,10 @@ Elixos.Oban.status()
 defmodule Demo.Job
 {:module, Demo.Job}
 Elixos.Oban.enqueue(Demo.Job, %{"line" => "before"})
-{:ok, %Oban.Job{
+{:ok, 1}
 "before\n"
 Elixos.Oban.enqueue(Demo.Job, %{"line" => "after"}, schedule_in: 45)
+{:ok, 2}
 select queue, state from oban_jobs
 default | scheduled
 Elixos.save()

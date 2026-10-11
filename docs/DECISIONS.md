@@ -1545,3 +1545,23 @@ Postgres, so an interrupted power-off costs an incomplete job's retry, not
 its row. A future Oban upgrade that changes the schema is one new version in
 `Elixos.Oban.Migration`.
 
+## ADR-058: The M19 fixture powers off before its rescue boot
+
+**Status:** accepted (M19)
+
+**Problem.** The same defect ADR-055 fixed in M18's fixture was present in
+M19's: after the scheduled job ran, the test booted rescue with the same
+writable disk while the second guest was still running. QEMU refused the
+second writer's disk lock. Every assertion before that point passed - the
+module came back from the image and the scheduled job ran - so the failure
+was in the fixture, not the scheduler.
+
+**Decision.** Use the fixture's own `power_off/1` before the rescue boot, and
+keep the VM handle it needs (`_vm` becomes `vm`). That helper asserts QEMU's
+zero exit status and the absence of a kernel panic, so the fifth power-on
+starts from a disk nobody else holds. No assertion, regex or timeout is
+weakened.
+
+**Consequences.** The M19 acceptance is three normal power-ons plus one rescue
+power-on, strictly sequential. Both fixtures now follow the same rule; a
+future test that boots a second guest on one disk must power the first off.
