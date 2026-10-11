@@ -43,6 +43,7 @@ defmodule Elixos.Ask do
       :options,
       :allow_other,
       :default,
+      :timeout,
       :asker,
       :asked_at
     ]
@@ -54,6 +55,7 @@ defmodule Elixos.Ask do
             options: [String.t()],
             allow_other: boolean(),
             default: term(),
+            timeout: pos_integer() | nil,
             asker: pid(),
             asked_at: DateTime.t()
           }
@@ -187,6 +189,7 @@ defmodule Elixos.Ask do
       options: Keyword.get(opts, :options, []),
       allow_other: Keyword.get(opts, :allow_other, false),
       default: Keyword.get(opts, :default),
+      timeout: Keyword.get(opts, :timeout),
       asker: asker,
       asked_at: DateTime.utc_now()
     }
