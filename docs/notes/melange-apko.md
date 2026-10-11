@@ -333,3 +333,30 @@ Both probes ran in seconds, so the next attempt can iterate quickly; what it
 needs is a decision on the sysroot's provenance (the target's package set plus
 its GCC runtime, or a purpose-built cross toolchain), not more patience with
 one-off flags.
+
+## What may and may not invalidate a package
+
+Two ways a cache betrays you, both seen in this work:
+
+* **Too coarse.** The kernel's native cross build was first keyed on
+  `kernel/` and the whole `scripts/` directory, so editing `build-image.sh` -
+  or any other script - rebuilt a 40 MB kernel for nothing. Key a package on
+  the files its recipe reads: for the kernel cross that is `kernel/` (fragment,
+  per-arch fragment, VERSION), `melange/kernel-cross.yaml` and
+  `scripts/check-kernel-config.sh`; for OTP's cross it is `.tool-versions`.
+  Directories are convenient only while every file in them is an input.
+* **Changed at all.** Narrowing a key changes the hash of an *unchanged* input
+  set, so the next build rebuilds once. That is the price of a correction, and
+  it is worth noting in the commit rather than hiding - the run after it hits.
+
+Two rules for the scripts themselves, learned the hard way:
+
+* **Never edit `scripts/build-image.sh` while it is running.** Bash reads a
+  script lazily by path, so even replacing it by rename mid-run makes the
+  running instance read the new file at an old offset: the build died with
+  `stage_prebuilt: command not found` at a line that had moved. Long melange
+  calls hide this for minutes and then fail at the next command.
+* **The assembly key is the right place for script changes.** `image_inputs`
+  already hashes both scripts, so an edit re-assembles (cheap) without
+  rebuilding any package (expensive) - which is the behaviour you want when
+  the change is to the orchestration rather than to a recipe's inputs.
