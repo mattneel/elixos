@@ -150,6 +150,38 @@ apko v1.4.10, both by sha256).
   `--env-file` (`ELIXOS_ZIG_HOST_ARCH`), and `-Dtarget=<arch>-linux-none` does
   the crossing (ADR-003: the shim has no libc).
 
+## What the aarch64 build actually runs, and what could stop being emulated
+
+On an x86_64 host the aarch64 packages are built inside an aarch64 Alpine
+environment whose binaries run through `binfmt_misc` + `qemu-aarch64-static`
+(`make check-tools` reports both). Emulation is not a property of "building
+for aarch64" - it is what happens when the build has to *execute* target
+binaries. Per package:
+
+| package | how it is built today | could avoid emulation? |
+|---|---|---|
+| `elixos-shim` | `zig build -Dtarget=aarch64-linux-none` natively | already cross, no emulation |
+| `elixos-toolchain` | prebuilt aarch64 compiler tarball; `cc` bridge via `zig build-exe -target aarch64-linux-musl` | already cross |
+| `elixos-kernel` | full kernel `make` in the aarch64 environment | yes: `LLVM=1` (clang/lld) or `zig cc` as `CC` with `-target aarch64-linux-none`; medium risk, saves the kernel build time |
+| `elixos-elixir` | `make` + an ERTS in the aarch64 environment | yes: Elixir is *pure BEAM*; bytecode built by any ERTS runs anywhere. Building it in the x86_64 environment (with the x86_64 `elixos-otp`) produces the same artifacts |
+| `elixos-factory` | `mix deps.get` + `mix release` in the aarch64 environment | yes, for the same reason: `include_erts: false` (ADR-041) and every dependency is pure BEAM, so the release is bytecode plus `.boot` files. The symlinks it writes (`erts`, `erts-<vsn>`, `lib/<app>`) are absolute paths that resolve inside the target image, so they are identical either way |
+| `elixos-otp` | `configure && make` in the aarch64 environment (the expensive one, ~10-15 min emulated) | only a real cross build: `--host=aarch64-linux --build=x86_64-linux` with `erl_xcomp_*` variables and a *bootstrap ERTS of the same version for the build host* (the x86_64 `elixos-otp` we already build). The C parts then compile with a cross compiler; the JIT's `configure` runtime checks are the fiddly part |
+
+Alpine's own aarch64 packages are never built here - they are downloaded from
+the pinned repository - so the table above is the whole cost.
+
+Two consequences worth remembering:
+
+* The cheapest change is elixir + factory: build them in an x86_64
+  environment (pure bytecode), publish them with `--arch aarch64`, and gate it
+  on `test/integration/m16_aarch64_test.exs` (a real boot, a saved module, a
+  power cycle on an aarch64 guest). That removes both of the smaller emulated
+  builds.
+* Nothing above is needed for the *recurring* cost: the input-keyed cache
+  (`## Caching native builds`) already rebuilds OTP only when its recipe or
+  version changes, so the emulated OTP build is paid once per OTP bump, not
+  once per `make image`.
+
 ## Test hygiene
 
 - The QEMU harness reads prompts off the console, and `QEMU.iex/3`'s contract

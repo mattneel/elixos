@@ -113,13 +113,7 @@ defmodule Elixos.Oban.Manager do
   def handle_call(:await_instance, _from, state), do: {:reply, {:error, :not_running}, state}
 
   def handle_call(:activate, _from, state) do
-    state = %{state | activated: true}
-
-    if state.phase == :pending_activation do
-      {:reply, :ok, start_scheduler(state)}
-    else
-      {:reply, :ok, state}
-    end
+    {:reply, :ok, activated(state)}
   end
 
   def handle_call({:configure_app, app, declaration}, _from, state) do
@@ -132,6 +126,9 @@ defmodule Elixos.Oban.Manager do
       {:error, {:conflict, name}} -> {:reply, {:error, {:conflict, name}}, state}
     end
   end
+
+  @impl true
+  def handle_cast(:activate, state), do: {:noreply, activated(state)}
 
   @impl true
   def handle_info(:postgres_ready, state) do
@@ -335,6 +332,16 @@ defmodule Elixos.Oban.Manager do
   end
 
   ## Answers
+
+  defp activated(state) do
+    state = %{state | activated: true}
+
+    if state.phase == :pending_activation do
+      start_scheduler(state)
+    else
+      state
+    end
+  end
 
   defp wait(state, from, kind) do
     token = make_ref()
