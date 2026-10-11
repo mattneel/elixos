@@ -35,6 +35,7 @@ pub const protocol = @import("protocol.zig");
 pub const statefile = @import("statefile.zig");
 pub const cmdline = @import("cmdline.zig");
 pub const recovery = @import("recovery.zig");
+pub const helpers = @import("helpers.zig");
 
 /// Printed in the banner: "elixos-shim: pid 1, version <version>".
 pub const version = "0.0.0";
@@ -1226,4 +1227,5 @@ test {
     std.testing.refAllDecls(statefile);
     std.testing.refAllDecls(cmdline);
     std.testing.refAllDecls(recovery);
+    std.testing.refAllDecls(helpers);
 }

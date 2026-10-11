@@ -1,6 +1,6 @@
 defmodule Elixos.Browser do
   @moduledoc """
-  The headless browser (M19, docs/ROADMAP.md).
+  The headless browser (M25, docs/ROADMAP.md).
 
   The adapter ships in the read-only system image on `/system`, pinned and
   verified when the image is built - never downloaded at run time. Its
@@ -17,7 +17,7 @@ defmodule Elixos.Browser do
 
   @doc "The installed adapter's argv, from the manifest baked into the image."
   @spec command() :: {:ok, [String.t()]} | {:error, term()}
-  def command, do: Elixos.NotImplemented.raise!(19, "Elixos.Browser.command/0")
+  def command, do: Elixos.NotImplemented.raise!(25, "Elixos.Browser.command/0")
 
   @doc """
   The argv for one adapter manifest:
@@ -26,21 +26,21 @@ defmodule Elixos.Browser do
       {:ok, [ld, "--library-path", lib, binary | args]}   # a glibc one
   """
   @spec command(map()) :: {:ok, [String.t()]} | {:error, term()}
-  def command(_manifest), do: Elixos.NotImplemented.raise!(19, "Elixos.Browser.command/1")
+  def command(_manifest), do: Elixos.NotImplemented.raise!(25, "Elixos.Browser.command/1")
 
   @doc "The running adapter: `{:ok, pid}` or `{:error, :not_running}`."
   @spec status() :: {:ok, pid()} | {:error, :not_running}
-  def status, do: Elixos.NotImplemented.raise!(19, "Elixos.Browser.status/0")
+  def status, do: Elixos.NotImplemented.raise!(25, "Elixos.Browser.status/0")
 
   @doc "Navigates to `url` and returns the page's text."
   @spec navigate(String.t()) :: {:ok, String.t()} | {:error, term()}
-  def navigate(_url), do: Elixos.NotImplemented.raise!(19, "Elixos.Browser.navigate/1")
+  def navigate(_url), do: Elixos.NotImplemented.raise!(25, "Elixos.Browser.navigate/1")
 
   @doc "Evaluates `script` in the current page and returns its value."
   @spec eval(String.t()) :: {:ok, term()} | {:error, term()}
-  def eval(_script), do: Elixos.NotImplemented.raise!(19, "Elixos.Browser.eval/1")
+  def eval(_script), do: Elixos.NotImplemented.raise!(25, "Elixos.Browser.eval/1")
 
   @doc "A PNG of the current page."
   @spec screenshot() :: {:ok, binary()} | {:error, term()}
-  def screenshot, do: Elixos.NotImplemented.raise!(19, "Elixos.Browser.screenshot/0")
+  def screenshot, do: Elixos.NotImplemented.raise!(25, "Elixos.Browser.screenshot/0")
 end

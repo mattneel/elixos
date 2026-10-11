@@ -1,6 +1,6 @@
 defmodule Elixos.Ask do
   @moduledoc """
-  Questions are data in the OS; front-ends are only views (M21,
+  Questions are data in the OS; front-ends are only views (M20,
   docs/ROADMAP.md).
 
   A front-end - the REPL, an ssh session, the GUI - asks through the same
@@ -34,7 +34,7 @@ defmodule Elixos.Ask do
 
   @doc "Every open question, oldest first."
   @spec pending() :: [Question.t()]
-  def pending, do: Elixos.NotImplemented.raise!(21, "Elixos.Ask.pending/0")
+  def pending, do: Elixos.NotImplemented.raise!(20, "Elixos.Ask.pending/0")
 
   @doc """
   Asks `kind` with `opts` (`:prompt`, `:options`, `:default`, `:timeout`,
@@ -42,13 +42,13 @@ defmodule Elixos.Ask do
   """
   @spec ask(:text | :choice | :multi | :confirm, keyword()) ::
           {:ok, term()} | {:error, :timeout | :dismissed | term()}
-  def ask(_kind, _opts \\ []), do: Elixos.NotImplemented.raise!(21, "Elixos.Ask.ask/2")
+  def ask(_kind, _opts \\ []), do: Elixos.NotImplemented.raise!(20, "Elixos.Ask.ask/2")
 
   @doc "Answers the question `id` with an answer valid for it."
   @spec answer(String.t(), term()) :: :ok | {:error, term()}
-  def answer(_id, _answer), do: Elixos.NotImplemented.raise!(21, "Elixos.Ask.answer/2")
+  def answer(_id, _answer), do: Elixos.NotImplemented.raise!(20, "Elixos.Ask.answer/2")
 
   @doc "Dismisses the question `id`: its asker gets `{:error, :dismissed}`."
   @spec dismiss(String.t()) :: :ok | {:error, term()}
-  def dismiss(_id), do: Elixos.NotImplemented.raise!(21, "Elixos.Ask.dismiss/1")
+  def dismiss(_id), do: Elixos.NotImplemented.raise!(20, "Elixos.Ask.dismiss/1")
 end

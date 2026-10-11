@@ -1,6 +1,6 @@
-defmodule Elixos.Integration.M18ObanTest do
+defmodule Elixos.Integration.M19ObanTest do
   @moduledoc """
-  M18: Oban is the machine's scheduler. A worker defined at the prompt runs; a
+  M19: Oban is the machine's scheduler. A worker defined at the prompt runs; a
   job scheduled for later is a row in Postgres and survives a power cycle
   (the worker module comes back from the image), running on the next boot;
   rescue mode runs no Oban.
@@ -8,7 +8,7 @@ defmodule Elixos.Integration.M18ObanTest do
   use ExUnit.Case, async: false
 
   @moduletag :qemu
-  @moduletag milestone: 18
+  @moduletag milestone: 19
   @moduletag timeout: 900_000
   @moduletag :tmp_dir
 

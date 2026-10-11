@@ -398,9 +398,9 @@ release key is a later decision. Sources and versions are pins like the
 kernel's (ADR-001): `melange/` carries the package definitions, the lockfile
 and the local mirror carry everything else, and nothing is fetched at run time
 on the box. apko runs no package install scripts, so users an image needs
-(M17's postgres) are declared in the image config. Alpine edge is allowed
+(M18's postgres) are declared in the image config. Alpine edge is allowed
 package by package, each with a note in DECISIONS.md. Emerge ships no aarch64
-musl NIF (only aarch64 GNU), so M22 needs a source build for aarch64. Out of
+musl NIF (only aarch64 GNU), so M27 needs a source build for aarch64. Out of
 scope here: OCI/container runtime mode, which gets a separate write-up from
 the human.
 
@@ -427,7 +427,98 @@ prints one digest twice, the SBOM check passes, and `make audit` is still 0.
 
 ---
 
-## M17: The system database (Postgres)
+## M17: The escape hatch: an unprivileged BEAM and sealed commits
+
+**Goal.** The shim becomes the trusted base and the BEAM a tenant. erlexec
+runs as a dedicated `elixos` uid with only the capabilities it needs;
+`boot.state`, every committed generation and the store blobs it references
+belong to root and are read-only. Code running in the BEAM - an agent included
+- can write candidates but can never alter `last_good` or the factory. What
+needs root moves behind the shim: a small allow-list of privileged helpers that
+the image declares and the BEAM can only ask for by name. This is what makes
+the milestones after it safe: an agent that can change Elixos's own code still
+cannot take away the way back.
+
+**Acceptance.** `test/integration/m17_escape_hatch_test.exs`:
+- the BEAM's uid is not 0, and its effective capabilities are exactly the ones
+  PROTOCOL.md §3 lists;
+- writing `/priv/boot.state`, or a committed generation's manifest, from IEx
+  fails with `{:error, :eacces}`;
+- candidates still work end to end: a module saved at the prompt goes through
+  NEXT and COMMIT and is there after a power cycle;
+- a broken candidate still falls back to `last_good`;
+- an unknown helper name is refused - `{:error, :refused}` at the prompt - and
+  logged on the console (`elixos-shim: helper refused name=<name>`).
+
+Plus `test/elixos/privileges_test.exs` on the host (helper names are validated
+before anything reaches the pipe; the request and reply lines encode and parse
+as PROTOCOL.md §2 will say) and the shim's own Zig tests for the allow-list and
+the reply lines (`shim/src/helpers.zig`, gated at 17).
+
+**Notes.**
+- *The uid.* `elixos` (uid and gid 1000, home `/priv/home`) is declared in the
+  apko config with its supplementary groups (`video`, `input`): apko runs no
+  install scripts (ADR-041), so accounts are configuration. The shim forks,
+  drops to it - setgroups, setgid, setuid, in that order - keeps only the
+  ambient capabilities PROTOCOL.md §3 will name (`CAP_NET_BIND_SERVICE`, for
+  M12's SSH on port 22; nothing else is known to be needed), sets
+  `PR_SET_NO_NEW_PRIVS`, and execs erlexec directly, as today. Anything that
+  turns out to need more becomes a helper, never a capability.
+- *What the BEAM may write.* The journal, new store blobs, candidate manifests,
+  `/priv/home`, `/priv/apps` and `/priv/cache` remain writable. Root owns
+  `/priv`, `/priv/generations`, `/priv/store` and its fan-out directories;
+  writable shared parents are mode 1777. The shim prepares the fan-out
+  directories before dropping uid. Sticky directories owned by the BEAM would
+  not protect root-owned children: a directory owner may unlink them.
+  `boot.state` is root's, mode 0644: only the control pipe changes it.
+  On COMMIT the manifest and every referenced blob become root-owned, mode
+  0444; the BEAM cannot write, unlink, rename or replace them. The factory and
+  helper allow-list are root-owned in the initramfs, never user-writable.
+  chmod/chown do not revoke already-open writable descriptors. New candidate
+  inodes therefore become fresh, verified root-owned copies before publishing
+  their sealed paths and updating `last_good` (or are sealed before the BEAM
+  can open them). Hash the copied bytes before publication; a retained old
+  descriptor must never change the committed manifest or blob.
+- *Restore verifies.* A blob's name is its hash; restore checks every blob it
+  reads against its name before loading anything, so a blob swapped underneath
+  - by a bug, a disk, or anything that got past the sealing - stops the restore,
+  and the boot falls back like any other broken one.
+- *Helpers.* The image declares the allow-list in `/etc/elixos/helpers` (root's,
+  read-only, in the initramfs): one helper per line - a name, the uid and gid it
+  runs as, an absolute path and its arguments - exec'd directly by the shim,
+  never through a shell (ADR-012, ADR-041). The BEAM asks with a control line,
+  `HELPER <name>` (names are `[a-z0-9-]{1,32}`, so the line fits the 64-byte
+  limit); the answer comes back on a second pipe, shim to BEAM, whose fd is in
+  the launch contract (`ELIXOS_REPLY_FD`, PROTOCOL.md §3): `HELPER <name> OK
+  <pid>` or `HELPER <name> REFUSED`, a refusal also logged on the console. The
+  shim reads the list once, at startup, so the BEAM cannot add to it. Helpers
+  are the shim's children: it reaps them, and on poweroff, halt or reboot it
+  stops them - SIGTERM, a grace period, SIGKILL - after the BEAM has stopped.
+  The first entries are M18's Postgres (`initdb` and the server) and M27's
+  console handover; access that only needs a group (`video`, `input`) uses the
+  group, never the list.
+- *The shim stays small.* No allocation after startup (ADR-003): the list is
+  parsed into fixed storage at boot; one that does not fit is a boot error on
+  the console, and the BEAM then gets no helpers rather than some.
+- *What does not change.* The shim still owns `boot.state` and the generation
+  plan (M3-M8), and rescue still boots the factory. `Elixos.save/0`, NEXT and
+  COMMIT keep their meaning, so M6's and M7's tests keep passing.
+- PROTOCOL.md §2 (the HELPER request and its reply lines), §3 (the uid, the
+  capabilities, `ELIXOS_REPLY_FD`) and §6 (the refusal line) are written when
+  this starts, and `spec/protocol.vectors` grows the HELPER vectors in that
+  same commit: both suites read them, so they cannot land before the code.
+
+**Done when.** `make ci` is green with `MILESTONE=17`, both test files and the
+Zig tests pass, PROTOCOL.md §2, §3 and §6 carry the new lines, and ADR-046
+holds.
+
+- [ ] Demo recorded: `demos/m17-escape-hatch.mp4` (`make demo M=17`): the VM's
+  uid, a refused write to `boot.state`, a refused helper, and a save that still
+  commits.
+
+---
+
+## M18: The system database (Postgres)
 
 **Goal.** A real PostgreSQL runs on Elixos as a system service: reachable from
 the prompt, its data on the persistent disk, and a power-off is a *clean*
@@ -435,7 +526,7 @@ shutdown, not crash recovery. The heavy services stop living in the factory:
 they move to a read-only system image on `/priv`, mounted and started only in
 normal mode.
 
-**Acceptance.** `test/integration/m17_postgres_test.exs`: Postgres answers a
+**Acceptance.** `test/integration/m18_postgres_test.exs`: Postgres answers a
 query from the prompt; it runs as its own uid, never root; `/etc/passwd` has
 that uid and the data directory is owned by it, mode 0700; pgvector and
 TimescaleDB's Apache-only build load and answer; the binaries come from the
@@ -444,9 +535,11 @@ a power cycle logs a clean shutdown (`database system was shut down at`), not
 recovery.
 
 **Notes.** Postgres refuses to run as root, and ADR-013's single user is one
-*person*, not one uid: a tiny static Zig helper (`zig-out/bin/exec-as`, built
-by `build.zig`, no shell) setuid/setgids to `postgres` and execs `initdb` or
-`postgres`; the BEAM starts it as a port. `initdb` looks its own uid up with
+*person*, not one uid. The uid switch comes from M17's helper allow-list
+(ADR-046), not from a helper the BEAM execs: the image declares `initdb` and
+the server as privileged helpers that the shim runs as the `postgres` uid, and
+the BEAM asks for them by name over the control protocol and cannot add to the
+list. `initdb` looks its own uid up with
 `getpwuid` and refuses to run without a passwd entry, so `/etc/passwd` and
 `/etc/group` carry `postgres` (a few bytes, built into the initramfs), and the
 data directory is owned by that uid, mode 0700. `CONFIG_SYSVIPC=y` is named in
@@ -468,25 +561,28 @@ postmaster starts, or `CREATE EXTENSION timescaledb` fails ("could not access
 file \"timescaledb\"") - the acceptance does exactly that `CREATE EXTENSION`,
 so the setting is part of this milestone, not tuning. Compression and
 continuous aggregates are under the Timescale License and get their own ADR -
-read the license before publishing images. `Elixos.Postgres` starts the server
-once the prompt's machinery is up and *not* in rescue; a failure is logged and
-the prompt still comes up. `Elixos.poweroff` and `halt` stop it (a `fast` shutdown, the
-`pg_ctl` meaning, exec'd directly) before the VM stops, so every power-off is
-clean. Generations vs migrations: a generation may only ship migrations the
+read the license before publishing images. `Elixos.Postgres` asks the shim for
+the server once the prompt's machinery is up and *not* in rescue; a failure is
+logged and the prompt still comes up. The server is the shim's child, so the
+shim stops it on `Elixos.poweroff` and `halt` - SIGINT, Postgres's `fast`
+shutdown - after the BEAM has stopped and before the power goes: every
+power-off is clean, and Oban's Repo (M19) keeps its database to the end.
+Generations vs migrations: a generation may only ship migrations the
 *previous* generation can ignore; drops and renames run after the commit.
-ADRs to write when this starts: the system image, the uid helper, the shutdown
-hook, and the disk layout PROTOCOL.md §7 gains - the cluster at
-`/priv/postgres/data`, the postmaster log at `/priv/postgres/log/`.
+ADRs to write when this starts: the system image, the Postgres entries on the
+helper allow-list with their shutdown order, and the disk layout PROTOCOL.md §7
+gains - the cluster at `/priv/postgres/data`, the postmaster log at
+`/priv/postgres/log/`.
 
-**Done when.** `make ci` is green with `MILESTONE=16`, the QEMU test passes,
-the three ADRs above are written (system image, uid helper, shutdown hook),
-and PROTOCOL.md §7 carries the layout the ADR decides.
+**Done when.** `make ci` is green with `MILESTONE=18`, the QEMU test passes,
+the ADRs above are written (system image; the Postgres helpers and their
+shutdown order), and PROTOCOL.md §7 carries the layout the ADR decides.
 
-- [ ] Demo recorded: `demos/m17-postgres.mp4` (`make demo M=16`).
+- [ ] Demo recorded: `demos/m18-postgres.mp4` (`make demo M=18`).
 
 ---
 
-## M18: Jobs that survive reboots (Oban)
+## M19: Jobs that survive reboots (Oban)
 
 **Goal.** Oban is Elixos's scheduler: a job enqueued at the prompt runs, a
 failed one is retried, and a machine that powers off mid-queue still has the
@@ -496,12 +592,12 @@ services.
 **Acceptance.** `test/elixos/oban_test.exs` (the `elixos:` key gains
 `oban: [queues: ..., cron: ...]`, validated like `services:`, and a
 declaration becomes Oban options) and
-`test/integration/m18_oban_test.exs`: a worker defined at the prompt writes a
+`test/integration/m19_oban_test.exs`: a worker defined at the prompt writes a
 line to `/priv`, a job scheduled for later survives a power cycle and runs on
 the next boot, and `elixos.safe` runs no Oban.
 
 **Notes.** `oban`, `ecto_sql` and `postgrex` become OS dependencies (ADR; pure
-BEAM, no NIFs), with a Repo against M17's Postgres; Oban's migrations run
+BEAM, no NIFs), with a Repo against M18's Postgres; Oban's migrations run
 before it starts, once, before any queue. `Elixos.Oban` owns the child spec:
 queues with their concurrency and `Oban.Plugins.Cron` entries collected from
 every installed app's `elixos:` declaration (M11's spec machinery, extended),
@@ -510,92 +606,23 @@ rescue, like Postgres - but it *is* stopped by the same shutdown hook, or a
 power-off would cost a retry. A worker is an ordinary user module: the M6
 image journals it and M15's agents already wrote the pattern down.
 
-**Done when.** `make ci` is green with `MILESTONE=17`, both test files pass,
+**Done when.** `make ci` is green with `MILESTONE=19`, both test files pass,
 and the ADR for the dependencies is written.
 
-- [ ] Demo recorded: `demos/m18-oban.mp4` (`make demo M=17`).
+- [ ] Demo recorded: `demos/m19-oban.mp4` (`make demo M=19`).
 
 ---
 
-## M19: A browser to call from the prompt
-
-**Goal.** A headless browser, shipped with the system, callable from IEx and
-from agents: navigate, extract, evaluate JavaScript, screenshot - with no
-download at run time.
-
-**Acceptance.** `test/elixos/browser_test.exs` (the pinned manifest decides
-the argv: a musl-clean adapter is exec'd directly, a glibc one through its
-private loader) and `test/integration/m19_browser_test.exs`: the adapter comes
-up from the read-only `/system`, navigates to a stub HTTP server on the
-loopback, returns the page's text, evaluates JavaScript, produces a PNG, and
-`elixos.safe` starts none of it.
-
-**Notes. The gate first.** Run `ldd` on the pinned Lightpanda binary at build
-time. If it needs glibc, carry a private glibc in the system image and start
-Lightpanda through glibc's own loader
-(`ld-linux-x86-64.so.2 --library-path <dir> lightpanda serve`), exec'd
-directly as a port: a few MB, no rebuild. Building V8 for musl is the last
-resort, and **abandoning M19 is an allowed outcome**; the ADR records which
-arm was taken and why. `agent-browser` is not a portable fallback - it drives
-Chrome for Testing (glibc) or another browser over CDP, so the libc question
-only moves. jido_browser 2.3's adapter is optional and limited (navigation,
-clicks, typing, screenshots, extraction, JS evaluation; no element refs, saved
-state, tabs or console capture): the milestone is the adapter, its pin and its
-service, not the full surface. Binaries are pinned and verified when the image
-is built (M14's verification, ADR-009's rule: nothing is fetched on the box),
-never by jido_browser's own downloader. `jido_browser` becomes an OS
-dependency (ADR); `Elixos.Browser` starts the adapter only in normal mode,
-stops it on poweroff, and never lets it block the prompt.
-
-**Done when.** `make ci` is green with `MILESTONE=18`, both test files pass,
-and the ADR records the loader decision - or M19 is explicitly abandoned in
-the roadmap with the reason.
-
-- [ ] Demo recorded: `demos/m19-browser.mp4` (`make demo M=18`).
-
----
-
-## M20: Installed packages are Mix dependencies
-
-**Goal.** A project built on the box sees the system's installed packages as
-its dependencies: after `Elixos.Package.install(:hello_app)` - whose closure
-installs `hello_dep` first (M15) - the build resolves `hello_dep` from
-`/priv/apps` instead of reaching for a repository, so M10's one version per
-package holds for anything built on the box.
-
-**Acceptance.** `test/integration/m20_system_deps_test.exs`: `hello_app`
-installs by name on a box with no network, its dependency's code is the
-*installed* copy (the loaded `HelloDep` lives under `/priv/apps/hello_dep/`),
-and `HelloApp.greet()` answers with the value that dependency provides.
-
-**Notes. The gap (M15's review).** Installing a package `-pa`s its ebin onto
-the code path (`os/lib/elixos/package.ex`), which makes the modules
-*loadable* but leaves Mix's dependency loading unaware of them: building
-`hello_app` then asks Mix's SCM for `hello_dep`, which this factory has no
-Hex SCM for - on a pristine box that is a failure, and anywhere else it could
-be a second copy of a package that is already installed. `hello_pkg` installs
-today only because it has no dependencies. The fix makes the installed tree
-part of Mix's resolution - an SCM/path that points a dependency at its
-installed directory, or a deps rewrite before the build; which one is an ADR
-when this starts, and the test is the contract.
-
-**Done when.** `make ci` is green with `MILESTONE=19`, the QEMU test passes,
-and the ADR records the mechanism.
-
-- [ ] Demo recorded: `demos/m20-system-deps.mp4` (`make demo M=19`).
-
----
-
-## M21: Ask the human
+## M20: Ask the human
 
 **Goal.** Questions are data in the OS; front-ends are only views. `Elixos.Ask`
 keeps a queue of open questions, any front-end can answer one, and the asking
 process blocks until it is answered - so an agent can ask a person something
-and act on the answer, from IEx, from an ssh session, or (M22) from the GUI.
+and act on the answer, from IEx, from an ssh session, or (M27) from the GUI.
 
 **Acceptance.** `test/elixos/ask_test.exs` (the queue on the host: ordering,
 several askers at once, a timeout, a dismissal, and answers checked against
-the question) and `test/integration/m21_ask_test.exs`: an agent defined at the
+the question) and `test/integration/m20_ask_test.exs`: an agent defined at the
 prompt asks through the Jido action, the console shows the notice, the test
 answers at the prompt, and the action returns the answer.
 
@@ -618,20 +645,339 @@ guesswork, and rescue runs none of it.
 **Done when.** `make ci` is green with `MILESTONE=20`, both test files pass,
 and the notice line and the question shape are in PROTOCOL.md.
 
-- [ ] Demo recorded: `demos/m21-ask.mp4` (`make demo M=20`).
+- [ ] Demo recorded: `demos/m20-ask.mp4` (`make demo M=20`).
 
 ---
 
-## M22: GUI (Emerge on the framebuffer)
+## M21: The OMP toolset on Elixos
+
+**Goal.** An agent on the box gets the whole coding-agent toolset: every tool
+the pinned OMP SDK exposes, with the same names, parameters, outputs and error
+behaviour, so a prompt written for OMP works unchanged. The first
+implementation is OMP's own TypeScript, run by QuickBEAM inside a peer BEAM
+node that the main VM supervises - a crash in the JavaScript engine takes down
+only the peer.
+
+**Acceptance.** `test/elixos/toolset_test.exs` (the inventory equals the pinned
+SDK's tool factories; the dispatcher picks the implementation before each call
+and records which one ran; QuickBEAM runs with `apis: false` and its limits
+set), `test/elixos/toolset_differential_test.exs` (every tool in the inventory
+passes its fixtures recorded from OMP - outputs *and* failure semantics - in
+the peer node), and `test/integration/m21_toolset_test.exs`: on the box a tool
+call runs in the peer node, never the main VM; it sees only the calling
+session's workspace and directory; and killing the peer mid-call returns an
+error to the caller while the prompt keeps answering and the shim never
+notices (no missed heartbeat, no relaunch).
+
+**Notes.**
+- *The reference.* `@oh-my-pi/pi-coding-agent` 18.8.7
+  (`github.com/can1357/oh-my-pi`, `packages/coding-agent`), npm integrity
+  `sha512-CRjlRS/CmWKXD67iXScvPssI0PzFIuWOdkSh8/lYk3OEb1gcRy09iBuP6xaoD1/BZnFkug9sXC7CiG8xxfgjqQ==`:
+  the OMP this roadmap was written on. The pin moves only with a note in
+  DECISIONS.md, and the fixtures are re-recorded when it does.
+- *The inventory* is what the SDK's factories construct - `BUILTIN_TOOLS` and
+  `HIDDEN_TOOLS` in `src/tools/index.ts`, plus the settings-gated custom tools
+  `src/sdk.ts` installs: `read`, `security_scan`, `bash`, `edit`, `ast_grep`,
+  `ast_edit`, `ask`, `debug`, `ida`, `eval`, `github`, `glob`, `grep`, `find`,
+  `lsp`, `checkpoint`, `rewind`, `context_notes`, `new_context`, `task`,
+  `wait`, `todo`, `web_search`, `write`, `memory_edit`, `retain`, `recall`,
+  `reflect`, `learn`, `manage_skill`; hidden `think`, `yield`, `goal`;
+  settings-gated `generate_image` and `tts`. 35 tools, recorded with the pin
+  in `os/test/fixtures/omp/inventory.exs`. MCP and extension tools are a
+  user's configuration, not the toolset. A factory that returns `null` without
+  its dependency (`createIf`: `ida` without IDA, `lsp` without a language
+  server, `github` without `gh`) keeps that behaviour - absent, as OMP would
+  be on the same machine.
+- *The tool host.* QuickBEAM (Hex `quickbeam` 0.11.3, pinned with its checksum
+  like every dependency) runs in a peer node started with `:peer` and
+  supervised by the main VM; QuickJS never loads into the main VM. It runs
+  with `apis: false` - with `apis: [:node]`, a write to `process.env` reaches
+  `System.put_env/2`, which is VM-global (ADR-016). Use
+  `QuickBEAM.ContextPool` and `QuickBEAM.Context`: 0.11.3's high-level
+  `QuickBEAM.start/1` silently drops `:max_reductions`. Context startup receives
+  positive memory and reduction budgets; every eval/call receives its timeout.
+  Acceptance executes quota-breaking code and verifies the context still works,
+  rather than only comparing an options list.
+- *Pure core, Elixir effects.* Each tool splits into a pure core (parsing,
+  matching, patch application, formatting), which runs in QuickBEAM, and Elixir
+  effect handlers for everything QuickBEAM's missing Bun and Node APIs would
+  have done - spawning processes, file access, globbing, the network - each
+  scoped to the calling session's workspace and its M9 session directory. A
+  tool sees what its session may see, and nothing VM-global moves.
+- *Native dependencies.* A tool that needs an external binary gets it as an
+  Alpine package in the image (`bash` for the bash tool, `ripgrep`, `git`,
+  `ast-grep`, language servers), pinned in the lockfile like the rest. A tool
+  that needs an OMP native addon (`@oh-my-pi/pi-natives`) is tried in QuickBEAM
+  first; where QuickBEAM cannot load it, that piece is reimplemented in Elixir
+  or Zig and the differential suite decides whether it matches.
+- *The suite.* Fixtures are recorded from the pinned OMP - Unicode, malformed
+  input, numeric boundaries, large payloads - and compared on outputs and on
+  failure semantics. Shadow comparisons, when a second implementation runs
+  beside the first, compute only pure results: effects run once. The dispatcher
+  (`Elixos.Toolset`) chooses the implementation before each call and records
+  which one ran, so a later implementation (M24's native ones) is promoted or
+  reverted tool by tool without touching callers.
+- *Generation selection.* `config/config.exs` can select a tool's Elixir or
+  native module with `config :elixos, Elixos.Toolset, implementations:
+  %{"<tool>" => {:elixir | :native, module}}`; absent entries use QuickBEAM.
+  The module implements `Elixos.Toolset.Implementation.call/2`, with OMP
+  parameters and the isolated session. M24's runtime promotion or reversion
+  overrides that generation selection. Configuration is in the always-loaded
+  OS config, not the optional `MIX_TARGET=elixos` layer.
+- *What waits.* A tool that depends on a later milestone waits for it, and the
+  inventory says so (whatever needs a browser waits for M25); the rest go
+  ahead.
+- *Checked 2026-10-10.* QuickBEAM 0.11.3 publishes `x86_64-linux-musl` and
+  `aarch64-linux-musl` NIFs, so it needs no source build. Its dependency `oxc`
+  (a Rust NIF that strips TypeScript) publishes musl only for x86_64 in 0.19.0.
+  For aarch64, melange builds `oxc` from source with Alpine's Rust, preserving
+  QuickBEAM's TypeScript path on both architectures. QuickBEAM's own source
+  build needs Zig 0.16, which melange provides if its precompiled NIFs go away.
+
+**Done when.** `make ci` is green with `MILESTONE=21`, the three test files
+pass, and ADR-047 holds.
+
+- [ ] Demo recorded: `demos/m21-toolset.mp4` (`make demo M=21`): `read`, `grep`
+  and `edit` from the prompt through the peer node, then the peer killed
+  mid-call and the prompt still there.
+
+---
+
+## M22: The on-box coding agent
+
+**Goal.** A coding agent lives on the machine. A Jido agent owns the loop and
+uses M21's toolset; it starts from IEx or over SSH like any REPL session,
+reads its project instructions from the repository it works in, asks the human
+through M20's Ask, and works in its own workspace on `/priv`. Its system
+prompt and its tools are code that lives in the generation.
+
+**Acceptance.** `test/elixos/coder_test.exs` (the loop against a scripted model
+on the host: tool calls round-trip through the toolset, a subagent - OMP's
+`task` - is a Jido agent under the same supervisor, a question goes through
+`Elixos.Ask`, the repository's `AGENTS.md` reaches the model, and a credential
+never appears in anything logged) and `test/integration/m22_coder_test.exs`:
+from IEx, the agent completes a small coding task in a workspace under
+`/priv/work/` with the real toolset, against a model stub on the loopback so
+the test needs no network; the result is on disk; and the stub's credential is
+in neither the console transcript nor `/priv/journal.log`.
+
+**Notes.**
+- *The loop.* `Elixos.Coder` is a Jido agent: a model turn, tool calls through
+  `Elixos.Toolset`, the results back, until the model yields - OMP's semantics,
+  `yield` and `goal` included. Subagents (`task`) are Jido agents under the
+  same supervisor with their own sessions, and `wait` waits on them. Questions
+  to the human are `Elixos.Ask` questions (M20), so the console, an SSH session
+  or the GUI can answer them.
+- *Instructions.* Project instructions come from the `AGENTS.md` of the
+  repository the agent is working in, as in OMP. The agent's own system prompt
+  and its tool selection are code in the generation (ADR-048): saved, NEXT'd
+  and committed like any module, restored by a fallback, and in rescue the
+  factory's - never a working copy.
+- *Isolation.* Each session has its own workspace (a directory under
+  `/priv/work/`, a git worktree when the work is a repository) and its own M9
+  session directory. Nothing VM-global moves (ADR-016): not the cwd, not the
+  environment.
+- *Credentials.* Model credentials live in `/priv/credentials/`, outside any
+  generation - a generation is shared, restorable state; a key is neither - and
+  never reach a log, the journal or a crash dump: the client holds them as
+  values it redacts wherever state is formatted.
+- *Models.* The client speaks the OpenAI-compatible API M15's agents already
+  use (`Elixos.Agents.LLM`). The test's model is a scripted stub on the
+  loopback that replays tool calls; the demo is a run against a live model.
+- *Starting it.* `Elixos.Coder.start/1` from IEx or an SSH session (M12) ties
+  the agent's output to that session's group leader, like any REPL session
+  (M9).
+
+**Done when.** `make ci` is green with `MILESTONE=22`, both test files pass,
+and ADR-048 holds.
+
+- [ ] Demo recorded: `demos/m22-coder.mp4` (`make demo M=22`), against a live
+  model.
+
+---
+
+## M23: Self-modification
+
+**Goal.** The agent can change Elixos itself - OS code, its own tools, its own
+prompt - and those changes reach the running system only through generations:
+a candidate built in a child ERTS and tested in a peer node, then NEXT, a
+reboot, real health checks, and COMMIT or fallback, with the evidence kept.
+Code the agent writes never loads directly into the main VM.
+
+**Acceptance.** `test/elixos/candidate_test.exs` (a candidate's manifest
+records what produced it - session, model, tool revisions, parent generation;
+the health predicate runs the system's own checks, not liveness; hot-loading
+from an agent session is refused) and
+`test/integration/m23_self_modification_test.exs`:
+- the agent, driven by a scripted model, improves one of its own tools; the
+  candidate passes its suite in a peer node, is committed, and the improvement
+  survives a reboot;
+- a deliberately broken candidate falls back to `last_good`, and its evidence -
+  crash dump and logs - is on `/priv/evidence/<generation>/`;
+- factory rescue runs the factory's agent, its prompt and its tools, not the
+  suspect one.
+
+**Notes.**
+- *The path.* `Elixos.Candidate` builds a candidate from a working tree in a
+  child ERTS (M11's mechanism; never the main VM's code server), runs the
+  full portable system unit suite and the toolset's recorded fixture/smoke suite
+  against it in a peer node, then hands it to the shim: NEXT, reboot, health,
+  COMMIT or fallback - M6 to M8, unchanged. M17 is what makes this safe:
+  whatever a candidate does,
+  it cannot alter `last_good` or the factory.
+- *Real health.* `Elixos.Boot.AutoCommit`'s predicate becomes the system's own
+  checks - its tests and the toolset smoke tests - not just "the VM stayed up".
+  A candidate that boots but fails them is never committed, and the shim's
+  attempt counter falls back.
+  Host build orchestration (`:host_orchestration`) and QEMU provisioning are
+  not on-box suites: rerunning candidate-build orchestration inside its own
+  validation would recurse. The same full portable suite runs before NEXT and
+  at boot, in an isolated peer; deliberate core and selected-tool defects must
+  fail the real checks, not only injected callbacks.
+- *Evidence.* A failed candidate's crash dump, its logs and the failing check
+  are kept under `/priv/evidence/<generation>/` (ADR-025's dumps already live
+  on `/priv`); a fallback never deletes evidence.
+- *Provenance.* Each manifest records what produced it: the session, the
+  model, the tool revisions (the dispatcher's record, M21) and the parent
+  generation. `Elixos.Candidate.provenance/1` reads it back.
+- *Never in the main VM.* Code the agent writes is compiled and tested outside
+  the main VM and reaches it only by being booted as a generation; hot code
+  loading from an agent session is refused (ADR-049).
+- *Side effects.* A rollback restores code and the image's state, not the
+  world: a sent message, a payment or a migration stays done. Migrations follow
+  the expand-before-commit rule (M18): a generation ships only migrations its
+  parent can ignore.
+
+**Done when.** `make ci` is green with `MILESTONE=23`, both test files pass,
+and ADR-049 holds.
+
+- [ ] Demo recorded: `demos/m23-self-modification.mp4` (`make demo M=23`).
+
+---
+
+## M24: Native hot paths
+
+**Goal.** Measured hot paths of the toolset move to Zig through Zigler, as pure
+functions, one at a time - promoted only when the differential suite says they
+match and a benchmark says they are faster where it counts.
+
+**Acceptance.** `test/elixos/native_test.exs`: one hot path (edit's patch
+application) runs natively with results identical to the reference across the
+whole differential suite; its p99 latency under concurrent sessions,
+conversion overhead included, beats the QuickBEAM implementation's; and a
+deliberately crashing native candidate, run in the peer node, takes down only
+the peer - the caller gets an error, the main VM never notices.
+`test/integration/m24_native_test.exs`: on the box the dispatcher records the
+native implementation as the one that ran, and the generation's manifest pins
+its library, the target and the toolchain.
+
+**Notes.**
+- *Promotion (ADR-050).* Measure first; port a pure function; promote it only
+  after the differential suite passes and a p99 benchmark under concurrent
+  sessions, conversion overhead included, shows the gain. Unproven native code
+  runs in the peer node; a promoted implementation moves into the main VM only
+  if latency demands it.
+- *NIF discipline.* Synchronous NIFs only for bounded work well under 1 ms;
+  longer work uses dirty or threaded execution with admission limits.
+- *Pinning.* Generation manifests pin native libraries content-addressed - each
+  version its own file name, so loading a new one never replaces an old one in
+  place - plus the target and the toolchain. `Elixos.Native.pin_library/2`
+  packages a built library under its actual SHA-256; `Image.save/2` records the
+  exact pins in `manifest.native_libraries`. Zigler fetches its own Zig with
+  `mix zig.get`: that version is pinned and baked into the toolchain package
+  as `/priv/toolchain/zigler/zig`, separate from the shim's tracking-master
+  compiler. Nothing is fetched on the box.
+- *Reverting.* The dispatcher can revert one tool's implementation without a
+  generation switch. That reverts the implementation, not the environment: the
+  library stays pinned in the manifest that shipped it.
+
+**Done when.** `make ci` is green with `MILESTONE=24`, both test files pass,
+and ADR-050 holds.
+
+- [ ] Demo recorded: `demos/m24-native.mp4` (`make demo M=24`): the benchmark,
+  then the crashing candidate taking down only the peer.
+
+---
+
+## M25: A browser to call from the prompt
+
+**Goal.** A headless browser, shipped with the system, callable from IEx and
+from agents: navigate, extract, evaluate JavaScript, screenshot - with no
+download at run time.
+
+**Acceptance.** `test/elixos/browser_test.exs` (the pinned manifest decides
+the argv: a musl-clean adapter is exec'd directly, a glibc one through its
+private loader) and `test/integration/m25_browser_test.exs`: the adapter comes
+up from the read-only `/system`, navigates to a stub HTTP server on the
+loopback, returns the page's text, evaluates JavaScript, produces a PNG, and
+`elixos.safe` starts none of it.
+
+**Notes. The gate first.** Run `ldd` on the pinned Lightpanda binary at build
+time. If it needs glibc, carry a private glibc in the system image and start
+Lightpanda through glibc's own loader
+(`ld-linux-x86-64.so.2 --library-path <dir> lightpanda serve`), exec'd
+directly as a port: a few MB, no rebuild. Building V8 for musl is the last
+resort, and **abandoning M25 is an allowed outcome**; the ADR records which
+arm was taken and why. `agent-browser` is not a portable fallback - it drives
+Chrome for Testing (glibc) or another browser over CDP, so the libc question
+only moves. jido_browser 2.3's adapter is optional and limited (navigation,
+clicks, typing, screenshots, extraction, JS evaluation; no element refs, saved
+state, tabs or console capture): the milestone is the adapter, its pin and its
+service, not the full surface. Binaries are pinned and verified when the image
+is built (M14's verification, ADR-009's rule: nothing is fetched on the box),
+never by jido_browser's own downloader. `jido_browser` becomes an OS
+dependency (ADR); `Elixos.Browser` starts the adapter only in normal mode,
+stops it on poweroff, and never lets it block the prompt.
+
+**Done when.** `make ci` is green with `MILESTONE=25`, both test files pass,
+and the ADR records the loader decision - or M25 is explicitly abandoned in
+the roadmap with the reason.
+
+- [ ] Demo recorded: `demos/m25-browser.mp4` (`make demo M=25`).
+
+---
+
+## M26: Installed packages are Mix dependencies
+
+**Goal.** A project built on the box sees the system's installed packages as
+its dependencies: after `Elixos.Package.install(:hello_app)` - whose closure
+installs `hello_dep` first (M15) - the build resolves `hello_dep` from
+`/priv/apps` instead of reaching for a repository, so M10's one version per
+package holds for anything built on the box.
+
+**Acceptance.** `test/integration/m26_system_deps_test.exs`: `hello_app`
+installs by name on a box with no network, its dependency's code is the
+*installed* copy (the loaded `HelloDep` lives under `/priv/apps/hello_dep/`),
+and `HelloApp.greet()` answers with the value that dependency provides.
+
+**Notes. The gap (M15's review).** Installing a package `-pa`s its ebin onto
+the code path (`os/lib/elixos/package.ex`), which makes the modules
+*loadable* but leaves Mix's dependency loading unaware of them: building
+`hello_app` then asks Mix's SCM for `hello_dep`, which this factory has no
+Hex SCM for - on a pristine box that is a failure, and anywhere else it could
+be a second copy of a package that is already installed. `hello_pkg` installs
+today only because it has no dependencies. The fix makes the installed tree
+part of Mix's resolution - an SCM/path that points a dependency at its
+installed directory, or a deps rewrite before the build; which one is an ADR
+when this starts, and the test is the contract.
+
+**Done when.** `make ci` is green with `MILESTONE=26`, the QEMU test passes,
+and the ADR records the mechanism.
+
+- [ ] Demo recorded: `demos/m26-system-deps.mp4` (`make demo M=26`).
+
+---
+
+## M27: GUI (Emerge on the framebuffer)
 
 **Goal.** A dialog on the cyberdeck's own screen: Emerge renders the Ask
 queue's questions to the panel, the person answers with the keyboard, and IEx
 stays alive behind it - a GUI that is never in the boot-critical path, whose
-first app is the queue M21 already has.
+first app is the queue M20 already has.
 
 **Acceptance.** `test/elixos/emerge_render_test.exs` (each Ask dialog renders
 with no display and its pixels are checked) and
-`test/integration/m22_gui_test.exs`: a pending question appears on the
+`test/integration/m27_gui_test.exs`: a pending question appears on the
 framebuffer, an injected key answers it, the asking agent gets the answer, and
 the console works again after the GUI exits (rescue stays text-only).
 
@@ -645,7 +991,7 @@ the console works again after the GUI exits (rescue stays text-only).
   embedded FreeType, no Wayland/GPU libraries). It is downloaded, pinned and
   checksum-verified when the image is built, from the release that publishes
   the checksum manifest (ADR-009: the box itself never downloads), and packed
-  into the read-only system image (M17).
+  into the read-only system image (M18).
 - *Rendering off-screen.* `render_tree_to_pixels_nif/2` and
   `render_tree_to_png_nif/2` render a tree synchronously with no window: the
   host test uses the pixel buffer.
@@ -655,6 +1001,9 @@ the console works again after the GUI exits (rescue stays text-only).
   at all. So a small static Zig helper grabs the evdev devices (`EVIOCGRAB`)
   while the GUI owns the screen and streams their events to the BEAM, and the
   dialog's logic - which option is selected, which key answers - is Elixir.
+  The helper needs no root: it runs as the BEAM's own uid, and the `input`
+  group gives it the event devices (M17: access that only needs a group uses
+  the group, never the allow-list); `/dev/fb0` the same way, through `video`.
   The QEMU test injects at `Elixos.GUI.input/1`, the same entry the helper
   feeds - `{:key, key, :press | :release}`, `{:pointer, x, y}`,
   `{:button, button, :press | :release}` - and QEMU's own keyboard through a
@@ -666,18 +1015,21 @@ the console works again after the GUI exits (rescue stays text-only).
   only `-device virtio-gpu-pci`. The fragment change is configuration, never a
   patch (ADR-001).
 - *Console handover.* While the GUI owns the screen, unbind fbcon through its
-  entry under `/sys/class/vtconsole`; rebind it when the GUI exits. The
-  helper's grab dies with the helper, so a crash returns the keyboard.
+  entry under `/sys/class/vtconsole`; rebind it when the GUI exits. Those
+  writes need root, so the handover is a privileged helper on M17's allow-list
+  (`console-handover`, ADR-046): the BEAM asks for it by name and cannot run
+  anything else as root. The input helper's grab dies with the helper, so a
+  crash returns the keyboard.
 - *Failure modes.* The GUI is never boot-critical: a renderer, NIF or helper
   failure leaves IEx on the console working, and rescue stays text-only. The
   NIF runs inside the VM, so a Skia crash takes the VM down with it - which is
   exactly why the GUI is a service on top of the OS and not a dependency of
   anything; an ADR records that.
 
-**Done when.** `make ci` is green with `MILESTONE=21`, both test files pass,
+**Done when.** `make ci` is green with `MILESTONE=27`, both test files pass,
 and the ADRs (the renderer as a service; the input path) are written.
 
-- [ ] Demo recorded: `demos/m22-gui.mp4` from QEMU screendump frames, next to the console recording (`make demo M=21`).
+- [ ] Demo recorded: `demos/m27-gui.mp4` from QEMU screendump frames, next to the console recording (`make demo M=27`).
 
 ---
 
@@ -685,6 +1037,5 @@ and the ADRs (the renderer as a service; the input path) are written.
 
 Wi-Fi (Q3), a DHCP client in Elixir, power-button handling from input events,
 kernel/factory upgrades on hardware (Q5), process-state persistence (Q2),
-gsh packaging (Q6), CRIU as a stretch goal, aarch64. A terminal view in
-Emerge that hosts IEx as just another REPL session, so the GUI can become the
-shell.
+gsh packaging (Q6), CRIU as a stretch goal. A terminal view in Emerge that
+hosts IEx as just another REPL session, so the GUI can become the shell.

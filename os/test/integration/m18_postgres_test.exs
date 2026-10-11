@@ -1,6 +1,6 @@
-defmodule Elixos.Integration.M17PostgresTest do
+defmodule Elixos.Integration.M18PostgresTest do
   @moduledoc """
-  M17: Postgres as a system service. It answers from the prompt; it runs as
+  M18: Postgres as a system service. It answers from the prompt; it runs as
   its own uid - never root - with `/etc/passwd` naming that uid and the data
   directory owned by it, mode 0700; pgvector and TimescaleDB's Apache-only
   build load and answer; the binaries come from the read-only `/system`
@@ -10,7 +10,7 @@ defmodule Elixos.Integration.M17PostgresTest do
   use ExUnit.Case, async: false
 
   @moduletag :qemu
-  @moduletag milestone: 17
+  @moduletag milestone: 18
   @moduletag timeout: 900_000
   @moduletag :tmp_dir
 

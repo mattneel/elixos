@@ -70,10 +70,10 @@ exists() {
   if [ -n "$1" ]; then git cat-file -e "$1:$2" 2>/dev/null; else [ -e "$2" ]; fi
 }
 
-# changed <rev> <path>: do the audited bytes differ from the baseline's?
+# changed <rev> <path> [baseline path]: compare bytes across an approved rename.
 changed() {
-  local rev="$1" path="$2"
-  git show "$baseline:$path" > "$tmp/before" 2>/dev/null || : > "$tmp/before"
+  local rev="$1" path="$2" before="${3:-$2}"
+  git show "$baseline:$before" > "$tmp/before" 2>/dev/null || : > "$tmp/before"
   content "$rev" "$path" > "$tmp/after" 2>/dev/null || : > "$tmp/after"
   ! cmp -s "$tmp/before" "$tmp/after"
 }
@@ -98,16 +98,42 @@ covered() {
   return 1
 }
 
+# Only committed Git-detected renames can preserve a baseline test's identity.
+# The destination must still pass covered(), including its exact current bytes.
+renamed_test() {
+  local status before after
+  while IFS=$'\t' read -r status before after; do
+    if [[ "$status" == R* ]] && [ "$before" = "$1" ]; then
+      printf '%s' "$after"
+      return
+    fi
+  done < <(git diff --name-status -M "$baseline" "${head_rev:-HEAD}" -- spec os/test)
+}
+
 # --- shared vectors and shipped test files: whole files -----------------------
 while IFS= read -r path; do
+  original="$path"
   rev="$(revision "$path")"
 
   if ! exists "$rev" "$path"; then
-    fail "deleted: $path"
-    continue
+    path="$(renamed_test "$original")"
+    if [ -z "$path" ]; then
+      fail "deleted: $original"
+      continue
+    fi
+    rev="$(revision "$path")"
+    if ! exists "$rev" "$path"; then
+      fail "deleted: $path (renamed from $original)"
+      continue
+    fi
+    if ! covered "$rev" "$path"; then
+      fail "renamed without an ADR covering current content: $original -> $path"
+      continue
+    fi
+    note "ADR-covered rename: $original -> $path"
   fi
 
-  if changed "$rev" "$path"; then
+  if changed "$rev" "$path" "$original"; then
     summary="$(git diff --shortstat "$baseline" ${rev:+"$rev"} -- "$path" | tr -d '\n')"
     if [ -z "$rev" ]; then
       fail "changed in the working tree: $path ($summary); commit it with an ADR"

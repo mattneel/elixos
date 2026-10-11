@@ -1,6 +1,6 @@
-defmodule Elixos.Integration.M20SystemDepsTest do
+defmodule Elixos.Integration.M26SystemDepsTest do
   @moduledoc """
-  M20: an installed package is a Mix dependency. Installing hello_app by name
+  M26: an installed package is a Mix dependency. Installing hello_app by name
   installs its closure first (`hello_dep`, M15), and the build that follows
   resolves `hello_dep` from the installed tree: the box has no network, so a
   fetch could not have happened, and the code that ends up loaded is the
@@ -9,7 +9,7 @@ defmodule Elixos.Integration.M20SystemDepsTest do
   use ExUnit.Case, async: false
 
   @moduletag :qemu
-  @moduletag milestone: 20
+  @moduletag milestone: 26
   @moduletag timeout: 900_000
   @moduletag :tmp_dir
 

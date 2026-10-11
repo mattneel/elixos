@@ -1,13 +1,13 @@
 defmodule Elixos.ObanTest do
   @moduledoc """
   An app declares its queues and its cron in its `elixos:` key, next to its
-  services, and the declaration becomes Oban's options (M18). The running
-  scheduler - jobs, retries, a power cycle - is the M18 QEMU acceptance's
+  services, and the declaration becomes Oban's options (M19). The running
+  scheduler - jobs, retries, a power cycle - is the M19 QEMU acceptance's
   business.
   """
   use ExUnit.Case, async: true
 
-  @moduletag milestone: 18
+  @moduletag milestone: 19
 
   alias Elixos.Package.Spec
 

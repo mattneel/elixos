@@ -17,7 +17,9 @@ milestone =
       String.to_integer(value)
   end
 
-future = for m <- (milestone + 1)..26//1, do: {:milestone, m}
+# Every milestone above the current one, with room to spare: the roadmap runs
+# to M27 today, and a bound that tracks it has had to be raised twice already.
+future = for m <- (milestone + 1)..99//1, do: {:milestone, m}
 
 # QEMU tests boot real images and are slow; `make test-qemu` sets ELIXOS_QEMU=1
 # and runs only test/integration. Never use `--include qemu`: an include filter

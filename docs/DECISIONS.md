@@ -829,7 +829,7 @@ for every build. It is pinned there, not in `config/elixos.exs`, because that
 file layers only when a build names `MIX_TARGET=elixos` - and the factory's
 release does not; the setting is part of the running system's disk layout, so
 it must hold wherever the OS is built. Where Jido keeps its state, and whether
-that is Mnesia at all, stays an M18 decision.
+that is Mnesia at all, stays an M19 decision.
 
 **Consequences.** Mnesia resolves `/priv/mnesia` before any schema exists; a
 unit test asserts the directory is absolute and under `/priv`, and that
@@ -873,7 +873,7 @@ Alpine's configuration, not ours.
 - apko assembles the root filesystem from that lockfile; from it come the
   same images the QEMU tests boot today - a kernel plus an initramfs carrying
   `/init` and `/factory` - for both architectures. apko does not run package
-  install scripts, so users an image needs (the Postgres uid, M17) are
+  install scripts, so users an image needs (the Postgres uid, M18) are
   declared in the apko config rather than created by a script.
 - The old pipeline goes: the cross-build and the musl.cc download are
   deleted, there is no dual pipeline, and the make targets keep their names
@@ -896,7 +896,7 @@ kernel, OTP and Elixir versions. The dev APK signing key stays out of git; a
 release key is a later decision. Image size moves (recorded in M16): before,
 initramfs 44M and rootfs 108M (factory 82M, libs 27M); after, recorded when
 the pipeline builds. Emerge ships no aarch64 musl NIF (only aarch64 GNU), so
-the GUI milestone (M22) needs a source build for aarch64 - noted there.
+the GUI milestone (M27) needs a source build for aarch64 - noted there.
 
 **Alternatives.** Keeping the hand-rolled cross-build and adding one
 cross-compile per new dependency (what this replaces: every new C dependency
@@ -1102,3 +1102,229 @@ regexes, changed assertions or raised timeouts.
 directories and an unchanged VM cwd. OTP and the OS remain unmodified for
 this issue. This ADR covers the protected test change in its own commit;
 `make audit` must still report zero violations.
+
+## ADR-045: The agent-toolset roadmap renumbers what has not started
+
+**Status:** accepted (roadmap, after M16)
+
+**Context.** The human queued a new direction behind the build-system switch
+(M16): Elixos plus Jido plus the coding-agent toolset, so the machine can
+modify itself safely - an escape hatch first, then Postgres, Oban and Ask as
+already planned, then the OMP toolset, the on-box coding agent,
+self-modification and native hot paths, with the browser and the GUI after
+those, in their order. An earlier draft of that roadmap (a crew runtime,
+shim modes, OCI images) was withdrawn; container and OCI mode stay a separate
+write-up.
+
+**Decision.** The milestones that have not started are renumbered:
+
+| milestone | was |
+|---|---|
+| M17 The escape hatch: an unprivileged BEAM and sealed commits | new |
+| M18 The system database (Postgres) | M17 |
+| M19 Jobs that survive reboots (Oban) | M18 |
+| M20 Ask the human | M21 |
+| M21 The OMP toolset on Elixos | new |
+| M22 The on-box coding agent | new |
+| M23 Self-modification | new |
+| M24 Native hot paths | new |
+| M25 A browser to call from the prompt | M19 |
+| M26 Installed packages are Mix dependencies | M20 |
+| M27 GUI (Emerge on the framebuffer) | M22 |
+
+The installed-packages milestone is not named in the human's order; it keeps
+its place between the browser and the GUI, as before. Test files, test module
+names, `@moduletag milestone:` tags, the stubs' TODO numbers and every
+cross-reference move with their milestone, and each "Done when" names its own
+milestone's number (several still carried numbers from before M16 was
+inserted). `os/test/test_helper.exs` excludes every milestone above the
+current one up to 99, so the bound no longer needs raising each time the
+roadmap grows. Two plans change with the new order, not just their numbers:
+Postgres runs as its own uid through M17's helper allow-list instead of a
+helper the BEAM execs, and the GUI's console handover is a helper while its
+devices use the `video` and `input` groups.
+
+**Consequences.** The renumbered acceptance tests change only names and
+numbers; no assertion changes, and this ADR is the cover `make audit` asks
+for. The audit follows Git-detected, committed renames only when their current
+content is covered by an ADR-carrying commit; unapproved deletions and later
+uncommitted changes still fail. `MILESTONE` remains 16 in this roadmap commit;
+none of the future milestones is started here.
+
+## ADR-046: The BEAM runs unprivileged, commits are sealed, and root is behind the shim
+
+**Status:** accepted (M17; PROTOCOL.md §2, §3 and §6 change when it starts)
+
+**Context.** From M21 on, code running in the BEAM includes an agent with a
+shell, an editor and a compiler - code that can change Elixos itself. Today
+the BEAM runs as root, so anything it runs can rewrite `boot.state`, the
+committed generations and the store, which together are the way back from a
+bad change. The escape hatch has to be something the BEAM cannot touch.
+
+**Decision.**
+- The shim is the trusted base. It execs erlexec as the dedicated `elixos`
+  uid (setgroups, setgid, setuid, `PR_SET_NO_NEW_PRIVS`), keeping only the
+  ambient capabilities PROTOCOL.md §3 lists - `CAP_NET_BIND_SERVICE`, for the
+  SSH daemon on port 22. The account is declared in the apko config (ADR-041:
+  no install scripts run).
+- `boot.state` is root's and readable (0644); the control pipe stays the
+  BEAM's only way to change it. The BEAM writes candidate generations; on
+  COMMIT the shim seals the committed one - its manifest and every store blob
+  it references become root-owned and 0444. Root owns `/priv`,
+  `/priv/generations`, `/priv/store` and the store's fan-out directories;
+  writable shared parents are 1777 and prepared by the shim before dropping
+  uid. The BEAM cannot unlink, rename or replace a sealed child; merely adding
+  a sticky bit to a BEAM-owned directory would not protect it. The factory and
+  helper list stay root-owned in the initramfs. Restore verifies every blob
+  against its hash before loading it.
+  A mode/owner change does not revoke a retained writable descriptor. Publish
+  fresh root-owned inodes containing verified candidate bytes before changing
+  `last_good`, unless those inodes were sealed before any BEAM could open them.
+  Verify the copied bytes before publication; an old open handle must not be
+  able to corrupt a newly committed recovery path.
+- Anything that needs root moves behind the shim: the image declares an
+  allow-list of privileged helpers in `/etc/elixos/helpers` (name, uid and
+  gid, absolute path and arguments, exec'd directly, never through a shell).
+  The BEAM asks with `HELPER <name>` on the control pipe and reads `HELPER
+  <name> OK <pid>` or `HELPER <name> REFUSED` from a reply pipe
+  (`ELIXOS_REPLY_FD`); the shim reads the list once at startup, so the BEAM
+  cannot add to it, and logs every refusal (`elixos-shim: helper refused
+  name=<name>`). Helpers are the shim's children, stopped after the BEAM on
+  poweroff, halt and reboot.
+- Access that only needs a group - the framebuffer (`video`), input devices
+  (`input`) - uses the group, never the allow-list.
+
+**Consequences.** Two PROTOCOL.md changes, both written with the code: the
+control protocol (§2) gains the HELPER request and a reply direction, and the
+launch contract (§3) gains the uid, the capabilities and `ELIXOS_REPLY_FD`;
+the refusal is a console line (§6). The Postgres plan's helper exec'd by the
+BEAM is gone (ADR-045): Postgres is an allow-list entry. A candidate can still
+break a boot, and the shim still falls back - but no candidate can take the
+fallback away.
+
+## ADR-047: The OMP toolset keeps OMP's contract and runs in a peer node
+
+**Status:** accepted (M21)
+
+**Context.** An agent on the box needs the coding-agent toolset, and prompts
+written for OMP should work unchanged. OMP's tools are TypeScript on Bun.
+QuickBEAM runs JavaScript in QuickJS through a NIF: in the main VM, a crash in
+that engine would take down the VM that holds the prompt, the services and
+the heartbeat the shim watches.
+
+**Decision.**
+- Scope: every tool the pinned OMP SDK's factories construct (35 at
+  `@oh-my-pi/pi-coding-agent` 18.8.7), with the same names, parameters,
+  outputs and error behaviour. The pinned OMP is the reference; the pin and
+  the inventory live in `os/test/fixtures/omp/inventory.exs`, and moving the
+  pin is a note here plus re-recorded fixtures.
+- The first implementation is OMP's TypeScript in QuickBEAM, inside a peer
+  node (`:peer`) that the main VM supervises - never inside the main VM - run
+  with `apis: false`, memory limits, reduction limits and per-call timeouts
+  (`apis: [:node]` would let `process.env` writes reach `System.put_env/2`,
+  which is VM-global, ADR-016).
+  Use `QuickBEAM.ContextPool` and `QuickBEAM.Context`: in 0.11.3
+  `QuickBEAM.start/1` does not forward `:max_reductions`. Memory and reduction
+  budgets are per-context; the timeout belongs to every eval/call. Acceptance
+  must exercise these limits and disabled APIs, not merely inspect a keyword
+  list that the runtime could ignore.
+- Each tool is a pure core plus Elixir effect handlers - processes, files,
+  globbing, the network - scoped to the calling session's workspace and M9
+  session directory. External binaries come from Alpine packages; an OMP
+  native addon QuickBEAM cannot load is reimplemented in Elixir or Zig.
+- Differential tests against fixtures recorded from the reference cover every
+  tool, outputs and failure semantics alike; shadow runs compare pure results
+  only. A dispatcher picks the implementation before each call and records
+  which one ran. A tool that needs a later milestone waits for it.
+- Generation configuration in the always-loaded `config/config.exs` can select
+  an Elixir or native module per tool; an absent entry uses QuickBEAM.
+  `Elixos.Toolset.Implementation.call/2` receives OMP parameters and the
+  isolated session. Runtime promotion or reversion (M24) overrides that
+  selection without changing callers. The optional target config is not the
+  source of this generation-wide decision (ADR-040).
+
+**Consequences.** A QuickJS crash costs one call, not the machine: the caller
+gets an error, the peer is restarted, and the shim never sees a missed
+heartbeat. Every crossing of the peer boundary copies its terms - the price of
+that isolation, and the measurement M24 starts from.
+
+## ADR-048: The agent's prompt and tools are generation content
+
+**Status:** accepted (M22)
+
+**Context.** The on-box agent's system prompt and tool selection decide what
+it does. If they lived outside the image, a change to them would be the one
+change Elixos could not roll back, and rescue would run whatever was last
+written instead of something known good.
+
+**Decision.** The agent's system prompt and its toolset are code: they live in
+the generation like every other module, saved, NEXT'd and committed through
+the same path, restored by a fallback, and in rescue the factory's. Project
+instructions come from the `AGENTS.md` of the repository the agent is working
+in, as in OMP - those belong to the project, not to the OS. Model credentials
+are the exception the other way: they live in `/priv/credentials/`, outside any
+generation, and are never written to a log, the journal or a crash dump.
+
+**Consequences.** A bad prompt is a bad generation: the attempt counter and
+the fallback deal with it like any other. Changing the agent is a commit, with
+a manifest that says who made it (ADR-049).
+
+## ADR-049: Self-modification goes through generations only
+
+**Status:** accepted (M23)
+
+**Context.** The agent can change Elixos itself: OS code, its own tools, its
+own prompt. Hot code loading would let such a change reach the running system
+with no test run, no health check and no way back.
+
+**Decision.**
+- Code the agent writes never loads into the main VM. A candidate is built in
+  a child ERTS (M11), tested in a peer node against the full portable system
+  unit suite and the toolset's recorded fixture/smoke suite, then booted as a
+  generation: NEXT, reboot, health checks, then COMMIT or fallback. Hot loading
+  from an agent session is refused.
+- The AutoCommit health predicate becomes real checks - the system's tests and
+  toolset smoke tests - not liveness.
+- The portable suite excludes host candidate-build orchestration and QEMU
+  provisioning, not runtime behavior. Candidate orchestration tests carry
+  `:host_orchestration` so validation cannot recursively build and validate
+  itself. Boot health runs the same portable and tool suites as pre-boot
+  validation, in a peer; real core and selected-tool defects must fail them.
+- A failed candidate's evidence (crash dump, logs, the failing check) is kept
+  under `/priv/evidence/<generation>/`; fallback never deletes it.
+- Each generation's manifest records what produced it: the session, the model,
+  the tool revisions and the parent generation.
+- A rollback restores code and the image's state, not the world: messages
+  sent, payments made and migrations run stay done. Migrations follow the
+  expand-before-commit rule: a generation ships only migrations its parent can
+  ignore.
+
+**Consequences.** Self-modification is as slow as a reboot and as safe as the
+generation machinery plus ADR-046's sealing. A change that breaks the boot
+costs an attempt, not the machine; factory rescue runs the factory's agent.
+
+## ADR-050: Native code is promoted on evidence, one hot path at a time
+
+**Status:** accepted (M24)
+
+**Context.** Some toolset paths will be hot, and Zig through Zigler can make
+them faster. A native function also runs inside whichever VM loads it: one
+crash there is a crash of that VM, and an unbounded synchronous NIF stalls a
+scheduler.
+
+**Decision.**
+- Port only measured hot paths, as pure functions. Promote one only after it
+  passes the differential suite and a p99 latency benchmark under concurrent
+  sessions, conversion overhead included.
+- Synchronous NIFs only for bounded work well under 1 ms; anything longer runs
+  dirty or threaded, with admission limits.
+- Unproven native code runs in the peer node; a promoted implementation moves
+  into the main VM only if latency demands it.
+- Generation manifests pin native libraries content-addressed (each version
+  its own file name), the target and the toolchain. Zigler's Zig, which
+  `mix zig.get` would fetch, is pinned and baked into the toolchain package.
+- The dispatcher can revert one tool's implementation; that reverts the
+  implementation, not the environment.
+
+**Consequences.** Native speed is earned per function and reversible per tool,
+and a native crash before promotion costs only the peer.
