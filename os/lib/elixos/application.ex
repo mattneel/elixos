@@ -115,6 +115,10 @@ defmodule Elixos.Application do
             # supervisor and restored with what they remembered (M15).
             {DynamicSupervisor, name: Elixos.Agents.Supervisor, strategy: :one_for_one},
             {Elixos.Agents, {image, env.mode}},
+            # Questions are data in the OS (M20): agents ask through the Jido
+            # action and every front-end sees the same queue. Not boot-critical,
+            # and rescue runs none of it.
+            {Elixos.Ask, mode: env.mode},
             # Key-only SSH into the user's REPL (M12). Not boot-critical: with
             # no network, or in rescue, it logs and steps aside (the prompt
             # still comes up).

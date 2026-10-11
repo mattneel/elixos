@@ -1565,3 +1565,42 @@ weakened.
 **Consequences.** The M19 acceptance is three normal power-ons plus one rescue
 power-on, strictly sequential. Both fixtures now follow the same rule; a
 future test that boots a second guest on one disk must power the first off.
+
+## ADR-059: Questions are data; the console is the first front-end
+
+**Status:** accepted (M20)
+
+**Context.** An agent needs to ask the human something and act on the answer
+(M20, M22). The answer must be checked against the question - a front-end must
+not be able to hand back a value the question never allowed - and the same
+question has to work from the console, from an ssh session (M12), and from the
+framebuffer GUI (M27). Putting any of that in the asking agent makes every
+front-end a special case.
+
+**Decision.** `Elixos.Ask` is one queue in the OS supervision tree (normal
+mode; rescue starts none of it), holding open questions as data:
+`id`, `kind` (`:text | :choice | :multi | :confirm`), `prompt`, `options`,
+`allow_other`, an optional `default`, the asking process, and when it was
+asked. `ask/2` blocks the asker until the question is resolved; `pending/0`
+lists what is open, oldest first; `answer/2` and `dismiss/1` resolve by id.
+An answer is validated against its question before it is accepted: a choice
+must be one of its options (or free text when the question offered it), a
+multi a non-empty subset of them, a confirm a boolean, a text a binary. A
+timeout is resolved server-side and answers `{:error, :timeout}`; a dismissed
+question answers `{:error, :dismissed}`; an asker that goes away has its
+questions dismissed rather than answered by guesswork.
+
+The console REPL is the first front-end and prints one notice line per new
+question - `elixos-ask: question <id> (<kind>): <prompt>`, documented in
+PROTOCOL.md §6 and matched byte for byte by the M20 acceptance. Answering is
+any front-end's job; the prompt does it with `Elixos.Ask.answer/2`.
+`Elixos.Ask.Action` is the Jido action (`ask_human`) that lets an agent route
+a signal to the queue and carry the answer into its own state, so an agent
+asks the same way it does anything else.
+
+**Consequences.** A question is VM state, not disk state: it does not survive
+a power cycle, which is honest - the human it was addressed to is the console
+or the GUI, and both are gone when the machine is. The M20 acceptance asks
+from an agent, sees the notice on the console, answers at the prompt, and
+finds the answer in the agent's state. M27 adds a second view over the same
+queue without touching the askers.

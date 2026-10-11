@@ -231,6 +231,21 @@ Placeholders: `<g>` generation, `<n>` number, `<m>` `normal|rescue`,
 `attempt=<n>` is the plan's `next_state.attempts`. When planning from an
 unreadable or unmountable state, the shim uses the defaults (`0/0/0`).
 
+The BEAM prints one further console line, prefixed `elixos-ask: ` (M20), when
+a question is added to `Elixos.Ask`: the console REPL is the first front-end
+of the question queue (docs/ARCHITECTURE.md §6, ADR-059), so a human watching
+the console sees the question the moment it exists - an agent's question
+included.
+
+| line (after the prefix)                       | when                       | from |
+|-----------------------------------------------|----------------------------|------|
+| `question <id> (<kind>): <prompt>`            | a question enters the queue | M20 |
+
+`<id>` is the queue's own id (a positive integer), `<kind>` is one of `text`,
+`choice`, `multi`, `confirm`, and `<prompt>` is the question's text, verbatim.
+The line is API: the M20 acceptance matches it, so it changes like any other
+console line. Questions do not survive the session that asked them.
+
 ## §7 The persistent disk
 
 ext4, label `ELIXOS`, mounted on `/priv`:
