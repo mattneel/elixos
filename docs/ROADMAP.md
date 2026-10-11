@@ -548,12 +548,11 @@ it so `check-kernel-config.sh` guards it: Postgres always creates a small
 System V shared-memory segment as a lock, and its dynamic shared memory wants
 `/dev/shm`, which the shim mounts as a tmpfs (mode 1777) beside `/run` and
 `/tmp`. Postgres comes from Alpine's packages through the M16 pipeline
-(`postgresql17`, `pgvector`; TimescaleDB from edge, package by package, as
-ADR-041 allows): pinned in the lockfile and assembled by apko, never a second
-cross-build. If its size argues for it, the service can move to a read-only
-image on `/priv` (squashfs or erofs: a kernel config option, never a patch)
-mounted at `/system` in normal mode only - that is this milestone's call to
-make, sizes in hand. Licensing: pgvector is
+(`postgresql17`; pgvector and Apache-only TimescaleDB from the tagged PG17
+package set in ADR-052): pinned in the system lockfile and assembled by apko,
+never a second cross-build. The service binaries and their library closure
+live in a gzip SquashFS on `/priv`, mounted read-only at `/system` in normal
+mode only (ADR-052). Licensing: pgvector is
 PostgreSQL-licensed; TimescaleDB's Apache-only build gives hypertables and
 `time_bucket` without a question. TimescaleDB is a *preload library*: the
 cluster's `shared_preload_libraries` must name `timescaledb` before the

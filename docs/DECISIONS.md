@@ -1364,3 +1364,71 @@ are connected. A disposable, isolated BEAM exercised lookup, duplicate
 rejection, crash/restart, snapshots and 256 sequential start/stop lifecycles
 with zero added atoms after warm-up. Maximum live agents was one: this is
 lifecycle/retention evidence, not a capacity result.
+
+## ADR-052: Heavy services live in a read-only system image
+
+**Status:** accepted (M18)
+
+**Context.** The factory must remain the rescue minimum. PostgreSQL 17 alone
+adds 15.2 MiB installed; its Apache-only TimescaleDB extension adds 11.6 MiB
+before the client and shared-library closure. Both shipped kernels already
+provide built-in loop devices and gzip SquashFS.
+
+**Decision.** Assemble a separate, architecture-specific Alpine package set
+with apko and committed lockfiles, then pack a reproducible gzip SquashFS.
+The pristine disk carries it at `/priv/system/system.squashfs`, under a
+root-owned directory excluded from the writable-state ownership migration.
+PID 1 opens the root-owned, non-writable regular file without following
+symlinks, attaches it to a read-only loop device and mounts it at `/system`
+only for normal launches. Rescue starts without that mount or its services.
+Mount failure disables the service, not the prompt. No kernel patches.
+
+Keep PostgreSQL 17 from Alpine v3.24. The current v3.24 extensions require
+PostgreSQL 18, so select only the PG17-compatible extensions from a tagged
+v3.22 community repository: pgvector 0.6.2-r1 and TimescaleDB 2.17.2-r1.
+The server and shared-library closure stay on v3.24. These are signed Alpine
+packages pinned by the system lockfiles, not another PostgreSQL build.
+Alpine's TimescaleDB build explicitly sets `APACHE_ONLY=ON`; no Timescale
+License features ship.
+
+**Consequences.** The factory carries only the account and native init guard,
+not the database binaries. A system-image change is a disk/image build, not
+a mutation of the mounted service. The older extension pins are deliberate
+PG17 ABI choices and must be reviewed with any PostgreSQL major upgrade.
+
+Sources: [PG17 package](https://pkgs.alpinelinux.org/package/v3.24/main/x86_64/postgresql17),
+[PG17 extensions](https://pkgs.alpinelinux.org/package/v3.22/community/aarch64/postgresql-pgvector),
+[Apache-only build](https://gitlab.alpinelinux.org/alpine/aports/-/raw/3.22-stable/community/postgresql-timescaledb/APKBUILD).
+
+## ADR-053: PID 1 owns PostgreSQL's identity and clean shutdown
+
+**Status:** accepted (M18)
+
+**Decision.** Declare `postgres` as uid/gid 70 in the factory. PID 1 prepares
+`/priv/postgres/data` owned by that account, mode 0700, and
+`/priv/postgres/log` owned by it, mode 0755. Log files are 0644 so the single
+user can read the shutdown evidence without access to the cluster files.
+
+Two fixed allow-listed helpers run without supplementary groups or BEAM
+capabilities: `postgres-init` executes a libc-free native guard which skips
+an existing `PG_VERSION` and otherwise directly execs Alpine's `initdb`;
+`postgres` directly execs the postmaster. Their paths and argv are image
+policy. Dynamic libraries come from `/system` through a fixed child-only
+environment; nothing changes the main VM's cwd or environment.
+
+The postmaster listens only on loopback with local trust authentication,
+loads `timescaledb` before accepting queries, and writes persistent logs.
+The Elixir service starts asynchronously in normal mode after the prompt's
+machinery; readiness requires a successful real database query. A failed
+start is non-critical and remains visible to callers and the console.
+
+On halt, reboot or power-off, the BEAM stops first while its database remains
+available. PID 1 then sends the postmaster SIGINT (fast shutdown), waits for
+its exit for up to 30 seconds, and only then stops remaining helpers, syncs
+and unmounts. A deadline failure is logged before SIGKILL; it is not reported
+as a clean database shutdown. Panic adoption retains the helper pid and the
+same shutdown policy.
+
+**Consequences.** An initialized cluster survives boots without rerunning
+`initdb`. Oban's Repo can use the database until the VM stops. Rescue is still
+the factory with the persistent disk, not a database-dependent boot.
