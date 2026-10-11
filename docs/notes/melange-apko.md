@@ -303,3 +303,33 @@ right and reached `erts/configure`:
 Nothing after the curses probe is tested, and the recipe was not kept: an unrun
 recipe is scaffolding, not progress. The plan above plus these three findings
 are what the next attempt needs.
+
+### The compiler question for OTP: Zig cannot do this one
+
+Two more probes settled the toolchain, and they are the most useful result of
+the whole exercise:
+
+* **Zig's driver refuses to link a *dynamic* target library it did not build.**
+  With the sysroot's `ncurses-dev`/`ncurses-libs` in place and `-L` pointing at
+  them, `zig cc --target=aarch64-linux-musl` answers
+  `unable to find dynamic system library "ncurses" using strategy paths_first.
+  searched paths: none`. That is by design: Zig links what it ships (its musl,
+  its compiler-rt) and treats everything else as static. It is the right
+  compiler for our self-contained targets - the shim, `postgres-init`, the
+  kernel's `cc` bridge - and the wrong one for ERTS, which links the target's
+  `libncurses` and `libssl`.
+* **clang + lld + a sysroot is the right shape, and needs the target's GCC
+  runtime objects**: `clang --target=aarch64-linux-musl --sysroot=… -fuse-ld=lld`
+  fails on `crtbeginS.o`/`crtendS.o` and `-lgcc`, and fetching the target's
+  `gcc`/`libgcc`/`libstdc++` into the sysroot did not put `crtbeginS.o` where
+  either `-B` or `--gcc-toolchain` expects it (Alpine's aarch64 `gcc` package
+  does not ship those objects in `/usr/lib` nor in
+  `/usr/lib/gcc/<triple>/<version>/`). That is the next thing to establish -
+  where a musl aarch64 sysroot's crt objects come from - and it is a
+  prerequisite for everything after it (the `erl_xcomp_*` configure run, the
+  arm64 JIT, the Erlang build against the bootstrap ERTS).
+
+Both probes ran in seconds, so the next attempt can iterate quickly; what it
+needs is a decision on the sysroot's provenance (the target's package set plus
+its GCC runtime, or a purpose-built cross toolchain), not more patience with
+one-off flags.
