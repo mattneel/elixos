@@ -112,4 +112,23 @@ defmodule Elixos.ObanLifecycleTest do
     assert Scheduler.activate() == :ok
     assert Scheduler.status() == {:error, :not_running}
   end
+
+  test "the connection is in the app environment, where Oban reads it" do
+    # Oban's notifier, peer and engine open their own connections from
+    # `Repo.config/0`, which is the application environment - not the options
+    # the manager passes to start_link/1. A missing key here is a scheduler
+    # that starts and then cannot connect anything.
+    config = Elixos.Oban.Repo.config()
+
+    assert is_list(config) and config != []
+    assert Keyword.get(config, :database) == "postgres"
+    assert Keyword.get(config, :username) == "postgres"
+    assert Keyword.get(config, :hostname) == "127.0.0.1"
+    assert Keyword.get(config, :port) == 5432
+    # Ecto adds its own defaults (telemetry_prefix, otp_app, ...); the
+    # contract is that every option we start the repo with is in the app env.
+    for {key, value} <- Elixos.Oban.Repo.connection_options() do
+      assert Keyword.get(config, key) == value
+    end
+  end
 end

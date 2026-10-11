@@ -65,7 +65,7 @@ defmodule Elixos.Oban do
   @spec enqueue(module(), map(), keyword()) :: {:ok, term()} | {:error, term()}
   def enqueue(worker, args, opts \\ []) do
     with {:ok, instance} <- await_instance() do
-      worker.new(args, opts) |> Oban.insert(instance)
+      Oban.insert(instance, worker.new(args, opts))
     end
   end
 
@@ -114,16 +114,22 @@ defmodule Elixos.Oban do
   end
 
   @doc """
-  Releases the queues, once the supervision tree - and with it the restored
-  image - is up. Called by `Elixos.Application` after the children start;
-  queues never run before it.
+  Asks the manager to release the queues, once the supervision tree - and with
+  it the restored image - is up. Called by `Elixos.Application` after the
+  children start; queues never run before it.
+
+  It returns immediately: the boot must not wait on the scheduler, and a
+  scheduler that could not start never fabricates a queue from a cast that
+  arrived anyway.
   """
   @spec activate() :: :ok
   def activate do
     case manager() do
       nil -> :ok
-      pid -> GenServer.call(pid, :activate, :infinity)
+      pid -> GenServer.cast(pid, :activate)
     end
+
+    :ok
   end
 
   defp await_instance do

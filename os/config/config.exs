@@ -15,6 +15,20 @@ config :logger, level: :info
 # setting must hold for every build of the OS.
 config :mnesia, dir: ~c"/priv/mnesia"
 
+# The system database connection (M19, ADR-057): M18's postmaster on loopback,
+# the `postgres` role, trust authentication (ADR-053). It lives in the app
+# environment, not only in Ecto.Repo.start_link/1 options, because that is what
+# `Repo.config/0` returns - and Oban's notifier, peer and engine open their own
+# connections from exactly that (the host build and every release must agree on
+# it; `Elixos.Oban.Repo.connection_options/0` reads the same key).
+config :elixos, Elixos.Oban.Repo,
+  hostname: "127.0.0.1",
+  port: 5432,
+  username: "postgres",
+  database: "postgres",
+  pool_size: 5,
+  log: false
+
 if config_target() == :elixos do
   import_config "elixos.exs"
 end

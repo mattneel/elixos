@@ -1509,7 +1509,11 @@ One `Ecto.Repo` (`Elixos.Oban.Repo`) connects to M18's database as the
 `postgres` role over loopback - the same host, role and database
 `Elixos.Postgres.query/1` already uses, with `-A trust` authentication
 (ADR-053). There is no second database and no password to carry: the
-postmaster listens on loopback only and refuses everything else.
+postmaster listens on loopback only and refuses everything else. The
+connection lives in `config :elixos, Elixos.Oban.Repo`, not only in
+`Ecto.Repo.start_link/1` options, because `Ecto.Repo.config/0` - the app
+environment - is what Oban's notifier, peer and engine read to open their own
+connections; options passed only to `start_link/1` leave them with nothing.
 
 `Elixos.Oban.Manager` owns the lifecycle and is not boot-critical: wait for
 Postgres, start the Repo, run Oban's schema as a real Ecto migration

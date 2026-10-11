@@ -15,25 +15,14 @@ defmodule Elixos.Oban.Repo do
 
   use Ecto.Repo, otp_app: :elixos, adapter: Ecto.Adapters.Postgres
 
-  @hostname "127.0.0.1"
-  @port 5432
-  @username "postgres"
-  @database "postgres"
-
   @doc """
-  The fixed connection options, exactly M18's database: the same host, role
-  and database `Elixos.Postgres.query/1` uses, so the prompt, Oban and the
-  Repo all see one database.
+  The connection options, from `config :elixos, Elixos.Oban.Repo` - the same
+  key `Repo.config/0` reports to Oban's notifier, peer and engine, so every
+  connection this machine opens goes to the same place: M18's database, on
+  loopback, as the `postgres` role (ADR-053, ADR-057).
   """
   @spec connection_options() :: keyword()
   def connection_options do
-    [
-      hostname: @hostname,
-      port: @port,
-      username: @username,
-      database: @database,
-      pool_size: 5,
-      log: false
-    ]
+    Application.get_env(:elixos, __MODULE__, [])
   end
 end
