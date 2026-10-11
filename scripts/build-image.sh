@@ -79,8 +79,8 @@ package_inputs() { # package_inputs <arch> <package>: hash of everything the rec
   case "$pkg" in
     kernel) paths=(kernel melange/kernel.yaml prebuilt/kernel) ;;
     otp) paths=(.tool-versions melange/otp.yaml) ;;
-    elixir) paths=(.tool-versions melange/elixir.yaml prebuilt/elixir) ;;
-    factory) paths=(os hex .tool-versions melange/factory.yaml prebuilt/factory) ;;
+    elixir) paths=(.tool-versions melange/elixir.yaml prebuilt/elixir prebuilt/elixir.links) ;;
+    factory) paths=(os hex .tool-versions melange/factory.yaml prebuilt/factory prebuilt/factory.links) ;;
     shim) paths=(shim spec .zig-version build.zig build.zig.zon melange/shim.yaml) ;;
     toolchain) paths=(toolchain .zig-version melange/toolchain.yaml) ;;
     *) paths=(melange) ;;
@@ -169,9 +169,14 @@ stage_prebuilt() { # stage_prebuilt <name> <apk>
     rm -rf "$tmp"
     return 1
   }
+  # melange's workspace copy does not carry symlinks whose target is outside
+  # the tree (the release's links into /usr/local/lib/erlang, Elixir's bin
+  # links): record them here so the package can recreate them itself.
+  ( cd "$tmp" && find . -type l -printf '%P\t%l\n' ) | LC_ALL=C sort > "$tmp.links"
+
   rm -rf "$dir"
   mv "$tmp" "$dir"
-  echo "build-image: staged the native $name build"
+  echo "build-image: staged the native $name build ($(wc -l < "$tmp.links") symlink(s) recorded)"
 }
 
 # Elixir and the factory are architecture-neutral (ADR-060): build them once

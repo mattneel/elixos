@@ -226,3 +226,48 @@ Two consequences worth remembering:
   `system.squashfs` with `install -m0444`, not `cp` onto its unwritable inode,
   so a second build succeeds without making the shipped image writable.
 
+
+## Cross-building OTP (the one emulated step left)
+
+After ADR-060, an aarch64 image build is: the native kernel cross (~5 min), the
+native Elixir/factory reuse (seconds), Zig-crossed shim and toolchain (~5 min),
+the assembly (~9 min) - and **OTP**, which is still built under
+`qemu-aarch64-static` (~13 min). With the input-keyed cache that cost is paid
+only when OTP's own recipe or `.tool-versions` change, not per build, which is
+why it is the last item rather than the first.
+
+Cross-compiling it is a bounded project, and the pieces are known:
+
+* **A target sysroot.** ERTS links openssl (dynamic ssl), ncurses (termcap for
+  the shell) and zlib, and needs musl's headers. All of them are aarch64
+  Alpine packages: `apk fetch --arch aarch64 <deps>` then plain `tar -x` into a
+  sysroot directory (no root, no second toolchain - `scripts/mkdisk.sh` already
+  extracts an aarch64 APK the same way). Musl itself comes from Zig, so
+  `zig cc --target=aarch64-linux-musl --sysroot=<dir>` is the whole compiler.
+* **A bootstrap ERTS of the same version for the build host.** OTP's cross
+  build compiles Erlang sources with an `erl` running on the build machine;
+  that is exactly the x86_64 `elixos-otp` this repository already builds
+  (same version, same configure options), so `ERL_TOP` plus that install on
+  `PATH` is the bootstrap.
+* **`erl_xcomp_*` answers for configure's runtime probes.** These are the
+  values a musl aarch64 Linux has: `erl_xcomp_bigendian=no`,
+  `erl_xcomp_linux_clock_gettime_correction=yes`, `erl_xcomp_linux_nptl=yes`,
+  `erl_xcomp_linux_usable_sigaltstack=yes`,
+  `erl_xcomp_linux_usable_pthread_thread_num=yes`,
+  `erl_xcomp_stack_overflow=no`, plus `erl_xcomp_sysroot`/`erl_xcomp_isysroot`
+  pointing at the sysroot. `./otp_build configure --host=aarch64-linux-musl
+  --build=x86_64-linux-musl …` with the same `--enable-dynamic-ssl-lib
+  --with-ssl --without-{javac,wx,odbc,observer,debugger,et,megaco}` as the
+  native recipe.
+* **What to watch.** The JIT's configure test runs a program, so
+  `erl_xcomp_disable_jit` (and/or an explicit `--enable-jit`) has to be set
+  deliberately rather than inferred; `STRIP` must be a multi-target strip
+  (`llvm-strip`), not the host's; and the two post-install fixes from the
+  native recipe (erl as a symlink to erlexec, headers at
+  `erts-<vsn>/include`) apply unchanged.
+
+The structure is the same as the kernel's (a native build tool package whose
+artifact the aarch64 package installs), but unlike the kernel this one cannot
+skip melange's target environment for its *Erlang* half, so the recipe has to
+run the bootstrap `erl` from the native OTP install - which is why the plan
+above names every input rather than pointing at a flag.

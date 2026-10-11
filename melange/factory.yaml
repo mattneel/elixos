@@ -50,6 +50,17 @@ pipeline:
       # tree (ADR-060). Without it the build below still works.
       if [ -d /home/build/prebuilt/factory ]; then
         cp -a /home/build/prebuilt/factory/. "${{targets.destdir}}/"
+      # The symlink layout the native build had (links into the machine's
+      # own OTP install, which melange's workspace copy cannot carry): replay
+      # the manifest scripts/build-image.sh staged next to the tree.
+      if [ -f /home/build/prebuilt/factory.links ]; then
+        while IFS="$(printf '\t')" read -r link target; do
+          dest="${targets.destdir}/$link"
+          mkdir -p "$(dirname "$dest")"
+          ln -sfn "$target" "$dest"
+        done < /home/build/prebuilt/factory.links
+      fi
+
         echo "factory: installed the natively built release"
         exit 0
       fi

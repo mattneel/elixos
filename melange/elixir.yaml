@@ -35,6 +35,17 @@ pipeline:
       # tree (ADR-060). Without it the build below still works.
       if [ -d /home/build/prebuilt/elixir ]; then
         cp -a /home/build/prebuilt/elixir/. "${{targets.destdir}}/"
+      # The symlink layout the native build had (links into the machine's
+      # own OTP install, which melange's workspace copy cannot carry): replay
+      # the manifest scripts/build-image.sh staged next to the tree.
+      if [ -f /home/build/prebuilt/elixir.links ]; then
+        while IFS="$(printf '\t')" read -r link target; do
+          dest="${targets.destdir}/$link"
+          mkdir -p "$(dirname "$dest")"
+          ln -sfn "$target" "$dest"
+        done < /home/build/prebuilt/elixir.links
+      fi
+
         echo "elixir: installed the natively built tree"
         exit 0
       fi
