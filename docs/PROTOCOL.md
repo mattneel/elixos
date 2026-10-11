@@ -246,6 +246,26 @@ included.
 The line is API: the M20 acceptance matches it, so it changes like any other
 console line. Questions do not survive the session that asked them.
 
+What a front-end renders is the question itself (`Elixos.Ask.pending/0`)
+under these fields, and what `Elixos.Ask.answer/2` accepts is checked against
+them:
+
+```
+id           pos_integer, unique while it is open (oldest first in pending/0)
+kind         :text | :choice | :multi | :confirm
+prompt       the question, verbatim
+options      [String.t()], the choices a choice or multi offers (else [])
+allow_other  boolean, whether free text is accepted beside those options
+default      term, a suggestion a front-end may pre-fill (optional)
+asker        pid, the process blocked on the answer
+asked_at     DateTime.t()
+```
+
+`:text` takes any binary; `:confirm` a boolean; `:choice` one of `options`, or
+any binary when `allow_other` is true; `:multi` a non-empty list of `options`.
+Anything else is `{:error, :invalid_answer}`, and the question stays open.
+Resolving a question the queue does not hold is `{:error, :unknown_question}`.
+
 ## §7 The persistent disk
 
 ext4, label `ELIXOS`, mounted on `/priv`:
