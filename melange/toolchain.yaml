@@ -32,6 +32,13 @@ environment:
       - curl
       - tar
       - xz
+      # Rust, for Rustler NIFs (ADR-066): the same toolchain directory carries
+      # it, and the same `cc` bridge is its linker.
+      - rust
+      - cargo
+      # To install Rust and its closure into the toolchain directory rather
+      # than enumerate files by hand.
+      - apk-tools
 
 pipeline:
   - runs: |
@@ -65,3 +72,31 @@ pipeline:
       ln -sfn cc "$dest/c++"
 
       test -x "$dest/zig" && test -x "$dest/cc" && test -L "$dest/c++"
+
+      # Rust arrives from the distribution rather than as a tarball: apk
+      # installs the packages and their closure into a prefix of their own
+      # under the toolchain directory, so rustc and cargo bring their libraries
+      # with them and nothing is guessed by hand. The guest has no
+      # repositories file (melange hands repositories to apk itself) and its
+      # keyring only covers its own architecture, so both are named here.
+      apk add --root "$dest/rust" --initdb --no-scripts --usermode \
+        --keys-dir /etc/apk/keys \
+        -X https://dl-cdn.alpinelinux.org/alpine/v3.24/main \
+        rust cargo >/dev/null
+
+      # Whatever the box builds with Rust links with the C compiler beside it,
+      # exactly as rustc's own default would expect `cc` to exist. This is the
+      # configuration Elixos.Rust points CARGO_HOME at.
+      install -d "$dest/rust/cargo-home"
+      cat > "$dest/rust/cargo-home/config.toml" <<'CONFIG'
+      # The toolchain's own C compiler is Rust's linker (ADR-066): on the box
+      # there is no system cc, and both are musl, so the pair agrees.
+      [target.x86_64-unknown-linux-musl]
+      linker = "/priv/toolchain/cc"
+      [target.aarch64-unknown-linux-musl]
+      linker = "/priv/toolchain/cc"
+      CONFIG
+
+      "$dest/rust/usr/bin/rustc" --version
+      "$dest/rust/usr/bin/cargo" --version
+      test -x "$dest/rust/usr/bin/rustc" && test -x "$dest/rust/usr/bin/cargo"

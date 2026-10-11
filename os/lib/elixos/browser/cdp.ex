@@ -1,237 +1,136 @@
 defmodule Elixos.Browser.CDP do
   @moduledoc """
-  Just enough Chrome DevTools Protocol for the browser service (M25).
+  `jido_browser`'s Lightpanda adapter, wired to `cdp_ex` and a Port (M25).
 
-  Lightpanda's `serve` speaks CDP over one WebSocket (protocol 1.3). The flow
-  is the standard one, verified against Lightpanda 1.0.0: `Target.createTarget`
-  makes a page, `Target.attachToTarget` with `flatten: true` returns a session
-  id, and every later command carries it. Frames are text.
+  The adapter expects a pair of pluggable modules: one that owns a CDP session
+  (`start/1`, `new_page/1`, `stop/1`) and one that acts on a page
+  (`navigate/3`, `content/1`, `evaluate/3`, `screenshot/2`, `click/3`,
+  `fill/4`). Their default is `light_cdp`, which spawns the browser through
+  `erlexec` - a launcher that refuses to start unless `SHELL` is set, which is
+  the one thing this OS must not invent (ADR-012). So the protocol comes from
+  the ecosystem (`cdp_ex`, whose dependencies are `mint_web_socket`, `jason`
+  and `telemetry`) and the process is started here, as a Port, like every
+  other external program on Elixos.
 
-  The WebSocket client is ours: the handshake is RFC 6455 with `:crypto` and
-  `Base`, and OTP's `:json` parses replies, so the OS needs no WebSocket
-  dependency for one adapter (ADR-065). It is deliberately small - one
-  connection, synchronous calls by id, events drained, pings answered.
+  The binary is `Elixos.Browser`'s business; this module is handed its path and
+  the port to serve on, starts it, waits for it, and resolves the WebSocket
+  endpoint through `/json/version` the way `cdp_ex` expects.
   """
 
-  import Bitwise
+  alias CDPEx.{Browser, Connect, Page}
 
-  @guid "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-  @default_timeout 30_000
-
-  defstruct socket: nil, buffer: <<>>, next_id: 1
-
-  @type t :: %__MODULE__{socket: :gen_tcp.socket(), buffer: binary(), next_id: pos_integer()}
-
-  @doc "Opens a WebSocket to `ws://host:port/path`."
-  @spec connect(String.t(), timeout()) :: {:ok, t()} | {:error, term()}
-  def connect(url, timeout \\ @default_timeout) do
-    with {:ok, host, port, path} <- parse(url),
-         {:ok, socket} <-
-           :gen_tcp.connect(
-             String.to_charlist(host),
-             port,
-             [:binary, active: false, nodelay: true],
-             timeout
-           ),
-         {:ok, rest} <- handshake(socket, host, port, path, timeout) do
-      # Bytes that arrived with the handshake reply are frames already.
-      {:ok, %__MODULE__{socket: socket, buffer: rest}}
-    end
-  end
+  @ready_timeout 20_000
 
   @doc """
-  Sends one CDP command and returns its `result`.
+  Starts the adapter and a first page.
 
-  Events and other replies are drained while waiting; the command's own error
-  becomes `{:error, {code, message}}`. `session/1` is the id `attach/2`
-  returned; commands without one go to the browser itself.
+  Options: `:binary` (or `:binary_path`) is the program, `:port` the CDP port
+  to serve on (a free one is asked of the OS when absent).
   """
-  @spec call(t(), String.t(), map(), timeout(), String.t() | nil) ::
-          {:ok, term(), t()} | {:error, term(), t()}
-  def call(cdp, method, params \\ %{}, timeout \\ @default_timeout, session \\ nil) do
-    id = cdp.next_id
-    message = %{id: id, method: method, params: params}
-    message = if session, do: Map.put(message, :sessionId, session), else: message
-    cdp = %{cdp | next_id: id + 1}
+  def start(opts \\ []) do
+    binary = opts[:binary] || opts[:binary_path]
+    port_number = Keyword.get(opts, :port) || free_port()
 
-    with :ok <- send_text(cdp.socket, JSON.encode!(message)),
-         {:ok, reply, cdp} <- await(cdp, id, timeout) do
-      case reply do
-        %{"result" => result} -> {:ok, result, cdp}
-        %{"error" => %{"code" => code, "message" => text}} -> {:error, {code, text}, cdp}
-        other -> {:error, {:unexpected, other}, cdp}
-      end
+    with true <- is_binary(binary) or {:error, :no_binary},
+         {:ok, port} <- spawn_binary(binary, port_number),
+         :ok <- await_ready(port_number),
+         {:ok, ws_url} <- Connect.resolve(endpoint(port_number)),
+         # Connect mode: `cdp_ex` attaches to a browser it did not launch, so
+         # nothing here reaches for Chrome and `terminate/2` reaps nothing.
+         {:ok, browser} <- Browser.start_link(connect: ws_url) do
+      # No page here on purpose: the adapter asks for one through `new_page/1`,
+      # and Lightpanda's serve mode keeps one page per session - making a second
+      # would answer TargetAlreadyLoaded.
+      {:ok, %{port: port, browser: browser, binary: binary, port_number: port_number}}
     end
   end
 
-  @doc "Closes the connection."
-  @spec close(t()) :: :ok
-  def close(%__MODULE__{socket: socket}), do: :gen_tcp.close(socket)
+  @doc "A page (CDP target) in the running session."
+  def new_page(%{browser: browser}), do: Browser.new_page(browser)
 
-  ## handshake
-
-  defp parse(url) do
-    case URI.parse(url) do
-      %URI{scheme: "ws", host: host, port: port, path: path} when is_binary(host) and host != "" ->
-        {:ok, host, port || 80, path || "/"}
-
-      _other ->
-        {:error, :bad_url}
-    end
+  @doc "Stops the session: the browser process goes and the port closes."
+  def stop(%{browser: browser} = session) do
+    if Process.alive?(browser), do: Browser.stop(browser)
+    if session[:port], do: Port.close(session.port)
+    :ok
+  rescue
+    _error -> :ok
   end
 
-  defp handshake(socket, host, port, path, timeout) do
-    key = Base.encode64(:crypto.strong_rand_bytes(16))
+  def stop(_session), do: :ok
 
-    request = [
-      "GET ",
-      path,
-      " HTTP/1.1\r\nHost: ",
-      host,
-      ":",
-      Integer.to_string(port),
-      "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ",
-      key,
-      "\r\nSec-WebSocket-Version: 13\r\n\r\n"
-    ]
+  ## the process
 
-    with :ok <- :gen_tcp.send(socket, request),
-         {:ok, head, rest} <- read_head(socket, <<>>, timeout) do
-      expected = Base.encode64(:crypto.hash(:sha, key <> @guid))
-
-      cond do
-        not String.contains?(head, " 101 ") -> {:error, {:handshake, head}}
-        not String.contains?(head, expected) -> {:error, :bad_accept}
-        true -> {:ok, rest}
-      end
-    end
+  defp spawn_binary(binary, port_number) do
+    {:ok,
+     Port.open({:spawn_executable, binary}, [
+       :binary,
+       :exit_status,
+       :stderr_to_stdout,
+       args: ["serve", "--port", Integer.to_string(port_number)]
+     ])}
+  rescue
+    error -> {:error, {:no_adapter, error}}
   end
 
-  defp read_head(socket, acc, timeout) do
-    case :binary.split(acc, "\r\n\r\n") do
-      [head, rest] ->
-        {:ok, head, rest}
+  defp endpoint(port_number), do: "http://127.0.0.1:#{port_number}"
 
-      [_incomplete] ->
-        case :gen_tcp.recv(socket, 0, timeout) do
-          {:ok, data} -> read_head(socket, acc <> data, timeout)
-          {:error, reason} -> {:error, reason}
+  defp await_ready(port_number, deadline \\ nil) do
+    deadline = deadline || System.monotonic_time(:millisecond) + @ready_timeout
+
+    case :gen_tcp.connect({127, 0, 0, 1}, port_number, [:binary, active: false], 200) do
+      {:ok, socket} ->
+        :gen_tcp.close(socket)
+        :ok
+
+      {:error, _reason} ->
+        if System.monotonic_time(:millisecond) > deadline do
+          {:error, :adapter_timeout}
+        else
+          Process.sleep(50)
+          await_ready(port_number, deadline)
         end
     end
   end
 
-  ## frames
-
-  defp send_text(socket, text) do
-    payload = :binary.bin_to_list(text)
-    size = length(payload)
-    mask = :crypto.strong_rand_bytes(4)
-
-    header =
-      cond do
-        size < 126 -> [0x81, 0x80 ||| size]
-        size < 65_536 -> [0x81, 0x80 ||| 126, <<size::16>>]
-        true -> [0x81, 0x80 ||| 127, <<size::64>>]
-      end
-
-    :gen_tcp.send(socket, :erlang.iolist_to_binary([header, mask, mask_payload(payload, mask)]))
+  # A free port from the OS, so two sessions never fight over 9222.
+  defp free_port do
+    {:ok, socket} = :gen_tcp.listen(0, [:binary, active: false])
+    {:ok, port} = :inet.port(socket)
+    :gen_tcp.close(socket)
+    port
   end
 
-  defp mask_payload(payload, mask) do
-    mask_bytes = :binary.bin_to_list(mask)
+  defmodule Page do
+    @moduledoc """
+    The page half of `jido_browser`'s contract, over `cdp_ex` (`M25`).
+    """
 
-    payload
-    |> Enum.with_index()
-    |> Enum.map(fn {byte, index} -> bxor(byte, Enum.at(mask_bytes, rem(index, 4))) end)
-    |> :binary.list_to_bin()
-  end
+    alias CDPEx.Page, as: CDPPage
 
-  defp await(cdp, id, timeout) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-    await_reply(cdp, id, deadline)
-  end
-
-  defp await_reply(cdp, id, deadline) do
-    case read_message(cdp, deadline) do
-      {:ok, :text, payload, cdp} ->
-        case JSON.decode(payload) do
-          {:ok, %{"id" => reply_id} = reply} ->
-            if reply_id == id do
-              {:ok, reply, cdp}
-            else
-              await_reply(cdp, id, deadline)
-            end
-
-          # Events (Target.targetCreated, Page.loadEventFired, ...) carry no
-          # id: they are drained while waiting for the reply we asked for.
-          {:ok, _event} ->
-            await_reply(cdp, id, deadline)
-
-          {:error, _reason} ->
-            await_reply(cdp, id, deadline)
-        end
-
-      {:ok, :ping, payload, cdp} ->
-        with :ok <- :gen_tcp.send(cdp.socket, [0x8A, byte_size(payload), payload]) do
-          await_reply(cdp, id, deadline)
-        end
-
-      {:ok, _other, _payload, cdp} ->
-        await_reply(cdp, id, deadline)
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  # One message, reassembling continuation frames.
-  defp read_message(cdp, deadline, opcode \\ nil, acc \\ <<>>) do
-    with {:ok, <<fin::1, _rsv::3, op::4, masked::1, len::7>>, cdp} <- fill(cdp, 2, deadline),
-         {:ok, len, cdp} <- length(len, cdp, deadline),
-         {:ok, mask, cdp} <- mask_key(masked, cdp, deadline),
-         {:ok, body, cdp} <- fill(cdp, len, deadline) do
-      payload = if mask, do: mask_payload(:binary.bin_to_list(body), mask), else: body
-      kind = if opcode == nil or op == 0, do: kind_of(op), else: kind_of(opcode)
-
-      cond do
-        op == 8 -> {:error, :closed_by_peer}
-        fin == 1 -> {:ok, kind, acc <> payload, cdp}
-        true -> read_message(cdp, deadline, kind, acc <> payload)
+    @doc "Navigates and waits for the load to settle. The contract wants `:ok`."
+    def navigate(%CDPPage{} = page, url, _opts \\ []) do
+      case CDPPage.navigate(page, url) do
+        {:ok, _page} -> :ok
+        :ok -> :ok
+        other -> other
       end
     end
-  end
 
-  defp kind_of(1), do: :text
-  defp kind_of(9), do: :ping
-  defp kind_of(_other), do: :other
+    @doc "The page's HTML, which the adapter turns into markdown, text or HTML."
+    def content(%CDPPage{} = page), do: CDPPage.html(page)
 
-  defp length(len, cdp, _deadline) when len < 126, do: {:ok, len, cdp}
+    @doc "Evaluates JavaScript in the page."
+    def evaluate(%CDPPage{} = page, script, opts \\ []), do: CDPPage.evaluate(page, script, opts)
 
-  defp length(126, cdp, deadline) do
-    with {:ok, <<len::16>>, cdp} <- fill(cdp, 2, deadline), do: {:ok, len, cdp}
-  end
+    @doc "A PNG of the page."
+    def screenshot(%CDPPage{} = page, opts \\ []), do: CDPPage.screenshot(page, opts)
 
-  defp length(127, cdp, deadline) do
-    with {:ok, <<len::64>>, cdp} <- fill(cdp, 8, deadline), do: {:ok, len, cdp}
-  end
+    @doc "Clicks an element."
+    def click(%CDPPage{} = page, selector, opts \\ []), do: CDPPage.click(page, selector, opts)
 
-  defp mask_key(0, cdp, _deadline), do: {:ok, nil, cdp}
-
-  defp mask_key(1, cdp, deadline) do
-    with {:ok, mask, cdp} <- fill(cdp, 4, deadline), do: {:ok, mask, cdp}
-  end
-
-  defp fill(%__MODULE__{buffer: buffer} = cdp, n, _deadline) when byte_size(buffer) >= n do
-    <<head::binary-size(^n), rest::binary>> = buffer
-    {:ok, head, %{cdp | buffer: rest}}
-  end
-
-  defp fill(cdp, n, deadline) do
-    timeout = max(deadline - System.monotonic_time(:millisecond), 1)
-
-    case :gen_tcp.recv(cdp.socket, 0, timeout) do
-      {:ok, data} -> fill(%{cdp | buffer: cdp.buffer <> data}, n, deadline)
-      {:error, reason} -> {:error, reason}
-    end
+    @doc "Types into an element."
+    def fill(%CDPPage{} = page, selector, text, opts \\ []),
+      do: CDPPage.type(page, selector, text, opts)
   end
 end

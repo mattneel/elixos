@@ -1783,3 +1783,84 @@ links against it. `Elixos.Browser` starts the adapter in normal mode only and
 stops it on poweroff, so rescue never has a browser running - and the QEMU
 acceptance asserts exactly that. The musl rebuild stays possible, but the
 pinned upstream binary is what the milestone asked to evaluate first.
+
+## ADR-065: The browser leans on the ecosystem, and the box carries Rust
+
+**Status:** accepted (M25; human decision - an earlier draft of this ADR said
+"the CDP client is ours", which was overruled)
+
+**Context.** Driving Lightpanda means speaking CDP over a WebSocket: `serve`
+starts a WebSocket CDP server and that is its only persistent interface. The
+first draft of this milestone hand-wrote that client (about 240 lines) to keep
+the OS dependency-free. The human's decision is the opposite, and it is the
+better fit for what Elixos is: **lean on the ecosystem while we can**, and own
+only the trust decision - which binary, pinned and verified - plus a thin
+wrapper. Hex has the pieces, inspected before adopting:
+
+| package | role | deps |
+|---|---|---|
+| `lightpanda` | owns the process: `config :lightpanda, path:`, `Lightpanda.Server`, `ws_url/1` | `castore` |
+| `light_cdp` | the minimal CDP client; what `jido_browser`'s Lightpanda adapter uses | `websockex`, `jason`, `req`, `erlexec`, `telemetry` |
+| `jido_browser` | the adapter layer the roadmap named as an OS dependency | `jido`, `jido_action`, `zoi`, `splode`, `req`, `jason`, `uniq`, `floki`, `html2markdown`, `extractous_ex`, `nimble_pool`, `domainatrex`, `typed_struct` |
+
+**Decision.** `Elixos.Browser` stays the surface the milestone's tests describe
+(`command/0,1`, `status/0`, `navigate/1`, `eval/1`, `screenshot/0`) and becomes
+a wrapper over `jido_browser`, whose Lightpanda adapter is a wrapper over
+`light_cdp`, with `lightpanda` owning the process. The hand-written
+`Elixos.Browser.CDP` is deleted.
+
+Two dependencies carry native code and that is now deliberate policy, not an
+accident: `erlexec` (a small C++ NIF, built by `elixir_make`) and
+`extractous_ex`, whose published NIFs are **glibc-only** (`x86_64`/`aarch64
+-unknown-linux-gnu`) and therefore must be built from source on a musl system
+(`rustler_precompiled` with `force_build`). So the OS needs Rust - at image
+build time *and* in the live image, exactly as Zigler needs Zig - see ADR-066.
+
+**Consequences.** The OS gains a dependency tree it does not control, in
+exchange for not maintaining a protocol implementation; the milestone's tests
+do not change, because the surface does not. Two real costs are recorded:
+the aarch64 image can no longer simply reuse the x86_64 factory byte-for-byte
+once NIFs are involved (they are architecture-specific, so the factory is
+built per architecture, or the NIFs are cross-built - the existing Zig/clang
+cross toolchain has the pieces), and the browser's glibc is shipped at the
+standard glibc paths (`/lib64/ld-linux-x86-64.so.2`, `/lib/x86_64-linux-gnu/`)
+so that the *unmodified* upstream binary and the ecosystem packages that spawn
+it can be used as-is: Alpine has nothing at those paths (musl lives in
+`/lib/ld-musl-*.so.1`), so nothing is shadowed.
+
+## ADR-066: The on-box toolchain carries Rust as well as Zig
+
+**Status:** accepted (M25; human decision)
+
+**Context.** ADR-009 ships a toolchain on the machine rather than in the
+factory: Zig, fetched into `/priv/toolchain`, with `Elixos.Zig` as its API -
+because a NIF is built *on the box*, and Zigler needs Zig. Rustler needs Rust,
+and M25 is the first thing that needs Rustler: `jido_browser` depends on
+`extractous_ex`, whose published NIFs are glibc only
+(`x86_64`/`aarch64-unknown-linux-gnu`), so on a musl system they must be built
+from source (`rustler_precompiled` with `force_build`). The same capability is
+what the desktop work will want later, so it is built as a capability, not as a
+M25 workaround.
+
+**Decision.** `elixos-toolchain` carries Rust beside Zig. Alpine's `rust` and
+`cargo` (1.96.1, both architectures) are installed by apk into a prefix of
+their own under the toolchain directory - `apk add --root`, so the packages'
+whole closure arrives with them and nothing is enumerated by hand. The linker
+is the toolchain's own `cc`, the Zig bridge, declared in a `config.toml`
+(`[target.<triple>] linker = "/priv/toolchain/cc"`) that `Elixos.Rust` points
+`CARGO_HOME` at; the cache lives machine-wide in `/priv/cache/cargo`, the way
+`ZIG_GLOBAL_CACHE_DIR` does. `Elixos.Rust` is the API (`init/1`, `cargo/2`,
+`rustc/2`), running builds in the calling session's directory like every other
+command (ADR-019, ADR-020).
+
+**Consequences.** The disk toolchain grows from about 407 MB to about 630 MB
+(rust is 202 MB installed, cargo 22 MB), which the 1 GB data image absorbs but
+should not be forgotten. Nothing in the factory or the shim changes: the
+toolchain is still a tool on the data disk, never in the root filesystem
+(ADR-009), and PID 1 stays Zig. The Rust that runs on the box is the box's own
+architecture, from the distribution, so there is no second compiler to
+cross-build for the toolchain itself. Rust NIFs are architecture-specific,
+which is the one thing this costs elsewhere: from here on the aarch64 image
+cannot reuse the x86_64 factory byte-for-byte when a dependency has a NIF - the
+factory is built per architecture, or its NIFs are cross-built with the Zig and
+clang cross toolchain that ADR-060 already established.

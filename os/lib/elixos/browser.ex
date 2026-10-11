@@ -2,32 +2,28 @@ defmodule Elixos.Browser do
   @moduledoc """
   The headless browser (M25, docs/ROADMAP.md).
 
-  The adapter ships in the read-only system image under `/system/browser`,
-  pinned and verified when the image is built - never downloaded at run time.
-  Its manifest decides how it starts: a musl-clean binary is exec'd directly, a
-  glibc one is started through a private glibc with glibc's own loader
-  (`ld-linux-x86-64.so.2 --library-path <dir> ...`), still directly as a port
-  (ADR-012: no shell). `command/1` is that decision, pure and testable; ADR-064
-  records which arm this system took, and why.
+  The stack is the ecosystem's, not ours (ADR-065): `jido_browser`'s Lightpanda
+  adapter speaks CDP through `light_cdp`, which owns the process. What this
+  module owns is the trust decision - *which* binary, pinned and verified - and
+  the two facts a caller should not have to know: the adapter starts only in
+  normal mode, and it must not keep the prompt waiting or take it down with it.
 
-  The adapter is Lightpanda's `serve` mode: a WebSocket CDP endpoint on the
-  loopback, one page session, and the three verbs the milestone promised -
-  `navigate/1`, `eval/1`, `screenshot/0`. Starting is asynchronous, so a slow
-  or missing adapter never delays the prompt; the process starts only in normal
-  mode, and a failure leaves `status/0` at `{:error, :not_running}` rather than
-  taking anything down with it.
+  The binary ships in the read-only system image under `/system/browser`,
+  verified when the image is built, never downloaded at run time (ADR-064). Its
+  manifest decides the argv: a musl-clean binary is exec'd directly, a glibc one
+  through glibc's own loader - and the image installs the private glibc at the
+  standard paths, so in practice the upstream binary runs directly and the
+  adapter can spawn it by path. `command/1` is that decision, pure and testable.
   """
 
   use GenServer
 
   require Logger
 
-  alias Elixos.Browser.CDP
+  alias Jido.Browser, as: JidoBrowser
 
+  @adapter Jido.Browser.Adapters.Lightpanda
   @manifest "/system/browser/manifest.json"
-  @default_port 9222
-  @ready_timeout 20_000
-  @load_timeout 60_000
   @call_timeout 120_000
 
   ## the manifest, and the argv it decides
@@ -146,185 +142,92 @@ defmodule Elixos.Browser do
   @impl true
   def init(opts) do
     if Keyword.get(opts, :mode, :normal) == :normal do
-      {:ok, %{port: nil, cdp: nil, session: nil}, {:continue, :start}}
+      {:ok, %{session: nil}, {:continue, :start}}
     else
       :ignore
     end
   end
 
+  # Starting is asynchronous on purpose: a slow or missing adapter never delays
+  # the prompt, and a failure leaves `status/0` at not_running instead of taking
+  # anything down with it. Calls that arrive first simply queue.
   @impl true
   def handle_continue(:start, state) do
-    case start_adapter() do
-      {:ok, port, cdp, session} ->
-        {:noreply, %{state | port: port, cdp: cdp, session: session}}
-
+    with {:ok, [exec | _args]} <- command(),
+         :ok <- check_binary(exec),
+         {:ok, session} <-
+           JidoBrowser.start_session(
+             adapter: @adapter,
+             binary_path: exec,
+             # The adapter's own defaults are `light_cdp`, which would spawn the
+             # browser through `erlexec` and wants SHELL set (ADR-012). These
+             # two are the same contract over `cdp_ex` and a Port.
+             light_cdp_module: Elixos.Browser.CDP,
+             page_module: Elixos.Browser.CDP.Page
+           ) do
+      {:noreply, %{state | session: session}}
+    else
       {:error, reason} ->
         Logger.warning("browser: not starting: #{inspect(reason)}")
+        {:noreply, state}
+
+      other ->
+        Logger.warning("browser: not starting: #{inspect(other)}")
         {:noreply, state}
     end
   end
 
+  # The ecosystem's server spawns the binary itself, so the manifest must name
+  # the binary - not a loader that would need arguments of ours (ADR-065: the
+  # private glibc lives at the standard paths for exactly this reason).
+  defp check_binary(exec) do
+    cond do
+      not File.regular?(exec) -> {:error, {:missing_binary, exec}}
+      Path.basename(exec) =~ "ld-linux" -> {:error, {:loader_manifest, exec}}
+      true -> :ok
+    end
+  end
+
   @impl true
+  def handle_call({kind, _payload}, _from, %{session: nil} = state)
+      when kind in [:navigate, :eval],
+      do: {:reply, {:error, :not_running_adapter}, state}
+
+  def handle_call(:screenshot, _from, %{session: nil} = state),
+    do: {:reply, {:error, :not_running_adapter}, state}
+
   def handle_call({:navigate, url}, _from, state) do
-    with {:ok, session, cdp} <- ensure_session(state),
-         {:ok, result, cdp} <-
-           CDP.call(cdp, "Page.navigate", %{"url" => url}, @load_timeout, session),
-         :ok <- check_navigation(result),
-         {:ok, cdp} <- await_load(cdp, session),
-         {:ok, text, cdp} <- evaluate(cdp, session, body_expression()) do
-      {:reply, {:ok, text_or_empty(text)}, %{state | cdp: cdp}}
+    with {:ok, session, _nav} <- JidoBrowser.navigate(session(state), url),
+         {:ok, session, %{content: text}} <- JidoBrowser.extract_content(session, format: :text) do
+      {:reply, {:ok, text}, %{state | session: session}}
     else
-      {:error, reason, _cdp} -> {:reply, {:error, reason}, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
   def handle_call({:eval, script}, _from, state) do
-    with {:ok, session, cdp} <- ensure_session(state),
-         {:ok, value, cdp} <- evaluate(cdp, session, script) do
-      {:reply, {:ok, value}, %{state | cdp: cdp}}
-    else
-      {:error, reason, _cdp} -> {:reply, {:error, reason}, state}
+    case JidoBrowser.evaluate(session(state), script) do
+      {:ok, session, %{result: value}} -> {:reply, {:ok, value}, %{state | session: session}}
+      {:ok, session, other} -> {:reply, {:ok, other}, %{state | session: session}}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
   def handle_call(:screenshot, _from, state) do
-    with {:ok, session, cdp} <- ensure_session(state),
-         {:ok, %{"data" => data}, cdp} <-
-           CDP.call(cdp, "Page.captureScreenshot", %{}, @load_timeout, session),
-         {:ok, png} <- decode_png(data) do
-      {:reply, {:ok, png}, %{state | cdp: cdp}}
-    else
-      {:error, reason, _cdp} -> {:reply, {:error, reason}, state}
+    case JidoBrowser.screenshot(session(state)) do
+      {:ok, session, %{bytes: png}} -> {:reply, {:ok, png}, %{state | session: session}}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
   @impl true
-  def handle_info({port, {:exit_status, status}}, %{port: port} = state) do
-    Logger.warning("browser: the adapter exited with status #{status}")
-    {:noreply, %{state | port: nil, cdp: nil, session: nil}}
-  end
-
   def handle_info(_message, state), do: {:noreply, state}
 
   @impl true
   def terminate(_reason, state) do
-    if state.cdp, do: CDP.close(state.cdp)
-    if state.port, do: Port.close(state.port)
+    if state.session, do: JidoBrowser.end_session(state.session)
     :ok
   end
 
-  ## starting the adapter
-
-  defp start_adapter do
-    with {:ok, [exec | args]} <- command(),
-         {:ok, port} <- open_port(exec, args),
-         port_number = port_of(args),
-         :ok <- await_ready(port_number),
-         {:ok, cdp} <- CDP.connect("ws://127.0.0.1:#{port_number}/"),
-         {:ok, session, cdp} <- new_page(cdp) do
-      {:ok, port, cdp, session}
-    end
-  end
-
-  defp open_port(exec, args) do
-    {:ok,
-     Port.open({:spawn_executable, exec}, [
-       :binary,
-       :exit_status,
-       :stderr_to_stdout,
-       args: args
-     ])}
-  rescue
-    error -> {:error, {:no_adapter, error}}
-  end
-
-  defp port_of(args) do
-    case Enum.drop_while(args, &(&1 != "--port")) do
-      ["--port", value | _rest] -> String.to_integer(value)
-      _other -> @default_port
-    end
-  end
-
-  defp await_ready(port_number, deadline \\ nil) do
-    deadline = deadline || System.monotonic_time(:millisecond) + @ready_timeout
-
-    case :gen_tcp.connect({127, 0, 0, 1}, port_number, [:binary, active: false], 200) do
-      {:ok, socket} ->
-        :gen_tcp.close(socket)
-        :ok
-
-      {:error, _reason} ->
-        if System.monotonic_time(:millisecond) > deadline do
-          {:error, :adapter_timeout}
-        else
-          Process.sleep(100)
-          await_ready(port_number, deadline)
-        end
-    end
-  end
-
-  # Lightpanda's serve starts no page until one is asked for, and every later
-  # command carries the session id that attaching to it returns.
-  defp new_page(cdp) do
-    with {:ok, %{"targetId" => target}, cdp} <- CDP.call(cdp, "Target.createTarget", %{}),
-         {:ok, %{"sessionId" => session}, cdp} <-
-           CDP.call(cdp, "Target.attachToTarget", %{"targetId" => target, "flatten" => true}) do
-      {:ok, session, cdp}
-    else
-      {:error, reason, cdp} -> {:error, reason, cdp}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp ensure_session(%{cdp: nil}), do: {:error, :not_running_adapter}
-  defp ensure_session(%{cdp: cdp, session: nil}), do: new_page(cdp)
-  defp ensure_session(%{cdp: cdp, session: session}), do: {:ok, session, cdp}
-
-  defp check_navigation(%{"errorText" => text}), do: {:error, {:navigation, text}}
-  defp check_navigation(_result), do: :ok
-
-  defp body_expression, do: "document.body ? document.body.innerText : ''"
-
-  defp await_load(cdp, session, deadline \\ nil) do
-    deadline = deadline || System.monotonic_time(:millisecond) + @load_timeout
-
-    case evaluate(cdp, session, "document.readyState") do
-      {:ok, "complete", cdp} ->
-        {:ok, cdp}
-
-      {:ok, _other, cdp} ->
-        if System.monotonic_time(:millisecond) > deadline do
-          {:error, :load_timeout, cdp}
-        else
-          Process.sleep(50)
-          await_load(cdp, session, deadline)
-        end
-
-      {:error, reason, cdp} ->
-        {:error, reason, cdp}
-    end
-  end
-
-  defp evaluate(cdp, session, expression) do
-    case CDP.call(cdp, "Runtime.evaluate", %{"expression" => expression}, @load_timeout, session) do
-      {:ok, %{"result" => %{"value" => value}}, cdp} -> {:ok, value, cdp}
-      {:ok, %{"exceptionDetails" => details}, cdp} -> {:error, {:script, details}, cdp}
-      {:ok, other, cdp} -> {:error, {:script, other}, cdp}
-      {:error, reason, cdp} -> {:error, reason, cdp}
-    end
-  end
-
-  defp text_or_empty(text) when is_binary(text), do: text
-  defp text_or_empty(nil), do: ""
-  defp text_or_empty(other), do: to_string(other)
-
-  defp decode_png(data) when is_binary(data) do
-    case Base.decode64(data) do
-      {:ok, png} -> {:ok, png}
-      :error -> {:error, :bad_png}
-    end
-  end
+  defp session(%{session: session}), do: session
 end
