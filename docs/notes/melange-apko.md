@@ -125,15 +125,20 @@ apko v1.4.10, both by sha256).
 ## Caching native builds (M19)
 
 - The pinned Zig compiler used to be downloaded inside melange's *workspace*,
-  which melange deletes after every build (`os.RemoveAll(WorkspaceDir)`), and
-  the shim APK was cached on "an APK exists" - so `make image` rebuilt Zig for
-  both architectures and a source change to an unrelated file still paid for
-  both.
-- Next to the APK cache, key the shim on its real inputs: `.zig-version`,
-  `build.zig`, `build.zig.zon`, `melange/shim.yaml`, `scripts/build-image.sh`,
-  everything under `shim/` and `spec/`, the melange binary and the signing key.
-  A stamp file holds `sha256(inputs) sha256(apk) filename`, and a hit also
-  re-checks the APK hash - a stamp cannot outlive the bytes it describes.
+  which melange deletes after every build (`os.RemoveAll(WorkspaceDir)`), so
+  every `make image` paid for two toolchain downloads (one per architecture)
+  plus a full rebuild.
+- An APK's existence is not evidence that it is current: the old rule
+  ("`elixos-factory-*.apk` is there, skip") silently kept a factory built
+  before the code changed, which is how an image can ship the wrong OS.
+  `scripts/build-image.sh` now hashes each recipe's *staged* inputs - the
+  `.tool-versions`/`.zig-version`, the melange YAML, the source tree that
+  package reads, plus this script, the melange binary and the signing key -
+  and stores `sha256(inputs) sha256(apk) filename` in
+  `build/apk/<arch>/<arch>/.elixos-<pkg>.inputs`. A hit also re-checks the APK
+  hash, so a stamp cannot outlive the bytes it describes, and `FORCE=1`
+  rebuilds regardless. Commits that touch nothing a package reads (docs, a
+  demo) rebuild nothing.
 - `--cache-dir` is bind-mounted at `/var/cache/melange` and survives the
   workspace wipe: keep the compiler SDK under `.../zig/sdk/<tarball sha256>`
   (one download for both architectures; only `-Dtarget` differs) and Zig's own
