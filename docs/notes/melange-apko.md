@@ -292,98 +292,285 @@ right and reached `erts/configure`:
   `-isystem $sysroot/usr/include -L$sysroot/usr/lib -L$sysroot/lib` alongside
   `--sysroot`; without them `configure` cannot find the target's libraries even
   though the sysroot has them.
-* **The next wall is the curses probe**: `checking for tgetent in -lncurses...
-  no` and then `configure: error: No curses library functions found`, on a
-  sysroot that carries both `ncurses-dev`'s `.so` symlinks and `ncurses-libs`.
-  The failing link has to be reproduced with the pinned Zig SDK in hand (a
-  probe environment that installs Zig from the shared cache) to see the
-  linker's own error - `zig cc` isn't in a minimal environment, and the probe
-  that would have shown it had no Zig to run.
+* **The curses probe is Zig resolving `-L` inside the sysroot.** The failure
+  `checking for tgetent in -lncurses... no` on a sysroot that plainly carries
+  `libncursesw.so` is not about ncurses at all. Reproduce the link with the SDK
+  in hand and Zig says why:
 
-Nothing after the curses probe is tested, and the recipe was not kept: an unrun
-recipe is scaffolding, not progress. The plan above plus these three findings
-are what the next attempt needs.
+      warning: unable to open library directory "/tmp/sysroot/tmp/sysroot/usr/lib"
+      error: unable to find dynamic system library "ncurses" ... searched paths: none
 
-### The compiler question for OTP: Zig cannot do this one
+  A `-L` path is resolved *relative to* `--sysroot`, so an absolute
+  `-L$sysroot/usr/lib` becomes `$sysroot/$sysroot/usr/lib`. Pass it relative:
+  `-Lusr/lib -Llib`. (`-isystem` takes an absolute path and is fine.)
+* **Melange runs pipeline steps with `/bin/sh`**, whatever the recipe
+  suggests: `sysroot_search=...` is a syntax error there (`not found`), and a
+  heredoc terminator has to carry the block's indentation or YAML parsing dies
+  on "could not find expected ':'".
+* **Writing into `/home/build` does not reach the host**: the source dir is a
+  copy, not a bind, so a diagnostic file written there is invisible afterwards.
+  Diagnostics meant for the host have to go to stderr, which melange keeps in
+  its own log.
 
-Two more probes settled the toolchain, and they are the most useful result of
-the whole exercise:
+### Where the cross build stands now
 
-* **Zig's driver refuses to link a *dynamic* target library it did not build.**
-  With the sysroot's `ncurses-dev`/`ncurses-libs` in place and `-L` pointing at
-  them, `zig cc --target=aarch64-linux-musl` answers
-  `unable to find dynamic system library "ncurses" using strategy paths_first.
-  searched paths: none`. That is by design: Zig links what it ships (its musl,
-  its compiler-rt) and treats everything else as static. It is the right
-  compiler for our self-contained targets - the shim, `postgres-init`, the
-  kernel's `cc` bridge - and the wrong one for ERTS, which links the target's
-  `libncurses` and `libssl`.
-* **clang + lld + a sysroot is the right shape, and needs the target's GCC
-  runtime objects**: `clang --target=aarch64-linux-musl --sysroot=… -fuse-ld=lld`
-  fails on `crtbeginS.o`/`crtendS.o` and `-lgcc`, and fetching the target's
-  `gcc`/`libgcc`/`libstdc++` into the sysroot did not put `crtbeginS.o` where
-  either `-B` or `--gcc-toolchain` expects it (Alpine's aarch64 `gcc` package
-  does not ship those objects in `/usr/lib` nor in
-  `/usr/lib/gcc/<triple>/<version>/`). That is the next thing to establish -
-  where a musl aarch64 sysroot's crt objects come from - and it is a
-  prerequisite for everything after it (the `erl_xcomp_*` configure run, the
-  arm64 JIT, the Erlang build against the bootstrap ERTS).
+The recipe below is the working state: nothing before `make` fails any more,
+and every failure found on the way is fixed in it. It is kept here rather than
+in `melange/` because it does not finish yet - an unrun recipe in the build
+tree is dead weight.
 
-Both probes ran in seconds, so the next attempt can iterate quickly; what it
-needs is a decision on the sysroot's provenance (the target's package set plus
-its GCC runtime, or a purpose-built cross toolchain), not more patience with
-one-off flags.
+What got it from "configure cannot find libraries" to "make is compiling":
 
-## What may and may not invalidate a package
+* the aarch64 signing key (above), so the target indexes verify;
+* the sysroot installed by `apk add --root --usermode`, not by `tar` (below);
+* `zig cc/c++` with `-isystem $sysroot/usr/include -L$sysroot/usr/lib
+  -L$sysroot/lib` and **no `--sysroot`** - with `--sysroot` the same flags are
+  doubled and resolve nowhere;
+* `apk fetch --recursive`, or the dev packages' dependencies (`pkgconf`,
+  `libncursesw`, `libformw`, `musl`) never arrive;
+* `MG_FLAG=` and `ASMJIT_PCH_OBJ=` on the make line: `-MG` turns a missing
+  header into a make target (`No rule to make target 'string'`), and Zig's
+  driver turns the asmjit precompiled-header rule into a link
+  (`ld.lld: error: ...core.o: unknown file type`).
 
-Two ways a cache betrays you, both seen in this work:
+The remaining failure is the C++ include path inside the build. `make` reports
 
-* **Too coarse.** The kernel's native cross build was first keyed on
-  `kernel/` and the whole `scripts/` directory, so editing `build-image.sh` -
-  or any other script - rebuilt a 40 MB kernel for nothing. Key a package on
-  the files its recipe reads: for the kernel cross that is `kernel/` (fragment,
-  per-arch fragment, VERSION), `melange/kernel-cross.yaml` and
-  `scripts/check-kernel-config.sh`; for OTP's cross it is `.tool-versions`.
-  Directories are convenient only while every file in them is an input.
-* **Changed at all.** Narrowing a key changes the hash of an *unchanged* input
-  set, so the next build rebuilds once. That is the price of a correction, and
-  it is worth noting in the commit rather than hiding - the run after it hits.
+    beam/jit/arm/beam_asm.hpp:23:10: fatal error: 'string' file not found
+    zstd/common/compiler.h:228:14: fatal error: 'arm_neon.h' file not found
+    .../asmjit/core/api-config.h:45:10: fatal error: 'initializer_list' file not found
 
-Two rules for the scripts themselves, learned the hard way:
+and yet the same `zig c++ --target=aarch64-linux-musl` in the same environment
+prints a search list that contains all of them (`<sdk>/lib/libcxx/include`,
+`<sdk>/lib/include`, the musl dirs) - and a bare `#include <string>` probe
+compiles. The build therefore invokes something other than what a hand-written
+`zig c++` produces. Next step, and it is a small one: keep `V=1`, print the
+*verbatim* command line for one of those objects (`grep -n 'beam_asm_global'` in
+the build log), and compare it against `zig c++ -E -v`. Everything it needs is
+in the SDK, so the difference is a flag.
 
-* **Never edit `scripts/build-image.sh` while it is running.** Bash reads a
-  script lazily by path, so even replacing it by rename mid-run makes the
-  running instance read the new file at an old offset: the build died with
-  `stage_prebuilt: command not found` at a line that had moved. Long melange
-  calls hide this for minutes and then fail at the next command.
-* **The assembly key is the right place for script changes.** `image_inputs`
-  already hashes both scripts, so an edit re-assembles (cheap) without
-  rebuilding any package (expensive) - which is the behaviour you want when
-  the change is to the orchestration rather than to a recipe's inputs.
+```yaml
+# Erlang/OTP for arm64, cross-compiled on the *build host* (ADR-060).
+#
+# The last piece that used to run under emulation, and the only one that cannot
+# be avoided by reuse: ERTS is C, and it is compiled per architecture. OTP has a
+# documented cross mode - configure for another host, answer the runtime probes
+# from `erl_xcomp_*` variables, and compile the Erlang sources with a *matching*
+# ERTS for the build machine - and Elixos has both halves already: the x86_64
+# `elixos-otp` package is the bootstrap compiler, and the target's libraries
+# come from the same Alpine repository the aarch64 image installs from.
+#
+# This package is a build tool: scripts/build-image.sh stages its `boot/`
+# payload and the aarch64 `elixos-otp` package installs it. The C compiler for
+# the target is Zig (`zig cc --target=aarch64-linux-musl`, one pinned binary
+# with musl inside); only the libraries musl does not carry come from the
+# sysroot.
+package:
+  name: elixos-otp-cross
+  version: "29.1.1"
+  epoch: 0
+  description: "Erlang/OTP for arm64, cross-compiled by Zig on the build host (build tool)"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime: []
 
-### Why the cross-built ERTS cannot load NIFs yet
+vars:
+  sha256: 054e0143e39c780e091107fc9b345792a9c1a55f6bac1eca1c1101510fc06bf6
+  # The aarch64 packages the target links against, pinned to the same Alpine
+  # release the image uses.
+  target-packages: musl musl-dev openssl-dev openssl libcrypto3 libssl3 ncurses-dev ncurses-libs zlib-dev zlib pkgconf linux-headers
 
-The cross build of OTP 29.1.1 now succeeds end to end - native clang, a sysroot
-built from the target's own Alpine packages, `erl_xcomp_*` answering the
-probes - and the resulting `beam.smp` boots the VM, starts the supervision tree
-and runs Elixir. It cannot load NIFs, and the failure is precise:
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+    packages:
+      - alpine-release=3.24.2-r0
+      - alpine-keys
+      # The bootstrap ERTS: same version, built by the x86_64 recipe. OTP's
+      # cross build runs *this* `erl` to compile the target's Erlang sources.
+      - elixos-otp
+      - apk-tools
+      - bash
+      - bison
+      - build-base
+      - curl
+      - file
+      - flex
+      - gawk
+      - llvm
+      - m4
+      - perl
+      - tar
+      - xz
 
-    Failed to load NIF library /factory/lib/crypto-5.10/priv/lib/crypto:
-    'Dynamic loading not supported'
+pipeline:
+  - runs: |
+      version="$(sed -n 's/^erlang //p' /home/build/.tool-versions)"
+      if [ "$version" != "${{package.version}}" ]; then
+        echo "otp-cross: .tool-versions says $version, this package says ${{package.version}}" >&2
+        exit 1
+      fi
 
-That text is `erl_ddll`'s message for `ERL_DE_ERROR_NO_DDLL_FUNCTIONALITY`,
-which `erts/emulator/sys/unix/erl_unix_sys_ddll.c` returns from the `#else` of
-`#if defined(HAVE_DLOPEN)`. The build's generated header says
-`#define HAVE_DLOPEN 1` (set with `ac_cv_func_dlopen=yes`, since a cross build
-cannot run that probe and musl has `dlopen` in libc), and yet the installed
-binary references `dlopen` **zero** times (`readelf --dyn-syms`; the native
-x86_64 build has `dlopen`/`dlsym`/`dlerror`), so that one translation unit was
-compiled without the macro.
+      cache=/var/cache/melange/zig
+      sdk=""
+      for candidate in "$cache"/sdk/*; do
+        [ -x "$candidate/zig" ] || continue
+        if [ "$("$candidate/zig" version)" = "$(head -n1 /home/build/.zig-version)" ]; then
+          sdk="$candidate"
+          break
+        fi
+      done
+      [ -n "$sdk" ] || {
+        echo "otp-cross: no cached Zig SDK for $(head -n1 /home/build/.zig-version)" >&2
+        exit 1
+      }
+      export PATH="$sdk:$PATH"
 
-That makes the next step small: build with `V=1` and read the command line for
-`erl_unix_sys_ddll.o` - which `config.h` it actually includes, and whether the
-object predates the header - instead of re-running the whole configure. The
-sysroot, the compiler, the `erl_xcomp_*` set, the JIT, libc++, the libunwind
-link and the Erlang half are all known to work. Until that file is right the
-aarch64 image keeps the emulated OTP, which is verified, and nothing else in an
-aarch64 image build emulates a compiler.
+      # --- the target's libraries (the sysroot) ----------------------------
+      # Alpine's aarch64 packages are tar streams (mkdisk.sh reads one the same
+      # way), so the sysroot needs no root and no cross package manager.
+      # Alpine's apks are three concatenated streams (signature, control, data)
+      # and GNU tar stops at the first tar EOF, so `tar -xzf` only ever unpacks
+      # the control stream - see the TLS/provenance notes. Let apk itself do it:
+      # it is the tool that knows the format, and with the aarch64 key in place
+      # the indexes verify. The guest has no /etc/apk/repositories, so the
+      # repositories are named here.
+      sysroot=/tmp/sysroot
+      mkdir -p "$sysroot" /tmp/sysroot-apks /etc/apk/keys
+      # Alpine signs each architecture's index with its own key and the guest's
+      # alpine-keys package carries only x86_64's, so the aarch64 index would
+      # come back UNTRUSTED. Install the published aarch64 key.
+      curl -fsSL -o /etc/apk/keys/alpine-devel@lists.alpinelinux.org-616ae350.rsa.pub \
+        https://alpinelinux.org/keys/alpine-devel@lists.alpinelinux.org-616ae350.rsa.pub
+      ( cd /tmp/sysroot-apks && apk fetch --arch aarch64 --no-cache --recursive ${{vars.target-packages}} )
+      # apk extract, not tar: the data stream of an apk is a third tar inside
+      # the gzip file and tar stops at the first end-of-archive marker, so
+      # `tar -xzf` leaves a sysroot that looks populated but has no libraries.
+      apk add --root "$sysroot" --initdb --no-scripts --usermode --arch aarch64 \
+        --keys-dir /etc/apk/keys /tmp/sysroot-apks/*.apk || {
+        echo "otp-cross: apk add into the sysroot failed" >&2; exit 1; }
+      for lib in libncursesw.so.6 libcrypto.so.3 libssl.so.3; do
+        if [ ! -e "$sysroot/usr/lib/$lib" ]; then
+          echo "otp-cross: the sysroot has no $lib" >&2
+          exit 1
+        fi
+      done
+
+      # --- the OTP sources -------------------------------------------------
+      tarball="$cache/otp_src_${version}.tar.gz"
+      if [ ! -f "$tarball" ] || ! echo "${{vars.sha256}}  $tarball" | sha256sum -c - >/dev/null 2>&1; then
+        curl -fsSL -o "$tarball.tmp" \
+          "https://github.com/erlang/otp/releases/download/OTP-${version}/otp_src_${version}.tar.gz"
+        echo "${{vars.sha256}}  $tarball.tmp" | sha256sum -c -
+        mv "$tarball.tmp" "$tarball"
+      fi
+      mkdir -p /tmp/otp
+      tar -xzf "$tarball" -C /tmp/otp --strip-components=1
+      cd /tmp/otp
+
+      # --- the cross compiler ---------------------------------------------
+      sysroot_search="-isystem $sysroot/usr/include -L$sysroot/usr/lib -L$sysroot/lib"
+      cc="zig cc --target=aarch64-linux-musl $sysroot_search"
+      cxx="zig c++ --target=aarch64-linux-musl $sysroot_search"
+      export CC="$cc" CXX="$cxx" LD="$cc" AR="$sdk/zig ar" RANLIB="$sdk/zig ranlib" \
+             STRIP=llvm-strip
+
+      # --- configure for the other machine ---------------------------------
+      # `erl_xcomp_*` answers what configure would otherwise learn by running a
+      # target binary; the values are a musl aarch64 Linux's. The JIT is asked
+      # for explicitly instead of probed. ERL_TOP and the `elixos-otp` install
+      # on PATH are the bootstrap: same version, running natively.
+      export ERL_TOP=/tmp/otp
+      export erl_xcomp_bigendian=no
+      export erl_xcomp_doubles_middle_endian=no
+      export erl_xcomp_linux_clock_gettime_correction=yes
+      export erl_xcomp_linux_nptl=yes
+      export erl_xcomp_linux_usable_sigaltstack=yes
+      export erl_xcomp_linux_usable_pthread_thread_num=yes
+      export erl_xcomp_stack_overflow=no
+      export erl_xcomp_sysroot="$sysroot"
+      export erl_xcomp_isysroot="$sysroot"
+      export erl_xcomp_erts_include_dir="$sysroot/usr/include"
+
+      # --- the failing curses link, reproduced on purpose ------------------
+      cat > /tmp/ctest.c <<'EOF'
+      int main(void) { return 0; }
+      EOF
+      {
+        echo "--- zig version: $("$sdk/zig" version)"
+        echo "--- sysroot ncurses libs:"
+        ls -la /tmp/sysroot/usr/lib/libncurses* /tmp/sysroot/usr/lib/libncursesw* 2>&1
+        echo "--- sysroot curses headers:"
+        ls -la /tmp/sysroot/usr/include/ncurses.h /tmp/sysroot/usr/include/curses.h /tmp/sysroot/usr/include/term.h 2>&1
+        echo "--- zig's own include dirs:"
+        ziglib=$("$sdk/zig" env 2>/dev/null | sed -n 's/.*"lib_dir"[^"]*"\([^"]*\)".*/\1/p')
+        echo "lib_dir=$ziglib"; ls "$ziglib" 2>/dev/null | head -8
+        ls -d "$ziglib"/libcxx/include "$ziglib"/include 2>/dev/null
+        echo "--- what the build's flags do to the search path:"
+        zig c++ --target=aarch64-linux-musl $sysroot_search -E -x c++ /dev/null -v 2>&1 | sed -n '/#include <...> search starts here:/,/End of search list/p'
+        echo "--- and with -nostdinc, to see if that is what the build adds:"
+        zig c++ --target=aarch64-linux-musl -nostdinc -E -x c++ /dev/null -v 2>&1 | sed -n '/#include <...> search starts here:/,/End of search list/p'
+        echo "--- c++ stdlib probe:"
+        printf '#include <string>\nint main(){std::string s;return (int)s.size();}\n' > /tmp/cpp.cpp
+        zig c++ --target=aarch64-linux-musl $sysroot_search /tmp/cpp.cpp -o /tmp/cpp 2>&1 && echo "CXX_STDLIB OK" || echo "CXX_STDLIB FAILED"
+        echo "--- link D: no --sysroot, absolute -isystem/-L"
+        zig cc --target=aarch64-linux-musl $sysroot_search /tmp/ctest.c -lncursesw -o /tmp/ctest 2>&1 && echo "LINK D OK" || echo "LINK D FAILED"
+        ls -la /tmp/sysroot/usr/lib/libncursesw.so.6 2>&1
+        echo "--- ls of the symlinked lib dir:"
+        ls -la /tmp/sysroot/lib/libncursesw.so /tmp/sysroot/usr/lib/libncursesw.so.6 2>&1
+        echo "--- sysroot lib listing (tail):"
+        ls /tmp/sysroot/usr/lib /tmp/sysroot/lib 2>&1 | tail -30
+      } > /tmp/otp-cross-diag.txt 2>&1 || true
+      cat /tmp/otp-cross-diag.txt >&2 || true
+      cp /tmp/otp-cross-diag.txt /home/build/otp-cross-diag.txt 2>/dev/null || true
+
+      ./otp_build configure --host=aarch64-linux-musl --build=x86_64-linux-musl \
+        --enable-jit --enable-dynamic-ssl-lib --with-ssl \
+        --without-javac --without-wx --without-odbc --without-observer \
+        --without-debugger --without-et --without-megaco || {
+        echo "otp-cross: configure failed" >&2
+        find /tmp /home -maxdepth 4 \( -name config.log -o -name 'configure*.log' \) 2>/dev/null | while read -r f; do
+          echo "--- $f" >&2; grep -B15 "No curses" "$f" 2>/dev/null | tail -30 >&2
+        done
+        exit 1; }
+
+      echo "=== what the generated header says"
+      for header in /tmp/otp/erts/*/config.h; do
+        echo "--- $header"; grep -E "HAVE_DLOPEN|HAVE_DLFCN_H" "$header"
+      done
+      echo "=== the emulator's own CFLAGS and include paths"
+      grep -m2 -E "^CFLAGS|^CPPFLAGS" /tmp/otp/erts/emulator/*/Makefile
+
+      ddll=/tmp/otp/erts/emulator/sys/unix/erl_unix_sys_ddll.c
+      sed -i '/#include "sys.h"/i #ifdef HAVE_DLOPEN\n#pragma message("DDLL-TU: HAVE_DLOPEN defined")\n#else\n#pragma message("DDLL-TU: HAVE_DLOPEN UNDEFINED")\n#endif' "$ddll"
+
+      # ASMJIT_PCH_OBJ is a precompiled header whose rule Zig's driver turns
+      # into a link ("unknown file type" on its own cache object). Emptying it
+      # drops the PCH step; the header is still -include'd per file.
+      # -MG makes the dependency generator list missing headers as make targets,
+      # which is how a bare "string" turned into "No rule to make target
+      # 'string'". Zig's answer to <string> is the probe above.
+      make -j"$(nproc)" V=1 ASMJIT_PCH_OBJ= MG_FLAG= > /tmp/otp-build.log 2>&1 || {
+        echo "otp-cross: make failed; first errors:"
+        grep -nE "error:|Error [0-9]+|fatal error" /tmp/otp-build.log | head -12
+        echo "--- context:"
+        n=$(grep -nE "error:|Error [0-9]+|fatal error" /tmp/otp-build.log | head -1 | cut -d: -f1)
+        [ -n "$n" ] && sed -n "$((n>6?n-6:1)),$((n+8))p" /tmp/otp-build.log
+        exit 1; }
+      echo "=== DDLL-TU messages:"
+      grep -m2 "DDLL-TU:" /tmp/otp-build.log || echo "(the file was never compiled)"
+      echo "=== the compile line for the ddll object:"
+      grep -m1 -B0 "erl_unix_sys_ddll\.o" /tmp/otp-build.log | cut -c1-800 || echo "(no line)"
+      make install DESTDIR="${{targets.destdir}}" > /tmp/otp-install.log 2>&1 || {
+        echo "otp-cross: install failed"; tail -40 /tmp/otp-install.log; exit 1; }
+
+      # The two fixes the native recipe makes, applied to the cross build: erl
+      # is erlexec (ADR-012), and the ERTS headers live where :code.root_dir()
+      # sends a NIF build.
+      for erts in "${{targets.destdir}}"/usr/local/lib/erlang/erts-*; do
+        ln -sfn erlexec "$erts/bin/erl"
+        cp -a "${{targets.destdir}}/usr/local/lib/erlang/usr/include" "$erts/include"
+      done
+```
