@@ -475,18 +475,18 @@
         "version": "7.2.9-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-688",
-          "checksum": "sha1-LgddmsPr5YcM9JciBsO9DHB4nDI="
+          "range": "bytes=0-689",
+          "checksum": "sha1-1/A20EC9k2+mSVCImX0LMMhuvJk="
         },
         "control": {
-          "range": "bytes=689-2717",
-          "checksum": "sha1-OKRB/IIQiI5QZdh7emg0pgbws+I="
+          "range": "bytes=690-2722",
+          "checksum": "sha1-PbkVEwlVsuVzoe4IGJGX50R0EXM="
         },
         "data": {
-          "range": "bytes=2718-16253318",
-          "checksum": "sha256-gFNXJXVAoWVZ+J8a5lOqlBF/HzFHiL94ga+K7uhTFcY="
+          "range": "bytes=2723-16253324",
+          "checksum": "sha256-c9WXlm7dTgWI02OFAsqgGsfQ2xIrihVsASbdZRtuZrc="
         },
-        "checksum": "Q1OKRB/IIQiI5QZdh7emg0pgbws+I="
+        "checksum": "Q1PbkVEwlVsuVzoe4IGJGX50R0EXM="
       },
       {
         "name": "elixos-shim",

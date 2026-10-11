@@ -657,7 +657,9 @@ guesswork, and rescue runs none of it.
 **Done when.** `make ci` is green with `MILESTONE=20`, both test files pass,
 and the notice line and the question shape are in PROTOCOL.md.
 
-- [x] Done (2026-10-11): `os/test/elixos/ask_test.exs` (7 tests) and
+- [x] Done (2026-10-11): `make ci` green at `MILESTONE=20` - 292 host tests,
+  50 QEMU acceptances (M03-M20, both architectures built) - and:
+  `os/test/elixos/ask_test.exs` (7 tests) and
   `test/integration/m20_ask_test.exs` (1 test) pass: questions are data in
   `Elixos.Ask` (ordering, several askers, a timeout, a dismissal, answers
   validated against the question, an asker that goes away dismissing its
