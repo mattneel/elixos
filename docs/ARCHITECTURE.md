@@ -237,6 +237,18 @@ evaluation environment, erl through `user_default`), relative paths resolve
 against the session's directory, and native tools run with `cd:` set to it.
 The VM's working directory never moves (ADR-016).
 
+**The question queue (ADR-059).** Questions are data in `Elixos.Ask`, one queue
+in the OS supervision tree: an id, a kind, the prompt, the options and the
+asking process, with `ask/2` blocking the asker until the question is resolved.
+Every front-end is only a view over that queue. The console REPL is the first
+one and prints a notice line per new question — `elixos-ask: question <id>
+(<kind>): <prompt>`, PROTOCOL.md §6 — so a watching human sees an agent's
+question the moment it exists (M27 adds the framebuffer view). An answer is
+validated against the question that asked it before it is accepted, so a
+front-end cannot hand back a value the question never allowed.
+`Elixos.Ask.Action` (`ask_human`) is the Jido action an agent uses to ask and
+to carry the answer back into its state.
+
 ## §7 Apps on Elixos (ADR-010, ADR-011, ADR-015)
 
 - **Target, not environment.** `MIX_TARGET=elixos` keeps dev/test/prod intact.

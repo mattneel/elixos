@@ -577,7 +577,12 @@ gains - the cluster at `/priv/postgres/data`, the postmaster log at
 the ADRs above are written (system image; the Postgres helpers and their
 shutdown order), and PROTOCOL.md §7 carries the layout the ADR decides.
 
-- [ ] Demo recorded: `demos/m18-postgres.mp4` (`make demo M=18`).
+- [x] Done (2026-10-11): `os/test/integration/m18_postgres_test.exs` passes
+  (1/1): PostgreSQL 17 runs as uid/gid 70 from the read-only `/system` squashfs
+  on `/priv`, owned 0700, with pgvector and Apache-only TimescaleDB, and logs a
+  clean shutdown across a power cycle (ADR-052, ADR-053).
+
+- [x] Demo recorded: `demos/m18-postgres.mp4` (`make demo M=18`).
 
 ---
 
@@ -608,7 +613,15 @@ image journals it and M15's agents already wrote the pattern down.
 **Done when.** `make ci` is green with `MILESTONE=19`, both test files pass,
 and the ADR for the dependencies is written.
 
-- [ ] Demo recorded: `demos/m19-oban.mp4` (`make demo M=19`).
+- [x] Done (2026-10-11): `os/test/elixos/oban_test.exs` (4 tests),
+  `os/test/elixos/oban_lifecycle_test.exs` (6 tests),
+  `os/test/elixos/oban_image_test.exs` (2 tests) and
+  `os/test/integration/m19_oban_test.exs` (1 test) pass: Oban 2.24.1, ecto_sql
+  3.14.0 and postgrex 0.22.4 are pinned and ship in the factory release; queues
+  run only after `Elixos.Oban.activate/0`, declarations are validated and
+  persisted with the app, and rescue runs none of it (ADR-057, ADR-058).
+
+- [x] Demo recorded: `demos/m19-oban.mp4` (`make demo M=19`).
 
 ---
 
