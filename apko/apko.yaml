@@ -28,6 +28,23 @@ contents:
     - elixos-elixir
     - elixos-factory
 
+accounts:
+  users:
+    - username: elixos
+      uid: 1000
+      gid: 1000
+      homedir: /priv/home
+      shell: /bin/false
+  groups:
+    - groupname: elixos
+      gid: 1000
+    - groupname: input
+      gid: 23
+      members: [elixos]
+    - groupname: video
+      gid: 27
+      members: [elixos]
+
 # apko runs no install scripts: anything a package's script would have created
 # has to be declared. /priv is the persistent disk's mount point - the shim
 # mounts it before the BEAM starts, and a missing mount point sends the boot to

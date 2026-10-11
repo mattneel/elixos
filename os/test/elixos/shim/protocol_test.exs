@@ -29,7 +29,8 @@ defmodule Elixos.Shim.ProtocolTest do
         if is_tuple(message), do: elem(message, 0), else: message
       end
 
-    assert Enum.sort(kinds) == Enum.sort([:heartbeat, :commit, :next, :reboot, :poweroff, :halt])
+    assert Enum.sort(kinds) ==
+             Enum.sort([:heartbeat, :commit, :next, :reboot, :poweroff, :halt, :helper])
   end
 
   test "encode rejects anything that is not a message" do
@@ -38,6 +39,11 @@ defmodule Elixos.Shim.ProtocolTest do
           {:commit, 4_294_967_296},
           {:commit, 1.0},
           {:next, "3"},
+          {:helper, ""},
+          {:helper, "UPPER"},
+          {:helper, "a\n"},
+          {:helper, String.duplicate("a", 33)},
+          {:helper, nil},
           :bogus,
           "HB"
         ] do

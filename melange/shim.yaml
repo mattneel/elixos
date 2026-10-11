@@ -54,3 +54,4 @@ pipeline:
       zig build -Drelease -Dtest-hooks=true -Dtarget="${{build.arch}}-linux-none"
 
       install -Dm0755 zig-out/bin/init "${{targets.destdir}}/init"
+      install -Dm0444 shim/helpers "${{targets.destdir}}/etc/elixos/helpers"

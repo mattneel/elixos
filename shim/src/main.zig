@@ -36,6 +36,9 @@ pub const statefile = @import("statefile.zig");
 pub const cmdline = @import("cmdline.zig");
 pub const recovery = @import("recovery.zig");
 pub const helpers = @import("helpers.zig");
+pub const seal = @import("seal.zig");
+
+var helper_list: helpers.AllowList = .{};
 
 /// Printed in the banner: "elixos-shim: pid 1, version <version>".
 pub const version = "0.0.0";
@@ -54,14 +57,20 @@ const init_path = "/init";
 const rescue = struct {
     var pid_text: [24]u8 = undefined;
     var ctl_text: [24]u8 = undefined;
-    /// { init, "--adopt", <pid>, <control fd>, <safe>, <mounted>, <request>, null }
-    var argv: [8:null]?[*:0]const u8 = .{ null, null, null, null, null, null, null, null };
+    var reply_text: [24]u8 = undefined;
+    var generation_text: [16]u8 = undefined;
+    var helpers_text: [helpers.max_helpers * 11]u8 = undefined;
+    /// Includes the running generation and live helpers, not just NEXT's disk state.
+    var argv: [11:null]?[*:0]const u8 = @splat(null);
     /// The kernel gives PID 1 no environment; the new shim needs none either.
     var envp: [1:null]?[*:0]const u8 = .{null};
 
     const Adopted = struct {
         beam_pid: linux.pid_t,
         ctl_fd: linux.fd_t,
+        reply_fd: linux.fd_t,
+        generation: u32,
+        helper_pids: [helpers.max_helpers]linux.pid_t,
         /// The *effective* decisions of the boot that panicked. Rescue may
         /// have come from an unreadable state file or a missing disk, which
         /// the adopted shim cannot re-derive, and a shutdown request already
@@ -96,10 +105,26 @@ const rescue = struct {
     fn arm(
         beam_pid: linux.pid_t,
         ctl_fd: linux.fd_t,
+        reply_fd: linux.fd_t,
+        generation: u32,
+        helper_pids: *const [helpers.max_helpers]linux.pid_t,
         safe: bool,
         disk_mounted: bool,
         requested: ?recovery.Shutdown,
     ) void {
+        var offset: usize = 0;
+        for (helper_pids, 0..) |pid, index| {
+            if (index != 0) {
+                helpers_text[offset] = ',';
+                offset += 1;
+            }
+            const text = std.fmt.bufPrint(helpers_text[offset..], "{d}", .{pid}) catch {
+                log("cannot format helper handoff, powering off", .{});
+                shutdown(.poweroff);
+            };
+            offset += text.len;
+        }
+        helpers_text[offset] = 0;
         argv = .{
             init_path,
             "--adopt",
@@ -108,21 +133,37 @@ const rescue = struct {
             if (safe) yes else no,
             if (disk_mounted) yes else no,
             requestName(requested),
+            zeroed(&reply_text, "{d}", .{reply_fd}),
+            zeroed(&generation_text, "{d}", .{generation}),
+            @ptrCast(&helpers_text),
             null,
         };
     }
 
     /// The adoption request in our own command line:
-    /// `--adopt <pid> <fd> <safe> <mounted> <request>`.
+    /// `--adopt <pid> <control fd> <safe> <mounted> <request> <reply fd> <generation> <helper pids>`.
     fn parse(args: []const []const u8) ?Adopted {
-        // init, --adopt, pid, fd, safe, mounted, request.
-        if (args.len < 7) return null;
+        if (args.len < 10) return null;
         if (!std.mem.eql(u8, args[1], "--adopt")) return null;
         const pid = std.fmt.parseInt(linux.pid_t, args[2], 10) catch return null;
         const fd = std.fmt.parseInt(linux.fd_t, args[3], 10) catch return null;
+        const reply_fd = std.fmt.parseInt(linux.fd_t, args[7], 10) catch return null;
+        const generation = decimal.parseU32(args[8]) orelse return null;
+        var helper_pids: [helpers.max_helpers]linux.pid_t = undefined;
+        var pids = std.mem.splitScalar(u8, args[9], ',');
+        for (&helper_pids) |*value| {
+            const pid_field = pids.next() orelse return null;
+            const value_u32 = decimal.parseU32(pid_field) orelse return null;
+            if (value_u32 > std.math.maxInt(linux.pid_t)) return null;
+            value.* = @intCast(value_u32);
+        }
+        if (pids.next() != null) return null;
         return .{
             .beam_pid = pid,
             .ctl_fd = fd,
+            .reply_fd = reply_fd,
+            .generation = generation,
+            .helper_pids = helper_pids,
             .safe = args[4][0] == '1',
             .disk_mounted = args[5][0] == '1',
             .requested = requestOf(args[6]),
@@ -156,7 +197,7 @@ fn monotonicMs() i64 {
 }
 
 /// The shim's own command line, as a slice: the adoption request lives there.
-fn ownArgs(init: std.process.Init.Minimal, buffer: *[8][]const u8) []const []const u8 {
+fn ownArgs(init: std.process.Init.Minimal, buffer: *[10][]const u8) []const []const u8 {
     var count: usize = 0;
     var it = std.process.Args.Iterator.init(init.args);
     while (it.next()) |arg| {
@@ -176,7 +217,7 @@ const log_prefix = "elixos-shim: ";
 
 /// boot.state and the temp file it is written through (PROTOCOL.md §4).
 const state_path = "/priv/boot.state";
-const state_tmp_path = "/priv/boot.state.tmp";
+const state_tmp_path = "/priv/.seal/boot.state.tmp";
 
 /// Crash dumps (PROTOCOL.md §7): ERTS writes them where the shim points
 /// ERL_CRASH_DUMP, on the persistent disk, so the evidence of why a
@@ -200,6 +241,7 @@ const lib_path = factory_path ++ "/lib";
 
 pub fn main(init: std.process.Init.Minimal) noreturn {
     log("pid 1, version " ++ version, .{});
+    loadHelpers();
 
     // A re-exec after a panic (ADR-004): the mounts are still in place (they
     // are not per-process), the BEAM is still our child, and its session is
@@ -207,7 +249,7 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
     // planned, persisted or launched, because the running boot already
     // counted its attempt.
     var cmdline_buffer: [4096]u8 = undefined;
-    var argv_buffer: [8][]const u8 = undefined;
+    var argv_buffer: [10][]const u8 = undefined;
     if (rescue.parse(ownArgs(init, &argv_buffer))) |adopted| {
         const settings = readSettings(&cmdline_buffer);
         var state: recovery.BootState = .{};
@@ -279,6 +321,12 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
         overrides.safe = true;
     }
 
+    seal.prepare() catch |err| {
+        log("cannot prepare unprivileged state ({t}), powering off", .{err});
+        shutdown(.poweroff);
+    };
+    prepareDeviceGroups("/dev", "fb", 27);
+    prepareDeviceGroups("/dev/input", "event", 23);
     // 5. Plan, log it, persist it, then carry it out (ARCHITECTURE.md §3.3).
     const policy: recovery.Policy = .{ .max_attempts = settings.max_attempts };
     if (!overrides.safe) overrides.generation = settings.generation;
@@ -366,6 +414,13 @@ fn mountData(device: []const u8, wait_s: u32) bool {
 /// without a disk there is nowhere to keep a dump.
 fn prepareCrashDir() void {
     _ = linux.mkdir(crash_dir, 0o755);
+    // This directory may be new since seal.prepare() migrated existing state.
+    // ERTS, not PID 1, writes the dump; never chown through a user-planted link.
+    const ownership = linux.fchownat(linux.AT.FDCWD, crash_dir, seal.uid, seal.gid, linux.AT.SYMLINK_NOFOLLOW);
+    if (linux.errno(ownership) != .SUCCESS) {
+        log("cannot own crash directory ({t})", .{linux.errno(ownership)});
+        return;
+    }
 
     // One scan holds a bounded number of entries. A directory with more than
     // that gets another pass: an overflowing pass always has more than
@@ -391,7 +446,7 @@ fn pruneCrashDumps() bool {
         linux.AT.FDCWD,
         crash_dir,
         // ACCMODE defaults to O_RDONLY: only reading is wanted here.
-        .{ .DIRECTORY = true, .CLOEXEC = true },
+        .{ .DIRECTORY = true, .CLOEXEC = true, .NOFOLLOW = true },
         0,
     );
     if (linux.errno(dir) != .SUCCESS) return false;
@@ -501,11 +556,14 @@ fn execErts(
     plan: recovery.Plan,
     ctl_fd: linux.fd_t,
     ctl_read_end: linux.fd_t,
+    reply_fd: linux.fd_t,
+    reply_write_end: linux.fd_t,
     disk_mounted: bool,
 ) noreturn {
     var generation: [32]u8 = undefined;
     var attempt: [32]u8 = undefined;
     var control: [32]u8 = undefined;
+    var reply: [32]u8 = undefined;
     var mode: [32]u8 = undefined;
     var crash: [80]u8 = undefined;
 
@@ -515,13 +573,18 @@ fn execErts(
     // $ROOT against that -root and its $RELEASE_LIB against the boot_var.
     const argv = [_]?[*:0]const u8{
         "erlexec",
-        "-boot",     boot_path,
-        "-boot_var", "RELEASE_LIB", lib_path,
-        "-config",   sys_config_path,
+        "-boot",
+        boot_path,
+        "-boot_var",
+        "RELEASE_LIB",
+        lib_path,
+        "-config",
+        sys_config_path,
         // Interactive, not embedded: Elixos loads code at run time - the live
         // image restores modules, and the box builds Mix projects - and the
         // embedded code server refuses to load anything from the code path.
-        "-mode",     "interactive",
+        "-mode",
+        "interactive",
         // The console is a tty that is not the shell's controlling terminal,
         // so without +Bc Ctrl+C does nothing at all and a runaway expression
         // can only be stopped with Ctrl+G then `i` (PROTOCOL.md §3).
@@ -563,6 +626,7 @@ fn execErts(
         zeroed(&mode, "ELIXOS_MODE={t}", .{plan.launch.mode}),
         zeroed(&attempt, "ELIXOS_ATTEMPT={d}", .{plan.next_state.attempts}),
         zeroed(&control, "ELIXOS_CTL_FD={d}", .{ctl_fd}),
+        zeroed(&reply, "ELIXOS_REPLY_FD={d}", .{reply_fd}),
         crash_env[0],
         crash_env[1],
         null,
@@ -575,6 +639,11 @@ fn execErts(
 
     // PID 1's end of the control pipe, which the BEAM must not hold.
     _ = linux.close(ctl_read_end);
+    _ = linux.close(reply_write_end);
+    dropIdentity(1000, 1000, true) catch |err| {
+        log("cannot drop BEAM privileges ({t}), exiting", .{err});
+        _ = linux.exit_group(1);
+    };
 
     log("launching generation={d} mode={t}", .{ plan.launch.generation, plan.launch.mode });
     _ = linux.execve(erlexec_path, @ptrCast(&argv), @ptrCast(&envp));
@@ -582,6 +651,70 @@ fn execErts(
     // shim count the attempt (ADR-007) instead of leaving a zombie half-boot.
     log("cannot exec {s}, exiting", .{erlexec_path});
     _ = linux.exit_group(1);
+}
+
+fn loadHelpers() void {
+    var buffer: [helpers.max_helpers * (helpers.max_line_len + 1) + 1]u8 = undefined;
+    const text = readFile("/etc/elixos/helpers", &buffer) catch |err| {
+        log("helper list unavailable ({t}), no helpers", .{err});
+        return;
+    };
+    helpers.parseAllowList(text, &helper_list) catch |err| {
+        log("helper list invalid ({t}), no helpers", .{err});
+    };
+}
+
+/// The only privilege retained by the BEAM is binding SSH's port 22.
+fn dropIdentity(uid: u32, gid: u32, bind_service: bool) error{DropFailed}!void {
+    const groups = [_]linux.gid_t{ 23, 27 };
+    if (bind_service and linux.errno(linux.prctl(@backingInt(linux.PR.SET_KEEPCAPS), 1, 0, 0, 0)) != .SUCCESS)
+        return error.DropFailed;
+    if (linux.errno(linux.setgroups(if (bind_service) groups.len else 0, &groups)) != .SUCCESS or
+        linux.errno(linux.setgid(gid)) != .SUCCESS or linux.errno(linux.setuid(uid)) != .SUCCESS)
+        return error.DropFailed;
+    if (bind_service) {
+        // Linux UAPI uses a 32-bit pid; this nightly's cap_user_header_t uses usize.
+        var header: extern struct { version: u32, pid: i32 } = .{ .version = 0x20080522, .pid = 0 };
+        const bit: u32 = 1 << 10; // CAP_NET_BIND_SERVICE
+        const caps = [_]linux.cap_user_data_t{
+            .{ .effective = bit, .permitted = bit, .inheritable = bit },
+            .{ .effective = 0, .permitted = 0, .inheritable = 0 },
+        };
+        if (linux.errno(linux.syscall2(.capset, @intFromPtr(&header), @intFromPtr(&caps))) != .SUCCESS or
+            linux.errno(linux.prctl(@backingInt(linux.PR.CAP_AMBIENT), linux.PR.CAP_AMBIENT_CLEAR_ALL, 0, 0, 0)) != .SUCCESS or
+            linux.errno(linux.prctl(@backingInt(linux.PR.CAP_AMBIENT), linux.PR.CAP_AMBIENT_RAISE, 10, 0, 0)) != .SUCCESS)
+            return error.DropFailed;
+    }
+    if (linux.errno(linux.prctl(@backingInt(linux.PR.SET_NO_NEW_PRIVS), 1, 0, 0, 0)) != .SUCCESS)
+        return error.DropFailed;
+}
+
+/// devtmpfs has no udev: group-only access is prepared before the tenant starts.
+fn prepareDeviceGroups(path: [*:0]const u8, prefix: []const u8, gid: u32) void {
+    const raw_dir = linux.open(path, .{ .DIRECTORY = true, .CLOEXEC = true, .NOFOLLOW = true }, 0);
+    if (linux.errno(raw_dir) != .SUCCESS) return;
+    const dir: linux.fd_t = @intCast(raw_dir);
+    defer _ = linux.close(dir);
+    var buffer: [4096]u8 align(@alignOf(linux.dirent64)) = undefined;
+    while (true) {
+        const rc = linux.getdents64(dir, &buffer, buffer.len);
+        if (linux.errno(rc) != .SUCCESS or rc == 0) return;
+        var offset: usize = 0;
+        while (offset + @sizeOf(linux.dirent64) <= rc) {
+            const entry: *align(1) const linux.dirent64 = @ptrCast(&buffer[offset]);
+            if (entry.reclen < @sizeOf(linux.dirent64) or entry.reclen > rc - offset) return;
+            const raw: [*:0]const u8 = @ptrCast(&entry.name);
+            const name = std.mem.sliceTo(raw, 0);
+            offset += entry.reclen;
+            if (!std.mem.startsWith(u8, name, prefix) or name.len == prefix.len) continue;
+            _ = decimal.parseU32(name[prefix.len..]) orelse continue;
+            var st: linux.Statx = undefined;
+            if (linux.errno(linux.statx(dir, raw, linux.AT.SYMLINK_NOFOLLOW, .{ .TYPE = true }, &st)) != .SUCCESS or
+                st.mode & linux.S.IFMT != linux.S.IFCHR) continue;
+            _ = linux.fchownat(dir, raw, 0, gid, linux.AT.SYMLINK_NOFOLLOW);
+            _ = linux.fchmodat2(dir, raw, 0o660, linux.AT.SYMLINK_NOFOLLOW);
+        }
+    }
 }
 
 /// Formats into `buffer` and NUL-terminates it. The buffers are sized for the
@@ -620,6 +753,8 @@ const Session = struct {
     state: recovery.BootState,
     beam: linux.pid_t = 0,
     ctl_fd: linux.fd_t = -1,
+    reply_fd: linux.fd_t = -1,
+    helper_pids: [helpers.max_helpers]linux.pid_t = @splat(0),
     requested: ?recovery.Shutdown = null,
     /// Set only by the `elixos.test.shim_panic_after` hook, in test images.
     panic_deadline_ms: ?i64 = null,
@@ -648,6 +783,13 @@ const Session = struct {
         // must return EAGAIN rather than suspend the loop. The BEAM's write
         // end stays a normal blocking one.
         _ = linux.fcntl(pipe_fds[1], linux.F.SETFL, 0);
+        var reply_fds: [2]linux.fd_t = undefined;
+        _ = must(linux.pipe2(&reply_fds, .{ .NONBLOCK = true }), "the helper reply pipe");
+        // Reopening inherited pipes through /proc/self/fd checks inode permissions.
+        _ = must(linux.fchown(pipe_fds[1], 1000, 1000), "control pipe ownership");
+        _ = must(linux.fchmod(pipe_fds[1], 0o200), "control pipe permissions");
+        _ = must(linux.fchown(reply_fds[0], 1000, 1000), "reply pipe ownership");
+        _ = must(linux.fchmod(reply_fds[0], 0o400), "reply pipe permissions");
         // The read end is deliberately NOT close-on-exec: the panic handler
         // execs this binary again, and the shim that comes back must inherit
         // the channel to the BEAM it adopts (ADR-004, M8). The BEAM itself
@@ -659,19 +801,21 @@ const Session = struct {
             log("cannot fork, powering off", .{});
             shutdown(.poweroff);
         }
-        if (child == 0) execErts(plan, pipe_fds[1], pipe_fds[0], self.disk_mounted);
+        if (child == 0) execErts(plan, pipe_fds[1], pipe_fds[0], reply_fds[0], reply_fds[1], self.disk_mounted);
 
         _ = linux.close(pipe_fds[1]);
+        _ = linux.close(reply_fds[0]);
+        self.reply_fd = reply_fds[1];
         self.beam = @intCast(child);
         self.ctl_fd = pipe_fds[0];
         // The panic handler re-execs with this: a relaunch means a new pid, so
         // it is rebuilt every time.
+        self.plan = plan;
+        self.state = plan.next_state;
         self.rearm();
         self.pending = 0;
         self.discarding = false;
         self.first_heartbeat_pending = true;
-        self.plan = plan;
-        self.state = plan.next_state;
         watch(self.epfd, pipe_fds[0]);
         armTimer(self.timerfd, self.settings.boot_grace_s);
     }
@@ -684,6 +828,9 @@ const Session = struct {
     fn adopt(self: *Session, a: rescue.Adopted) void {
         self.beam = a.beam_pid;
         self.ctl_fd = a.ctl_fd;
+        self.reply_fd = a.reply_fd;
+        self.plan.launch.generation = a.generation;
+        self.helper_pids = a.helper_pids;
         self.pending = 0;
         self.discarding = false;
         self.first_heartbeat_pending = false;
@@ -698,7 +845,7 @@ const Session = struct {
     /// Refreshes the panic handler's argv: it carries the decisions that have
     /// changed since the last arming.
     fn rearm(self: *Session) void {
-        rescue.arm(self.beam, self.ctl_fd, self.overrides.safe, self.disk_mounted, self.requested);
+        rescue.arm(self.beam, self.ctl_fd, self.reply_fd, self.plan.launch.generation, &self.helper_pids, self.overrides.safe, self.disk_mounted, self.requested);
     }
 
     /// One read of the control pipe: applies what it can, reports whether
@@ -756,6 +903,59 @@ const Session = struct {
         while (self.ctl_fd >= 0 and self.readControl()) {}
     }
 
+    fn startHelper(self: *Session, name: []const u8) void {
+        for (helper_list.helpers[0..helper_list.len], 0..) |*helper, index| {
+            if (!std.mem.eql(u8, helper.name[0..helper.name_len], name)) continue;
+            if (self.helper_pids[index] != 0) {
+                self.helperReply(name, @intCast(self.helper_pids[index]));
+                return;
+            }
+            const child = linux.fork();
+            if (linux.errno(child) != .SUCCESS) break;
+            if (child == 0) {
+                _ = linux.close(self.ctl_fd);
+                _ = linux.close(self.reply_fd);
+                unblockSignals();
+                dropIdentity(helper.uid, helper.gid, false) catch {
+                    log("cannot drop helper privileges name={s}, exiting", .{name});
+                    _ = linux.exit_group(1);
+                };
+                var path: [helpers.max_line_len + 1]u8 = undefined;
+                @memcpy(path[0..helper.path_len], helper.path[0..helper.path_len]);
+                path[helper.path_len] = 0;
+                var argv: [helpers.max_line_len / 2 + 2:null]?[*:0]const u8 = @splat(null);
+                argv[0] = @ptrCast(&path);
+                var offset: usize = 0;
+                for (0..helper.argc) |i| {
+                    const arg: [*:0]const u8 = @ptrCast(helper.args[offset..].ptr);
+                    argv[i + 1] = arg;
+                    offset += std.mem.sliceTo(arg, 0).len + 1;
+                }
+                const envp = [_:null]?[*:0]const u8{
+                    "PATH=/usr/bin:/bin:/usr/sbin:/sbin",
+                    "LANG=C.UTF-8",
+                    "HOME=/priv",
+                };
+                _ = linux.execve(@ptrCast(&path), @ptrCast(&argv), &envp);
+                log("cannot exec helper name={s}, exiting", .{name});
+                _ = linux.exit_group(1);
+            }
+            self.helper_pids[index] = @intCast(child);
+            self.rearm();
+            self.helperReply(name, @intCast(child));
+            return;
+        }
+        log("helper refused name={s}", .{name});
+        self.helperReply(name, null);
+    }
+
+    fn helperReply(self: *Session, name: []const u8, pid: ?u32) void {
+        var buffer: [protocol.max_line_len + 1]u8 = undefined;
+        const reply = helpers.encodeReply(name, pid, &buffer) catch return;
+        // A blocked or dead tenant must not suspend PID 1's event loop.
+        _ = writeAll(self.reply_fd, reply);
+    }
+
     fn forgetControl(self: *Session) void {
         if (self.ctl_fd >= 0) {
             _ = linux.close(self.ctl_fd);
@@ -775,6 +975,24 @@ const Session = struct {
             self.first_heartbeat_pending = false;
             armTimer(self.timerfd, self.settings.heartbeat_timeout_s);
             return;
+        }
+        if (message == .helper) {
+            const name = message.helper.name[0..message.helper.name_len];
+            self.startHelper(name);
+            return;
+        }
+        if (message == .commit) {
+            const generation = message.commit;
+            // NEXT may already name a different candidate; it is not running yet.
+            if (generation != self.state.current or generation != self.plan.launch.generation) return;
+            if (generation != 0) {
+                seal.commit(generation) catch |err| {
+                    log("commit refused generation={d} ({t})", .{ generation, err });
+                    return;
+                };
+                // Sealing is PID 1's own work, not a missed BEAM heartbeat.
+                armTimer(self.timerfd, self.settings.heartbeat_timeout_s);
+            }
         }
 
         const outcome = recovery.applyMessage(self.state, message);
@@ -829,8 +1047,14 @@ const Session = struct {
             const rc = linux.wait4(-1, &status, linux.W.NOHANG, null);
             if (linux.errno(rc) != .SUCCESS or rc == 0) return;
             const pid: linux.pid_t = @intCast(rc);
-            if (pid == self.beam) self.beamExited(@bitCast(status));
-            // Anything else was an orphan we inherited, now reaped.
+            if (pid == self.beam) {
+                self.beamExited(@bitCast(status));
+            } else {
+                for (&self.helper_pids) |*helper_pid| {
+                    if (helper_pid.* == pid) helper_pid.* = 0;
+                }
+                self.rearm();
+            }
         }
     }
 
@@ -840,6 +1064,8 @@ const Session = struct {
         // requests are remembered, and COMMIT/NEXT change the state.
         self.drainControl();
         self.forgetControl();
+        if (self.reply_fd >= 0) _ = linux.close(self.reply_fd);
+        self.reply_fd = -1;
         self.beam = 0;
 
         // A generation override does not survive a crash: onBeamExit drops it
@@ -1025,7 +1251,7 @@ fn logBeamExit(status: u32) void {
     if (linux.W.IFEXITED(status)) {
         log("beam exited status={d}", .{linux.W.EXITSTATUS(status)});
     } else if (linux.W.IFSIGNALED(status)) {
-        log("beam killed by signal {d}", .{@intFromEnum(linux.W.TERMSIG(status))});
+        log("beam killed by signal {d}", .{@backingInt(linux.W.TERMSIG(status))});
     }
 }
 
@@ -1080,7 +1306,7 @@ fn writeAll(fd: linux.fd_t, bytes: []const u8) bool {
 /// Zig error names unchanged.
 fn errnoName(buffer: []u8, err: linux.E) []const u8 {
     const name = std.enums.tagName(linux.E, err) orelse
-        return std.fmt.bufPrint(buffer, "errno {d}", .{@intFromEnum(err)}) catch "errno ?";
+        return std.fmt.bufPrint(buffer, "errno {d}", .{@backingInt(err)}) catch "errno ?";
     return std.fmt.bufPrint(buffer, "E{s}", .{name}) catch "E?";
 }
 
@@ -1146,7 +1372,9 @@ fn readFile(path: [*:0]const u8, buffer: []u8) ReadError![]u8 {
 }
 
 fn writeFileAtomic(final_path: [*:0]const u8, tmp_path: [*:0]const u8, bytes: []const u8) void {
-    const raw_fd = linux.open(tmp_path, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, 0o644);
+    // Never truncate a BEAM-owned temporary inode or follow its symlink.
+    _ = linux.unlink(tmp_path);
+    const raw_fd = linux.open(tmp_path, .{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .NOFOLLOW = true, .CLOEXEC = true }, 0o644);
     if (linux.errno(raw_fd) != .SUCCESS) return;
     const fd: linux.fd_t = @intCast(raw_fd);
     const complete = writeAll(fd, bytes) and linux.errno(linux.fsync(fd)) == .SUCCESS;
@@ -1177,7 +1405,10 @@ const ReadError = error{ FileNotFound, ReadFailed, TooLong };
 const StateError = ReadError || statefile.ParseError;
 
 test "the rescue argv round-trips everything an adopted shim needs" {
-    rescue.arm(4242, 7, true, false, .poweroff);
+    var helper_pids: [helpers.max_helpers]linux.pid_t = @splat(0);
+    helper_pids[0] = 41;
+    helper_pids[31] = 1234;
+    rescue.arm(4242, 7, 8, 3, &helper_pids, true, false, .poweroff);
 
     const args = [_][]const u8{
         std.mem.span(rescue.argv[0].?),
@@ -1187,10 +1418,16 @@ test "the rescue argv round-trips everything an adopted shim needs" {
         std.mem.span(rescue.argv[4].?),
         std.mem.span(rescue.argv[5].?),
         std.mem.span(rescue.argv[6].?),
+        std.mem.span(rescue.argv[7].?),
+        std.mem.span(rescue.argv[8].?),
+        std.mem.span(rescue.argv[9].?),
     };
     const adopted = rescue.parse(&args) orelse return error.TestExpectedAdoption;
     try std.testing.expectEqual(@as(linux.pid_t, 4242), adopted.beam_pid);
     try std.testing.expectEqual(@as(linux.fd_t, 7), adopted.ctl_fd);
+    try std.testing.expectEqual(@as(linux.fd_t, 8), adopted.reply_fd);
+    try std.testing.expectEqual(@as(u32, 3), adopted.generation);
+    try std.testing.expectEqualSlices(linux.pid_t, &helper_pids, &adopted.helper_pids);
     // The boot that panicked may have been in rescue because its disk would
     // not mount, and may have a shutdown request already off the pipe.
     try std.testing.expectEqual(true, adopted.safe);
@@ -1228,4 +1465,5 @@ test {
     std.testing.refAllDecls(cmdline);
     std.testing.refAllDecls(recovery);
     std.testing.refAllDecls(helpers);
+    std.testing.refAllDecls(seal);
 }

@@ -2,7 +2,7 @@
   "version": "v1",
   "config": {
     "name": "/home/autark/src/elixos/apko/apko.yaml",
-    "checksum": "sha256-i8FFEt3olS7qRsqSSpEbNfEr8izRhDs9C65DPbVCeFw="
+    "checksum": "sha256-rJhamJRmQjF+DOmnh1QA/1SJGUIicpQmMwNLpyFa8vA="
   },
   "contents": {
     "keyring": [
@@ -456,18 +456,18 @@
         "version": "0.1.0-r0",
         "architecture": "x86_64",
         "signature": {
-          "range": "bytes=0-685",
-          "checksum": "sha1-wPq3pfg9rZLFnCD02Nb55tDZ9N0="
+          "range": "bytes=0-683",
+          "checksum": "sha1-DZv2jZZgK2uwxXaEJAusohlOBd0="
         },
         "control": {
-          "range": "bytes=686-2421",
-          "checksum": "sha1-x5szHADw/NQx0nQHQjErvHf9m2o="
+          "range": "bytes=684-2416",
+          "checksum": "sha1-YDZskBJvbsGZPXCh/jKLQW4JsFc="
         },
         "data": {
-          "range": "bytes=2422-4304351",
-          "checksum": "sha256-tLbAF1nC2h1AoJriUNpcpvNHpaFJW4JWiPXmF3ZJDNA="
+          "range": "bytes=2417-4312165",
+          "checksum": "sha256-2wKzfD7NVvM7LHaeogmm0ROojW4Pho/NPKZx+r+/1ac="
         },
-        "checksum": "Q1x5szHADw/NQx0nQHQjErvHf9m2o="
+        "checksum": "Q1YDZskBJvbsGZPXCh/jKLQW4JsFc="
       },
       {
         "name": "elixos-kernel",
@@ -494,18 +494,18 @@
         "version": "0.0.0-r0",
         "architecture": "x86_64",
         "signature": {
-          "range": "bytes=0-685",
-          "checksum": "sha1-27aAkjO0J6QLB5UU3ncWHKlN0P8="
+          "range": "bytes=0-689",
+          "checksum": "sha1-1OWJyZXys3YPpYdvT4KsiJjF/AQ="
         },
         "control": {
-          "range": "bytes=686-2092",
-          "checksum": "sha1-e+wSE8bU2B9qyNSNUImJMvK7JJA="
+          "range": "bytes=690-2164",
+          "checksum": "sha1-2i1Wfy24wMc22ShFT4Z6WGzmD3c="
         },
         "data": {
-          "range": "bytes=2093-1048136",
-          "checksum": "sha256-XR/6FAAzMdLykKlLFZREtXSRtZ+vT1YIesXpuSQKrb0="
+          "range": "bytes=2165-1135542",
+          "checksum": "sha256-lw3/wo6Ez6+kjzfGGhHKiwAZLnjx8bxEHmo7dkKOosI="
         },
-        "checksum": "Q1e+wSE8bU2B9qyNSNUImJMvK7JJA="
+        "checksum": "Q12i1Wfy24wMc22ShFT4Z6WGzmD3c="
       }
     ]
   }

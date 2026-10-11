@@ -12,6 +12,7 @@ defmodule Elixos.Shim.Protocol do
   | `:reboot`         | `REBOOT\\n`        |
   | `:poweroff`       | `POWEROFF\\n`      |
   | `:halt`           | `HALT\\n`          |
+  | `{:helper, name}` | `HELPER <name>\\n` |
 
   `gen` is a canonical decimal u32 (PROTOCOL.md §1). The Zig shim parses the
   same lines; both suites run `spec/protocol.vectors`, so they cannot drift.
@@ -28,6 +29,7 @@ defmodule Elixos.Shim.Protocol do
           | :reboot
           | :poweroff
           | :halt
+          | {:helper, String.t()}
 
   @doc "Longest accepted line, excluding the trailing newline."
   @spec max_line_length() :: pos_integer()
@@ -46,13 +48,31 @@ defmodule Elixos.Shim.Protocol do
       {:error, :too_long}
     else
       case line do
-        "HB" -> {:ok, :heartbeat}
-        "REBOOT" -> {:ok, :reboot}
-        "POWEROFF" -> {:ok, :poweroff}
-        "HALT" -> {:ok, :halt}
-        "COMMIT " <> rest -> numbered(:commit, rest)
-        "NEXT " <> rest -> numbered(:next, rest)
-        _ -> {:error, :invalid}
+        "HB" ->
+          {:ok, :heartbeat}
+
+        "REBOOT" ->
+          {:ok, :reboot}
+
+        "POWEROFF" ->
+          {:ok, :poweroff}
+
+        "HALT" ->
+          {:ok, :halt}
+
+        "COMMIT " <> rest ->
+          numbered(:commit, rest)
+
+        "NEXT " <> rest ->
+          numbered(:next, rest)
+
+        "HELPER " <> name ->
+          if Elixos.Privileges.valid_name?(name),
+            do: {:ok, {:helper, name}},
+            else: {:error, :invalid}
+
+        _ ->
+          {:error, :invalid}
       end
     end
   end
@@ -76,6 +96,14 @@ defmodule Elixos.Shim.Protocol do
   def encode(:reboot), do: "REBOOT\n"
   def encode(:poweroff), do: "POWEROFF\n"
   def encode(:halt), do: "HALT\n"
+
+  def encode({:helper, name}) do
+    case Elixos.Privileges.encode_request(name) do
+      {:ok, line} -> line
+      {:error, :invalid_name} -> raise ArgumentError, "not a helper name: #{inspect(name)}"
+    end
+  end
+
   def encode(other), do: raise(ArgumentError, "not a control message: #{inspect(other)}")
 
   defp generation!(generation)

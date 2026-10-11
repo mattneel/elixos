@@ -4,8 +4,8 @@ defmodule Elixos.Integration.M17EscapeHatchTest do
   helpers are refused safely, and NEXT/COMMIT and fallback retain their meaning
   (docs/ROADMAP.md, ADR-046).
 
-  Reference note: none of these acceptance tests has been validated against a
-  reference implementation yet; the M17 implementation does not exist yet.
+  Acceptance exercised against the current M17 implementation in QEMU.
+  No independent reference implementation was used.
   """
   use ExUnit.Case, async: false
 

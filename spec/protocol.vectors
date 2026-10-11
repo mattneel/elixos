@@ -9,7 +9,7 @@
 #   wire      one line as sent on the pipe, WITHOUT its trailing "\n".
 #             Escapes: \xHH is any byte, \\ is a backslash. Nothing else is special.
 #   expected  heartbeat | commit <gen> | next <gen> | reboot | poweroff | halt
-#             | invalid | too_long
+#             | helper <name> | invalid | too_long
 # Valid lines must also round-trip: encode(parse(wire)) == wire ++ "\n".
 # Lines starting with '#' and blank lines are ignored.
 
@@ -25,6 +25,12 @@ NEXT 4294967295	next 4294967295
 REBOOT	reboot
 POWEROFF	poweroff
 HALT	halt
+HELPER initdb	helper initdb
+HELPER console-handover	helper console-handover
+HELPER -	helper -
+HELPER 0	helper 0
+HELPER abc123	helper abc123
+HELPER aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	helper aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 # --- invalid: case, whitespace and framing are exact ---
 # (the next vector is the empty line: nothing before the tab)
@@ -65,6 +71,31 @@ NEXT	invalid
 NEXT 1.5	invalid
 NEXT -0	invalid
 
+# --- invalid: helper names are exact ASCII [a-z0-9-]{1,32} ---
+HELPER	invalid
+HELPER\x20	invalid
+helper initdb	invalid
+Helper initdb	invalid
+\x20HELPER initdb	invalid
+HELPER  initdb	invalid
+HELPER initdb\x20	invalid
+HELPER initdb extra	invalid
+HELPER\x09initdb	invalid
+HELPER initdb\x09	invalid
+HELPER initdb\x0d	invalid
+HELPER initdb\x0a	invalid
+HELPER initdb\x00	invalid
+HELPER INITDB	invalid
+HELPER .	invalid
+HELPER ..	invalid
+HELPER a/b	invalid
+HELPER a.b	invalid
+HELPER a_b	invalid
+HELPER +	invalid
+HELPER \xc3\xa9	invalid
+HELPER \xff	invalid
+HELPER aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	invalid
+
 # --- invalid: unknown verbs ---
 QUIT	invalid
 COMMITS 7	invalid
@@ -74,3 +105,5 @@ COMMITS 7	invalid
 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX	too_long
 COMMIT 0000000000000000000000000000000000000000000000000000000000	too_long
 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX	invalid
+HELPER aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	too_long
+HELPER aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	invalid

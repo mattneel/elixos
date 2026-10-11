@@ -14,10 +14,10 @@ UEFI firmware (hardware)            QEMU -kernel/-initrd (development)
           initramfs: /init = Zig shim (PID 1)      never exits (ADR-002)
                      │  mounts /proc /sys /dev /run /tmp, /priv (ext4)
                      │  reads cmdline + /priv/boot.state, plans, persists
-                     │  fork + exec erlexec (no shell), control pipe on fd ≥ 3
+                     │  control + reply pipes; drop uid/groups/capabilities; exec erlexec
                      ▼
-          ERTS (dynamic musl, ADR-041) running generation G
-                     │  Elixos.Application: Control → restore G → AutoCommit
+          ERTS (dynamic musl, ADR-041), uid/gid 1000, running generation G
+                     │  Elixos.Application: Control → Privileges → restore G → AutoCommit
                      ▼
           login REPL on /dev/console: IEx, erl or gsh (ADR-012)
 ```
@@ -41,6 +41,7 @@ tar, so nothing here needs root):
 /usr/local/lib/elixir/         Elixir 1.20.4 (elixos-elixir)
 /bin/busybox, /lib/…           Alpine's base: busybox, baselayout, musl
 /etc/ssl/certs/…               the CA bundle (ca-certificates-bundle)
+/etc/elixos/helpers           root-owned named-helper allow-list (M17)
 /proc /sys /dev /dev/shm /run /tmp  mount points, declared in the apko config
 /priv                          mount point for the persistent disk
 ```
@@ -57,7 +58,8 @@ example a CA bundle for Hex in M11).
 ## §3 The shim (PID 1, Zig)
 
 Source: `shim/src/`. Pure logic (`decimal`, `protocol`, `statefile`,
-`cmdline`, `recovery`) is unit tested on the host; `main.zig` is syscall glue
+`cmdline`, `recovery`, `helpers` and the sealing parser) is unit tested on the
+host; `main.zig` and the sealing filesystem syscalls are syscall glue
 tested in QEMU.
 
 ### §3.1 Duties
@@ -65,14 +67,24 @@ tested in QEMU.
 1. Mount `/proc`, `/sys`, `/dev` (devtmpfs), `/run`, `/tmp`; then `/priv`,
    waiting up to `elixos.data_wait` seconds for that device to appear (the
    kernel does not wait for USB or SD storage before running `/init`).
-2. Parse `/proc/cmdline`, read `/priv/boot.state`, plan, persist, log.
-3. Fork and exec ERTS with the launch contract (PROTOCOL.md §3).
+2. Parse `/proc/cmdline`, read the fixed helper list, prepare root-owned sticky
+   store/generation directories and the private sealing workspace, then read
+   `/priv/boot.state`, plan, persist and log.
+3. Fork and exec ERTS as uid/gid 1000, groups `input`/`video`, with only
+   `CAP_NET_BIND_SERVICE` and `PR_SET_NO_NEW_PRIVS` (PROTOCOL.md §3, ADR-046).
 4. Event loop on epoll: a signalfd (SIGCHLD, SIGTERM, SIGINT, SIGPWR), the
    control pipe, and a timerfd for the heartbeat deadline.
 5. Reap every child. As PID 1 it inherits orphans; zombies must never pile up.
 6. Relaunch the BEAM after an exit nobody asked for (short backoff), or carry
    out a requested shutdown: SIGTERM, then SIGKILL stragglers, sync, unmount
    `/priv`, `reboot(2)`.
+
+The helper allow-list supplies the executable, literal argv and uid/gid;
+the BEAM supplies only the name. Replies use a separate pipe. The shim owns
+and reaps helper children, and stops them after the BEAM during shutdown.
+COMMIT publishes verified, fresh root-owned manifest/blob inodes before
+updating `last_good`. Atomic `boot.state` writes use a fresh inode in the
+root-private `/priv/.seal` directory, not a BEAM-writable temporary path.
 
 Allocate nothing after startup. Single-threaded. Raw `std.os.linux` syscalls.
 
@@ -105,9 +117,10 @@ re-plans with the generation override dropped and the safe override kept.
 
 Override the root panic handler (`pub const panic = std.debug.FullPanic(f)`)
 so that a panic re-execs `/init` in a recovery mode instead of returning.
-`execve` keeps PID 1, the BEAM stays its child, and the inherited control fd
-and the BEAM's pid are handed over in argv. Build that argv at startup so the
-handler never allocates.
+`execve` keeps PID 1, the BEAM and helpers stay its children, and both pipe
+fds, the BEAM's pid, its actual generation and the live helper pids are handed
+over in argv. Build that argv in fixed storage before arming the handler;
+the handler never allocates or reconstructs a generation from a pending NEXT.
 
 ### §3.5 Test hooks
 
@@ -146,12 +159,15 @@ and truncated, while damage in the middle is reported and left for a human.
 ### §4.4 Generations
 
 `Elixos.save/1` writes the working set (latest hash of every module not
-forgotten) as an immutable manifest `/priv/generations/<n>.gen` with a boot
-spec, then sends `NEXT <n>` so the shim boots it next time, provisionally,
-until it commits. Generation 0 is the factory and never touches the disk.
+forgotten) as a candidate manifest `/priv/generations/<n>.gen` with a boot
+spec, then sends `NEXT <n>` so the shim boots it next time, provisionally.
+COMMIT seals that manifest and its blobs as fresh root-owned, read-only
+inodes; retained writable descriptors cannot change the sealed paths.
+Generation 0 is the factory and never touches the disk.
 
-Booting generation G means: load every module of G from the store, run G's
-boot spec, then start the login REPL. Boot never replays the journal tail:
+Booting generation G means: read and verify every module blob of G against
+its content hash before loading any, load the verified bytes, run G's boot
+spec, then start the login REPL. Boot never replays the journal tail:
 unsaved work is recoverable on request, never applied by surprise.
 
 ### §4.5 Recovery tools
@@ -177,7 +193,8 @@ See DECISIONS.md, open questions.
 ## §5 The BEAM side of boot
 
 `Elixos.Application`, in order: `Elixos.Shim.Control` on the inherited fd
-(heartbeats start) → restore the generation and run its boot spec →
+(heartbeats start) → `Elixos.Privileges` on the separate reply fd → restore
+the generation and run its boot spec →
 `Elixos.Boot.AutoCommit` (normal mode only) → the login REPL on the console via
 `:shell.start_interactive/1`. A failure before the REPL must exit the VM
 non-zero so the shim counts the attempt (ADR-007).

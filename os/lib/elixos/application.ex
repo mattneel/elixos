@@ -7,11 +7,12 @@ defmodule Elixos.Application do
   comes up, in order:
 
     1. `Elixos.Shim.Control` on the inherited control fd (heartbeats start).
-    2. The generation's modules and boot spec (`Elixos.Image.restore/2`, M6).
-    3. `Elixos.Boot.AutoCommit` in normal mode (M5).
-    4. The login REPL on the console via `:shell.start_interactive/1` (M4, M9).
+    2. `Elixos.Privileges` on the inherited helper reply fd (M17).
+    3. The generation's modules and boot spec (`Elixos.Image.restore/2`, M6).
+    4. `Elixos.Boot.AutoCommit` in normal mode (M5).
+    5. The login REPL on the console via `:shell.start_interactive/1` (M4, M9).
 
-  A failure in steps 1-3 must exit the VM with a non-zero status so the shim
+  A failure in steps 1-4 must exit the VM with a non-zero status so the shim
   counts the attempt and falls back (ADR-007). Never swallow it.
   """
   use Application
@@ -94,6 +95,9 @@ defmodule Elixos.Application do
             {Elixos.Shim.Control,
              sink: {Elixos.Shim.Sink.Fd, env.ctl_fd},
              heartbeat_ms: Application.get_env(:elixos, :heartbeat_ms, 1_000)},
+            # Validate/open the shim reply fd before generation code can ask
+            # for helpers, without blocking the heartbeat writer while waiting.
+            {Elixos.Privileges, []},
             # The generation the shim launched, loaded before anything can use
             # it; a failure here stops the tree on purpose (ADR-007).
             {Elixos.Boot.Restore, {image, env}},

@@ -13,13 +13,14 @@ no leading zeros, no whitespace.
 Implementations: `shim/src/decimal.zig` (`parseU32`) and `Elixos.Decimal`
 (`parse_u32/1`). Their tests mirror each other case for case.
 
-## §2 The control protocol (BEAM → shim)
+## §2 Control and helper replies
 
-**Transport.** Before exec'ing ERTS the shim creates a pipe. The BEAM gets
-the write end as an inherited fd (number in `ELIXOS_CTL_FD`, see §3); the shim
-keeps the read end. The BEAM opens it with
-`File.open("/proc/self/fd/<n>", [:write, :raw, :binary])` (`Elixos.Shim.Sink.Fd`).
-Traffic is one way. Writes are far below `PIPE_BUF`, so they are atomic.
+**Transport.** Before exec'ing ERTS the shim creates two pipes. The BEAM gets
+the control pipe's write end in `ELIXOS_CTL_FD` and the reply pipe's read end
+in `ELIXOS_REPLY_FD` (§3). PID 1 keeps the opposite ends; they survive its
+panic re-exec. The pipe inodes belong to uid/gid 1000: control mode 0200,
+reply mode 0400, so the unprivileged BEAM can reopen `/proc/self/fd/<n>`.
+Each direction has one writer. Writes are below `PIPE_BUF` and atomic.
 
 **Framing.** ASCII lines terminated by `\n`. A line longer than 64 bytes
 (excluding the newline) is `too_long`, whatever its content: the shim discards
@@ -29,15 +30,35 @@ message below is `invalid`: logged and ignored, never fatal.
 | line             | message            | effect in the shim (`recovery.applyMessage`)            |
 |------------------|--------------------|---------------------------------------------------------|
 | `HB`             | `:heartbeat`       | resets the heartbeat deadline; no state change          |
-| `COMMIT <gen>`   | `{:commit, gen}`   | if `gen == current`: `last_good = gen`, `attempts = 0`; else ignored |
+| `COMMIT <gen>`   | `{:commit, gen}`   | if `gen == current` and the running generation: seal and verify its recovery files, then `last_good = gen`, `attempts = 0`; else ignored |
 | `NEXT <gen>`     | `{:next, gen}`     | `current = gen`, `attempts = 0` (boots next time)       |
 | `REBOOT`         | `:reboot`          | remembered; carried out when the BEAM exits             |
 | `POWEROFF`       | `:poweroff`        | remembered; carried out when the BEAM exits             |
 | `HALT`           | `:halt`            | remembered; carried out when the BEAM exits             |
+| `HELPER <name>`  | `{:helper, name}`  | request the fixed image-declared helper; no boot-state change |
 
 Every state change is persisted to `boot.state` (§4) before the next line
 is read. After requesting a shutdown, the BEAM stops itself
 (`:init.stop/0`); the shim then reaps it and performs the shutdown.
+
+**Helpers.** Names are ASCII `[a-z0-9-]{1,32}`. The shim reads
+`/etc/elixos/helpers` once at startup: up to 32 records, each at most 1024
+bytes excluding its newline, with `<name> <uid>:<gid> <absolute path> [args...]`.
+Blank/comment lines are ignored; tokens are separated by spaces or tabs.
+Arguments are literal image-owned bytes, never shell syntax or caller input.
+Any malformed, duplicate or overflowing list disables the entire list.
+
+The reply pipe carries `HELPER <name> OK <pid>\n` (positive canonical u32)
+or `HELPER <name> REFUSED\n`. Unknown names and failed forks are refused and
+logged (§6). One live child per name is reused; exited children are reaped.
+Helpers run as the declared uid/gid, without the BEAM's supplementary groups,
+and are stopped after the BEAM during shutdown.
+
+`Elixos.Privileges` serializes requests independently of Control's heartbeat.
+Timeouts do not replay effects: an active timed-out request retains its place
+until its late reply drains, while queued timeouts never write a request.
+A failed reply channel remains closed until the next VM. The raw reader does
+not use fixed multi-byte reads, which OTP waits to fill on a live pipe.
 
 **Golden vectors.** `spec/protocol.vectors` lists wire lines and their
 meaning. Both `shim/src/protocol.zig` and `os/test/elixos/shim/protocol_test.exs`
@@ -58,6 +79,7 @@ plus `HOME=/priv/home`, `TERM=linux`, `LANG=C.UTF-8`,
 | `ELIXOS_MODE`       | `normal` or `rescue`                                   |
 | `ELIXOS_ATTEMPT`    | `next_state.attempts` of the plan that launched it     |
 | `ELIXOS_CTL_FD`     | fd of the control pipe's write end (not CLOEXEC, ≥ 3)  |
+| `ELIXOS_REPLY_FD`   | fd of the helper reply pipe's read end (not CLOEXEC, ≥ 3) |
 
 - fds 0, 1, 2 are `/dev/console`. The working directory is `/` and stays
   there (ADR-016). When the persistent disk is mounted, the shim also sets
@@ -65,6 +87,12 @@ plus `HOME=/priv/home`, `TERM=linux`, `LANG=C.UTF-8`,
   `ERL_CRASH_DUMP_BYTES` to 1 MiB, so a crash leaves its evidence on the disk
   the next boot mounts. Without the disk both are left unset and ERTS keeps
   its default.
+- The BEAM runs as `elixos`, real/effective/saved/filesystem uid 1000 and gid
+  1000, with supplementary `input` (23) and `video` (27). Its permitted,
+  effective, inheritable and ambient capabilities contain only
+  `CAP_NET_BIND_SERVICE` (bit 10, mask `0000000000000400`), for SSH's port 22.
+  The child drops groups, gid and uid before exec and sets
+  `PR_SET_NO_NEW_PRIVS`; no program can regain privilege through exec.
 - The emulator runs `-mode interactive`: Elixos loads code at run time (the
   live image restores modules, and the box builds Mix projects), and the
   embedded code server refuses to load anything from the code path.
@@ -77,7 +105,10 @@ plus `HOME=/priv/home`, `TERM=linux`, `LANG=C.UTF-8`,
 - When the BEAM exits, the shim logs `beam exited status=<n>` or
   `beam killed by signal <n>` (§6) and asks `recovery.onBeamExit` what next.
 
-Parsed BEAM-side by `Elixos.Boot.Env.parse/1`.
+The four boot variables are parsed by `Elixos.Boot.Env.parse/1`; the required
+reply descriptor is validated by `Elixos.Privileges` before opening its client.
+Panic adoption preserves both pipe ends, the actual running generation
+(which may differ from NEXT's `current`), and live helper pids.
 
 ## §4 `boot.state`
 
@@ -104,8 +135,11 @@ Parse rules (`shim/src/statefile.zig`):
 
 Lines are checked in order and the first error wins.
 
-Writes are atomic: write `/priv/boot.state.tmp`, fsync it, rename it over
-`boot.state`, fsync `/priv`.
+Writes are atomic: create a fresh root-owned `/priv/.seal/boot.state.tmp`
+with EXCL and NOFOLLOW, fsync it, rename it over `boot.state`, fsync `/priv`.
+The staging parent is root-only mode 0700; stale temporary paths are removed,
+never truncated or followed. Retained writable candidate descriptors cannot
+reach published recovery inodes.
 
 If `boot.state` is missing, the shim plans from the defaults (`0/0/0`).
 If it exists but does not parse, the shim plans from the defaults with the
@@ -173,6 +207,16 @@ Placeholders: `<g>` generation, `<n>` number, `<m>` `normal|rescue`,
 | `re-exec after panic: <message>`                                       | a panic re-execs /init                | M8   |
 | `adopting beam pid=<n>`                                                | a re-exec adopts the running BEAM     | M8   |
 | `ignored control line (<error>)`                                       | a control line was not a message      | M4   |
+| `helper refused name=<name>`                                           | unknown helper or failed fork         | M17  |
+| `helper list unavailable (<error>), no helpers`                         | allow-list could not be read          | M17  |
+| `helper list invalid (<error>), no helpers`                             | entire allow-list was rejected        | M17  |
+| `commit refused generation=<g> (<error>)`                              | sealing or reference verification failed | M17 |
+| `cannot prepare unprivileged state (<error>), powering off`            | recovery boundary cannot be prepared  | M17  |
+| `cannot drop BEAM privileges (<error>), exiting`                        | credential/capability drop failed     | M17  |
+| `cannot drop helper privileges name=<name>, exiting`                   | helper identity could not be set      | M17  |
+| `cannot exec helper name=<name>, exiting`                              | fixed helper executable failed        | M17  |
+| `cannot format helper handoff, powering off`                           | panic handoff could not be prepared   | M17  |
+| `cannot own crash directory (<error>)`                                 | writable dump directory could not be prepared | M17 |
 
 `attempt=<n>` is the plan's `next_state.attempts`. When planning from an
 unreadable or unmountable state, the shim uses the defaults (`0/0/0`).
@@ -187,6 +231,7 @@ ext4, label `ELIXOS`, mounted on `/priv`:
 /priv/store/            Elixos.Image.Store blobs: <2 hex>/<62 hex>
 /priv/journal.log       Elixos.Image.Journal (record format in its moduledoc)
 /priv/generations/      <n>.gen manifests (Elixos.Image.Generation)
+/priv/.seal/            root-only temporary recovery publication
 /priv/user.exs          Elixos.User settings (a keyword list literal)
 /priv/home/             the user's home; .ssh/authorized_keys (M12)
 /priv/ssh/              SSH host keys (M12)
@@ -198,6 +243,11 @@ ext4, label `ELIXOS`, mounted on `/priv`:
 /priv/hex/keys/         each repo's public key, `<name>.pub`
 /priv/hex/cache/        fetched registries and tarballs
 ```
+
+`/priv/crash` belongs to uid/gid 1000 so ERTS can create its dumps. PID 1
+prepares it before each launch, including a relaunch after a crash. Ownership
+does not follow symlinks, and retention opens the directory without following
+one. It is writable state, not part of the sealed recovery store.
 
 ## §8 Trusted Hex repositories (M14)
 

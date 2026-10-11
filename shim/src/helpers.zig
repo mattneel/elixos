@@ -1,11 +1,9 @@
 //! M17 helper allow-list and reply encoding (docs/ROADMAP.md, ADR-046).
 //! Pure fixed-storage parsing: no allocator, shell expansion or syscalls.
-//!
-//! Reference note: none of these acceptance tests has been validated against
-//! a reference implementation yet; the M17 implementation does not exist yet.
 const std = @import("std");
 const testing = std.testing;
 const milestone = @import("milestone.zig");
+const decimal = @import("decimal.zig");
 
 pub const max_helpers = 32;
 /// Maximum bytes per allow-list line, excluding its trailing newline.
@@ -36,27 +34,76 @@ pub const ParseError = error{ Invalid, DuplicateName, TooManyHelpers, TooLong };
 /// Parses `<name> <uid>:<gid> <absolute path> [args...]` into owned storage.
 /// Blank lines and # comment lines are ignored. Names are [a-z0-9-]{1,32};
 /// uid/gid follow decimal.parseU32, including zero and the u32 upper boundary.
-/// An invalid list must not be used, even if some preceding entries parsed.
+/// Any error leaves the list empty; no successfully parsed prefix is exposed.
 pub fn parseAllowList(text: []const u8, out: *AllowList) ParseError!void {
-    _ = text;
-    _ = out;
-    @panic("TODO(M17)");
+    out.len = 0;
+    errdefer out.len = 0;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        if (line.len > max_line_len) return error.TooLong;
+        const record = std.mem.trim(u8, line, " \t");
+        if (record.len == 0 or record[0] == '#') continue;
+        // Tokens are literal argv bytes, never shell syntax. Reject embedded
+        // terminators and control bytes before packing NUL-delimited arguments.
+        for (record) |byte| {
+            if ((byte < 0x20 and byte != '\t') or byte == 0x7f) return error.Invalid;
+        }
+        var words = std.mem.tokenizeAny(u8, record, " \t");
+        const name = words.next() orelse return error.Invalid;
+        if (!validName(name)) return error.Invalid;
+        const identity = words.next() orelse return error.Invalid;
+        const colon = std.mem.indexOfScalar(u8, identity, ':') orelse return error.Invalid;
+        const uid = decimal.parseU32(identity[0..colon]) orelse return error.Invalid;
+        const gid = decimal.parseU32(identity[colon + 1 ..]) orelse return error.Invalid;
+        const path = words.next() orelse return error.Invalid;
+        if (path[0] != '/') return error.Invalid;
+        if (lookup(out, name) != null) return error.DuplicateName;
+        if (out.len == max_helpers) return error.TooManyHelpers;
+        const helper = &out.helpers[out.len];
+        helper.* = .{ .uid = uid, .gid = gid };
+        @memcpy(helper.name[0..name.len], name);
+        helper.name_len = name.len;
+        @memcpy(helper.path[0..path.len], path);
+        helper.path_len = path.len;
+        while (words.next()) |arg| {
+            if (arg.len + 1 > helper.args.len - helper.args_len) return error.TooLong;
+            @memcpy(helper.args[helper.args_len..][0..arg.len], arg);
+            helper.args_len += arg.len;
+            helper.args[helper.args_len] = 0;
+            helper.args_len += 1;
+            helper.argc += 1;
+        }
+        out.len += 1;
+    }
+}
+
+/// Shared request and allow-list grammar: ASCII [a-z0-9-]{1,32}.
+pub fn validName(name: []const u8) bool {
+    if (name.len == 0 or name.len > 32) return false;
+    for (name) |byte| {
+        if (!(byte >= 'a' and byte <= 'z') and
+            !(byte >= '0' and byte <= '9') and byte != '-') return false;
+    }
+    return true;
 }
 
 /// Looks up an exact helper name; an absent name returns null.
 pub fn lookup(list: *const AllowList, name: []const u8) ?*const Helper {
-    _ = list;
-    _ = name;
-    @panic("TODO(M17)");
+    for (list.helpers[0..list.len]) |*helper| {
+        if (std.mem.eql(u8, helper.name[0..helper.name_len], name)) return helper;
+    }
+    return null;
 }
 
 /// Encodes a validated name and a positive pid, or null for REFUSED, including
 /// exactly one trailing newline. Returns the written portion of caller storage.
 pub fn encodeReply(name: []const u8, pid: ?u32, buf: []u8) error{NoSpaceLeft}![]u8 {
-    _ = name;
-    _ = pid;
-    _ = buf;
-    @panic("TODO(M17)");
+    std.debug.assert(validName(name));
+    if (pid) |value| {
+        std.debug.assert(value > 0);
+        return std.fmt.bufPrint(buf, "HELPER {s} OK {d}\n", .{ name, value });
+    }
+    return std.fmt.bufPrint(buf, "HELPER {s} REFUSED\n", .{name});
 }
 
 test "helpers: comments, blank lines, identities, paths and arguments are preserved" {
@@ -221,4 +268,54 @@ test "helpers: a too-small reply buffer returns NoSpaceLeft" {
     var tiny: [8]u8 = undefined;
     try testing.expectError(error.NoSpaceLeft, encodeReply("initdb", 42, &tiny));
     try testing.expectError(error.NoSpaceLeft, encodeReply("initdb", null, &tiny));
+}
+
+test "helpers: malformed lists clear both an accepted prefix and a prior list" {
+    try milestone.require(17);
+    var list: AllowList = .{};
+    try parseAllowList("old 0:0 /old", &list);
+    const rejected = [_][]const u8{
+        "good 0:0 /good\nbad 00:0 /bad",
+        "good 0:0 /good\ngood 1:1 /duplicate",
+        "good 0:0 /good\nbad 0:0 /bad\x00suffix",
+        "good 0:0 /good\nbad 0:0 /bad arg\x0d",
+    };
+    for (rejected) |text| {
+        if (parseAllowList(text, &list)) |_| {
+            return error.TestUnexpectedResult;
+        } else |_| {}
+        try testing.expectEqual(@as(usize, 0), list.len);
+        try testing.expect(lookup(&list, "good") == null);
+        try testing.expect(lookup(&list, "old") == null);
+    }
+}
+
+test "helpers: horizontal whitespace separates literal arguments without shell expansion" {
+    try milestone.require(17);
+    var list: AllowList = .{};
+    try parseAllowList(" \t# comment\n\tliteral\t0:0\t/helper\t$HOME ; \"quoted\"  \t\n", &list);
+    const helper = lookup(&list, "literal") orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(@as(usize, 3), helper.argc);
+    try testing.expectEqualStrings("$HOME\x00;\x00\"quoted\"\x00", helper.args[0..helper.args_len]);
+}
+
+test "helpers: size failures never expose a parsed prefix" {
+    try milestone.require(17);
+    var list: AllowList = .{};
+    var long: [max_line_len + 32]u8 = @splat('a');
+    const prefix = "good 0:0 /good\n";
+    @memcpy(long[0..prefix.len], prefix);
+    try testing.expectError(error.TooLong, parseAllowList(&long, &list));
+    try testing.expectEqual(@as(usize, 0), list.len);
+    try testing.expect(lookup(&list, "good") == null);
+
+    var text: [(max_helpers + 1) * 32]u8 = undefined;
+    var len: usize = 0;
+    for (0..max_helpers + 1) |i| {
+        const line = try std.fmt.bufPrint(text[len..], "h{d} 0:0 /helper\n", .{i});
+        len += line.len;
+    }
+    try testing.expectError(error.TooManyHelpers, parseAllowList(text[0..len], &list));
+    try testing.expectEqual(@as(usize, 0), list.len);
+    try testing.expect(lookup(&list, "h0") == null);
 }

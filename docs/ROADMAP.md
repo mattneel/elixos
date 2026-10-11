@@ -512,7 +512,7 @@ the reply lines (`shim/src/helpers.zig`, gated at 17).
 Zig tests pass, PROTOCOL.md §2, §3 and §6 carry the new lines, and ADR-046
 holds.
 
-- [ ] Demo recorded: `demos/m17-escape-hatch.mp4` (`make demo M=17`): the VM's
+- [x] Demo recorded: `demos/m17-escape-hatch.mp4` (`make demo M=17`): the VM's
   uid, a refused write to `boot.state`, a refused helper, and a save that still
   commits.
 

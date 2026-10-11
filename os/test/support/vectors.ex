@@ -28,6 +28,7 @@ defmodule Elixos.Test.Vectors do
   defp expected("heartbeat"), do: {:ok, :heartbeat}
   defp expected("commit " <> gen), do: {:ok, {:commit, String.to_integer(gen)}}
   defp expected("next " <> gen), do: {:ok, {:next, String.to_integer(gen)}}
+  defp expected("helper " <> name), do: {:ok, {:helper, name}}
   defp expected("reboot"), do: {:ok, :reboot}
   defp expected("poweroff"), do: {:ok, :poweroff}
   defp expected("halt"), do: {:ok, :halt}

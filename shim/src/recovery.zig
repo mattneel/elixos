@@ -81,6 +81,8 @@ pub fn applyMessage(state: BootState, msg: protocol.Message) Outcome {
     return switch (msg) {
         // Heartbeats are the shim's liveness signal; they change no state.
         .heartbeat => .{ .state = state },
+        // Helper launches belong to the runtime, never the recovery policy.
+        .helper => .{ .state = state },
         // Only the running generation can be committed (PROTOCOL.md §2).
         .commit => |generation| if (generation == state.current)
             .{ .state = .{ .current = state.current, .last_good = generation, .attempts = 0 } }
@@ -293,4 +295,10 @@ test "recovery: a crash loop walks provisional -> last_good -> rescue" {
         };
     }
     try testing.expectEqualDeep(BootState{ .current = 6, .last_good = 6, .attempts = 2 }, state);
+}
+
+test "recovery: helper requests change neither boot state nor shutdown" {
+    try milestone.require(17);
+    const state: BootState = .{ .current = 5, .last_good = 4, .attempts = 2 };
+    try testing.expectEqualDeep(Outcome{ .state = state }, applyMessage(state, try protocol.parse("HELPER initdb")));
 }

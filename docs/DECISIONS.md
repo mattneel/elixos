@@ -1153,11 +1153,11 @@ none of the future milestones is started here.
 
 ## ADR-046: The BEAM runs unprivileged, commits are sealed, and root is behind the shim
 
-**Status:** accepted (M17; PROTOCOL.md §2, §3 and §6 change when it starts)
+**Status:** accepted (M17; PROTOCOL.md §2, §3 and §6 define the contract)
 
 **Context.** From M21 on, code running in the BEAM includes an agent with a
-shell, an editor and a compiler - code that can change Elixos itself. Today
-the BEAM runs as root, so anything it runs can rewrite `boot.state`, the
+shell, an editor and a compiler - code that can change Elixos itself. Before
+M17 the BEAM ran as root, so anything it ran could rewrite `boot.state`, the
 committed generations and the store, which together are the way back from a
 bad change. The escape hatch has to be something the BEAM cannot touch.
 
@@ -1175,13 +1175,16 @@ bad change. The escape hatch has to be something the BEAM cannot touch.
   writable shared parents are 1777 and prepared by the shim before dropping
   uid. The BEAM cannot unlink, rename or replace a sealed child; merely adding
   a sticky bit to a BEAM-owned directory would not protect it. The factory and
-  helper list stay root-owned in the initramfs. Restore verifies every blob
-  against its hash before loading it.
+  helper list stay root-owned in the initramfs. Restore reads and verifies
+  every blob against its hash before loading any module.
   A mode/owner change does not revoke a retained writable descriptor. Publish
   fresh root-owned inodes containing verified candidate bytes before changing
   `last_good`, unless those inodes were sealed before any BEAM could open them.
   Verify the copied bytes before publication; an old open handle must not be
   able to corrupt a newly committed recovery path.
+  `boot.state` is published from a fresh exclusive, no-follow inode in the
+  root-private `/priv/.seal` workspace; candidate-owned temporary paths cannot
+  supply an already-open descriptor to the new recovery state.
 - Anything that needs root moves behind the shim: the image declares an
   allow-list of privileged helpers in `/etc/elixos/helpers` (name, uid and
   gid, absolute path and arguments, exec'd directly, never through a shell).
@@ -1191,6 +1194,11 @@ bad change. The escape hatch has to be something the BEAM cannot touch.
   cannot add to it, and logs every refusal (`elixos-shim: helper refused
   name=<name>`). Helpers are the shim's children, stopped after the BEAM on
   poweroff, halt and reboot.
+  The client serializes the name-only protocol and drains a timed-out active
+  request before sending the next, so a late reply cannot answer another
+  caller. The helper list is all-or-nothing, fixed storage; malformed or
+  oversized lists expose no helpers. The shim's panic handoff carries both
+  pipe fds, the actual running generation and helper pids, not a pending NEXT.
 - Access that only needs a group - the framebuffer (`video`), input devices
   (`input`) - uses the group, never the allow-list.
 

@@ -387,23 +387,30 @@ defmodule Elixos.Image do
     end)
   end
 
-  # Loads a {module => hash} map from the store, in module order so a restore
-  # is deterministic. The first missing blob names itself.
+  # Verify the entire generation before loading anything: an earlier @on_load
+  # must not run when a later blob is missing or corrupt. Keep the verified
+  # binaries, rather than rereading mutable candidate paths during loading.
   defp load_all(store, modules) do
     modules
     |> Enum.sort_by(fn {module, _hash} -> module end)
-    |> Enum.reduce_while([], fn {module, hash}, loaded ->
+    |> Enum.reduce_while([], fn {module, hash}, verified ->
       case Store.get(store, hash) do
-        {:ok, bytecode} ->
-          # An `@on_load` hook that fails is the module's business to report,
-          # not the image's reason to die: name it and let the caller decide.
-          case :code.load_binary(module, ~c"elixos", bytecode) do
-            {:module, ^module} -> {:cont, [module | loaded]}
-            {:error, reason} -> {:halt, {:error, {:load_failed, module, reason}}}
-          end
+        {:ok, bytecode} -> {:cont, [{module, bytecode} | verified]}
+        {:error, _reason} -> {:halt, {:error, {:missing_blob, module}}}
+      end
+    end)
+    |> case do
+      {:error, _reason} = error -> error
+      verified -> load_verified(Enum.reverse(verified))
+    end
+  end
 
-        {:error, _reason} ->
-          {:halt, {:error, {:missing_blob, module}}}
+  defp load_verified(modules) do
+    modules
+    |> Enum.reduce_while([], fn {module, bytecode}, loaded ->
+      case :code.load_binary(module, ~c"elixos", bytecode) do
+        {:module, ^module} -> {:cont, [module | loaded]}
+        {:error, reason} -> {:halt, {:error, {:load_failed, module, reason}}}
       end
     end)
     |> case do

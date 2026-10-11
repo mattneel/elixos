@@ -44,6 +44,10 @@ defmodule Elixos.Shim.Control do
     request(server, {:next, generation})
   end
 
+  @doc "Writes a validated helper request; replies are handled by Elixos.Privileges."
+  @spec helper(server(), String.t()) :: :ok | {:error, term()}
+  def helper(server \\ __MODULE__, name), do: request(server, {:helper, name})
+
   @spec reboot(server()) :: :ok | {:error, term()}
   def reboot(server \\ __MODULE__), do: request(server, :reboot)
 
@@ -97,7 +101,9 @@ defmodule Elixos.Shim.Control do
   end
 
   def handle_call(:resume_heartbeat, _from, state) do
-    if state.paused, do: {:reply, :ok, schedule(%{state | paused: false})}, else: {:reply, :ok, state}
+    if state.paused,
+      do: {:reply, :ok, schedule(%{state | paused: false})},
+      else: {:reply, :ok, state}
   end
 
   @impl true

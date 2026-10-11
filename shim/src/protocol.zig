@@ -8,9 +8,16 @@ const std = @import("std");
 const testing = std.testing;
 const milestone = @import("milestone.zig");
 const decimal = @import("decimal.zig");
+const helpers = @import("helpers.zig");
 
 /// Longest accepted line, excluding the trailing '\n'. Checked before anything else.
 pub const max_line_len = 64;
+
+/// Owned request name: parsing never retains a pointer into the pipe buffer.
+pub const HelperName = struct {
+    name: [32]u8 = @splat(0),
+    name_len: usize = 0,
+};
 
 pub const Message = union(enum) {
     /// "HB": the BEAM is alive. Missing heartbeats get it killed (PROTOCOL.md §3).
@@ -23,6 +30,8 @@ pub const Message = union(enum) {
     reboot,
     poweroff,
     halt,
+    /// "HELPER <name>": launch only the image-declared helper, with fixed argv.
+    helper: HelperName,
 };
 
 pub const ParseError = error{ Invalid, TooLong };
@@ -44,6 +53,13 @@ pub fn parse(line: []const u8) ParseError!Message {
         const generation = decimal.parseU32(line["NEXT ".len..]) orelse return error.Invalid;
         return .{ .next = generation };
     }
+    if (std.mem.startsWith(u8, line, "HELPER ")) {
+        const name = line["HELPER ".len..];
+        if (!helpers.validName(name)) return error.Invalid;
+        var owned: HelperName = .{ .name_len = name.len };
+        @memcpy(owned.name[0..name.len], name);
+        return .{ .helper = owned };
+    }
     return error.Invalid;
 }
 
@@ -56,6 +72,7 @@ pub fn encode(msg: Message, buf: []u8) error{NoSpaceLeft}![]u8 {
         .reboot => std.fmt.bufPrint(buf, "REBOOT\n", .{}),
         .poweroff => std.fmt.bufPrint(buf, "POWEROFF\n", .{}),
         .halt => std.fmt.bufPrint(buf, "HALT\n", .{}),
+        .helper => |name| std.fmt.bufPrint(buf, "HELPER {s}\n", .{name.name[0..name.name_len]}),
     };
 }
 
@@ -90,6 +107,13 @@ fn parseExpected(text: []const u8) !Expected {
     const verb = words.next() orelse return error.MalformedVector;
     const arg = words.next();
     if (words.next() != null) return error.MalformedVector;
+    if (std.mem.eql(u8, verb, "helper")) {
+        const name = arg orelse return error.MalformedVector;
+        if (!helpers.validName(name)) return error.MalformedVector;
+        var owned: HelperName = .{ .name_len = name.len };
+        @memcpy(owned.name[0..name.len], name);
+        return .{ .ok = .{ .helper = owned } };
+    }
     const gen = if (arg) |a| try std.fmt.parseInt(u32, a, 10) else null;
     if (std.mem.eql(u8, verb, "heartbeat")) return .{ .ok = .heartbeat };
     if (std.mem.eql(u8, verb, "commit")) return .{ .ok = .{ .commit = gen orelse return error.MalformedVector } };
@@ -166,4 +190,17 @@ test "protocol: the longest valid message fits comfortably in a line" {
     const longest = try encode(.{ .commit = std.math.maxInt(u32) }, &out);
     try testing.expectEqualStrings("COMMIT 4294967295\n", longest);
     try testing.expect(longest.len <= max_line_len + 1);
+}
+
+test "protocol: helper names own their bytes independently of the input buffer" {
+    try milestone.require(17);
+    var input = "HELPER initdb".*;
+    const msg = try parse(&input);
+    @memset(&input, 'x');
+    var out: [max_line_len + 1]u8 = undefined;
+    try testing.expectEqualStrings("HELPER initdb\n", try encode(msg, &out));
+    const name = msg.helper;
+    for (name.name[name.name_len..]) |byte| try testing.expectEqual(@as(u8, 0), byte);
+    var tiny: [8]u8 = undefined;
+    try testing.expectError(error.NoSpaceLeft, encode(msg, &tiny));
 }

@@ -1,0 +1,84 @@
+#!/usr/bin/expect -f
+# M17: an unprivileged IEx cannot change recovery files, but can save a new image.
+set timeout 300
+expect_after {
+    timeout {
+        puts stderr "\nDEMO ABORTED waiting for a pattern. Last output:\n$expect_out(buffer)"
+        exit 1
+    }
+}
+
+proc boot {} {
+    global env spawn_id
+    spawn -noecho qemu-system-x86_64 \
+        -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+        -nographic -no-reboot \
+        -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+        -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+        -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+        -device virtio-rng-pci -nic none
+    expect "iex(1)> "
+    send {IEx.configure(colors: [enabled: false])}
+    send "\r"
+    expect -re {iex\([0-9]+\)> }
+    sleep 1
+}
+
+boot
+send {Elixos.Privileges.uid()}
+send "\r"
+expect -re {[\r\n]+1000[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send {File.write("/priv/boot.state", "x")}
+send "\r"
+expect -exact {{:error, :eacces}}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send {Elixos.Privileges.request("no-such-helper")}
+send "\r"
+expect -exact {elixos-shim: helper refused name=no-such-helper}
+expect -exact {{:error, :refused}}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send {(defmodule Demo.Sealed do
+  def value, do: :unprivileged
+end); Demo.Sealed.value()}
+send "\r"
+expect -re {[\r\n]+:unprivileged[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+send {Elixos.save() |> tap(fn _ -> Process.sleep(2000) end)}
+send "\r"
+expect -exact {elixos-shim: next generation=1}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+send {Elixos.poweroff()}
+send "\r"
+expect -exact {elixos-shim: shutdown poweroff}
+expect eof
+sleep 2
+
+boot
+send {Demo.Sealed.value()}
+send "\r"
+expect -re {[\r\n]+:unprivileged[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+send {Elixos.Shim.Control.commit(1); Process.sleep(2000)}
+send "\r"
+expect -exact {elixos-shim: commit generation=1}
+sleep 2
+send {File.write("/priv/generations/1.gen", "x")}
+send "\r"
+expect -exact {{:error, :eacces}}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+send {Elixos.poweroff()}
+send "\r"
+expect -exact {elixos-shim: shutdown poweroff}
+expect eof
+sleep 1

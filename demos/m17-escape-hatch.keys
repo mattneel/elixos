@@ -1,0 +1,19 @@
+# Non-root IEx, immutable recovery files, refused helper, a persisted sealed image.
+iex(2)> Elixos.Privileges.uid()
+1000
+iex(3)> File.write("/priv/boot.state", "x")
+{:error, :eacces}
+iex(4)> Elixos.Privileges.request("no-such-helper")
+elixos-shim: helper refused name=no-such-helper
+{:error, :refused}
+:unprivileged
+iex(6)> Elixos.save()
+elixos-shim: next generation=1
+elixos-shim: shutdown poweroff
+iex(2)> Demo.Sealed.value()
+:unprivileged
+iex(3)> Elixos.Shim.Control.commit(1); Process.sleep(2000)
+elixos-shim: commit generation=1
+iex(4)> File.write("/priv/generations/1.gen", "x")
+{:error, :eacces}
+elixos-shim: shutdown poweroff
