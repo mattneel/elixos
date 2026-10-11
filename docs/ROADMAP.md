@@ -409,8 +409,8 @@ the human.
 
 | architecture | initramfs (`.cpio.gz`) | apko archive (`rootfs.tar`) | kernel artifact |
 |--------------|-----------------------|-----------------------------|-----------------|
-| x86_64 | 90.1 MiB | 114.0 MiB | 14.5 MiB |
-| aarch64 | 88.8 MiB | 94.5 MiB | 40.1 MiB |
+| x86_64 | 92.0 MiB | 114.0 MiB | 14.5 MiB |
+| aarch64 | 90.7 MiB | 94.5 MiB | 40.1 MiB |
 
 MiB is 1,048,576 bytes. The apko archive is an OCI-format build intermediate,
 not the old unpacked rootfs measurement. The x86_64 kernel is a compressed
