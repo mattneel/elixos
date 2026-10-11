@@ -24,6 +24,13 @@ pub fn main(_: std.process.Init.Minimal) noreturn {
         else => fail("elixos-postgres-init: cannot inspect existing cluster\n"),
     }
 
+    // initdb narrates every step and every failure. The console belongs to the
+    // shim's own lines and the REPL (PROTOCOL.md §6): a boot must not have
+    // ~40 lines of initialization interleaved with the first prompt, so the
+    // log directory - where the postmaster writes too (ADR-053) - takes them.
+    // A failure to open the log is not fatal: the console then keeps them.
+    redirectLog();
+
     const executable = "/system/usr/libexec/postgresql17/initdb";
     const argv = [_:null]?[*:0]const u8{
         executable,
@@ -45,6 +52,21 @@ pub fn main(_: std.process.Init.Minimal) noreturn {
     };
     _ = linux.execve(executable, &argv, &envp);
     fail("elixos-postgres-init: cannot exec initdb\n");
+}
+
+/// Point stdout and stderr at the cluster's log file for the exec'd initdb.
+fn redirectLog() void {
+    const raw = linux.openat(linux.AT.FDCWD, "/priv/postgres/log/initdb.log", .{
+        .ACCMODE = .WRONLY,
+        .CREAT = true,
+        .APPEND = true,
+    }, 0o644);
+    if (linux.errno(raw) != .SUCCESS) return;
+
+    const fd: linux.fd_t = @intCast(raw);
+    _ = linux.dup2(fd, 1);
+    _ = linux.dup2(fd, 2);
+    if (fd > 2) _ = linux.close(fd);
 }
 
 fn fail(message: []const u8) noreturn {

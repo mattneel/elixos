@@ -1687,3 +1687,30 @@ test still fails if the action does not put the answer into the state.
 **Consequences.** The M20 acceptance tests the claim it was written to test.
 The commit that changes it carries this ADR, as the audit requires; the change
 is committed on its own, separately from the milestone's implementation.
+
+## ADR-062: Service initialization output goes to its log, not the console
+
+**Status:** accepted (M20)
+
+**Context.** The database and the scheduler start before the image restore
+(ADR-057) so that a generation's declarations are collected while it restores.
+That puts `initdb` - which narrates every step of creating a cluster, around
+forty lines - *during* the first prompt instead of before it. The console is
+the shim's and the REPL's (PROTOCOL.md §6), and the QEMU acceptance reads it
+byte for byte: M04's `1 + 1` result landed inside an initdb line
+(`selecting default "max_connections" ... 2`) and `^2$` was not there.
+
+**Decision.** `postgres-init` - the guard that execs `initdb` (ADR-053) -
+points its own stdout and stderr at `/priv/postgres/log/initdb.log` with
+`dup2`, mode 0644 in the uid-70-owned log directory, before the exec. The
+postmaster already logs there (`logging_collector`), so the cluster's whole
+story lives in one place. If the log cannot be opened the output stays on the
+console: nothing is ever silently discarded, and the guard never fails for
+this. The postmaster's own early errors keep going to the console, where a
+rare, fatal startup message belongs.
+
+**Consequences.** A fresh boot's console is deterministic - shim lines, Ask
+notices and the REPL - so console assertions no longer race a background
+service's narration, and a failed `initdb` is recorded on the disk instead of
+scrolling away. PROTOCOL.md §7 carries the new path, and the M04, M18, M19 and
+M20 acceptances were re-run against it.

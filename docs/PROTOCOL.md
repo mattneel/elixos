@@ -290,6 +290,7 @@ ext4, label `ELIXOS`, mounted on `/priv`:
 /priv/system/system.squashfs  root-owned immutable service image, mode 0444 (M18)
 /priv/postgres/data/    PostgreSQL cluster, uid/gid 70, mode 0700 (M18)
 /priv/postgres/log/     uid/gid 70, mode 0755; logs are mode 0644 (M18)
+/priv/postgres/log/initdb.log  a fresh cluster's initialization output (M20)
 ```
 
 The system database itself is not on this list: it lives inside the cluster
