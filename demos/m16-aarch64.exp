@@ -36,19 +36,25 @@ send "\r"
 expect -re {iex\([0-9]+\)> }
 sleep 1
 
-# The box says what it is: the architecture comes from the BEAM, so it is the
-# architecture of the image that booted.
-send "Elixos.info().arch"
+# Keep the guest's architecture visible, and show ERTS's native target too.
+send {IO.puts("=== ELIXOS / ARM64 (#{Elixos.info().arch}) ===")}
 send "\r"
-expect -exact {"aarch64"}
+expect -exact {=== ELIXOS / ARM64 (aarch64) ===}
 expect -re {iex\([0-9]+\)> }
-sleep 1
+sleep 2
+
+send ":erlang.system_info(:system_architecture)"
+send "\r"
+expect -re {aarch64[^\r\n]*linux}
+expect -re {iex\([0-9]+\)> }
+sleep 2
 
 # A module defined at the prompt, one expression the way a defmodule is typed.
 send {(defmodule Demo.Arm do
   def value, do: :arm_ok
-end)}
+end); Demo.Arm.value()}
 send "\r"
+expect -exact {:arm_ok}
 expect -re {iex\([0-9]+\)> }
 sleep 1
 
@@ -81,6 +87,11 @@ send {IEx.configure(colors: [enabled: false])}
 send "\r"
 expect -re {iex\([0-9]+\)> }
 sleep 1
+send {IO.puts("=== ELIXOS / ARM64 (#{Elixos.info().arch}) ===")}
+send "\r"
+expect -exact {=== ELIXOS / ARM64 (aarch64) ===}
+expect -re {iex\([0-9]+\)> }
+sleep 2
 send "Demo.Arm.value()"
 send "\r"
 expect {:arm_ok}

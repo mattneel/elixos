@@ -19,7 +19,7 @@ means a failing test first, then the fix).
 | `m13-uefi.mp4` | M13 | firmware boots the EFI-stub kernel from the ESP, under EFI, with the built-in command line |
 | `m14-packages.mp4` | M14 | the official repository is trusted out of the box; adding one with its key is consent; install by name |
 | `m15-jido-agents.mp4` | M15 | jido is part of the OS, an agent is defined and started at the prompt, an action talks to a stub model, and a power cycle keeps its state |
-| `m16-aarch64.mp4` | M16 | the same Elixos built for aarch64 boots on qemu-system-aarch64, reports its architecture, and keeps a module across a power cycle |
+| `m16-aarch64.mp4` | M16 | **ARM64:** the guest shows its aarch64 ERTS target, boots on qemu-system-aarch64, and keeps a module across a power cycle |
 
 ## Play, record, check
 

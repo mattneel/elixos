@@ -3,13 +3,16 @@
 # module defined at the prompt survives a power cycle, and it powers off.
 elixos-shim: pid 1, version
 iex(1)> IEx.configure(colors: [enabled: false])
-iex(2)> Elixos.info().arch
-"aarch64"
-iex(3)> (defmodule Demo.Arm do
-iex(4)> Elixos.save()
+=== ELIXOS / ARM64 (aarch64) ===
+iex(3)> :erlang.system_info(:system_architecture)
+~c"aarch64-unknown-linux-musl"
+iex(4)> (defmodule Demo.Arm do
+:arm_ok
+iex(5)> Elixos.save()
 {:ok,
 elixos-shim: shutdown poweroff
 iex(1)> IEx.configure(colors: [enabled: false])
-iex(2)> Demo.Arm.value()
+=== ELIXOS / ARM64 (aarch64) ===
+iex(3)> Demo.Arm.value()
 :arm_ok
 elixos-shim: shutdown poweroff
