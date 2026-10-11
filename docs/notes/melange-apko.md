@@ -271,3 +271,35 @@ artifact the aarch64 package installs), but unlike the kernel this one cannot
 skip melange's target environment for its *Erlang* half, so the recipe has to
 run the bootstrap `erl` from the native OTP install - which is why the plan
 above names every input rather than pointing at a flag.
+
+### Where the OTP cross attempt stopped
+
+Two attempts, both run as a standalone `--arch x86_64` melange build (the
+shape `kernel-cross.yaml` uses), got the sysroot and the compiler search paths
+right and reached `erts/configure`:
+
+* **Alpine signs each architecture's index with its own key.** The guest's
+  `alpine-keys` package carries only the x86_64 key, so `apk fetch --arch
+  aarch64` answers `UNTRUSTED signature` for the target indexes. The aarch64
+  key is `alpine-devel@lists.alpinelinux.org-616ae350.rsa.pub`, published at
+  `https://alpinelinux.org/keys/`; installing it in `/etc/apk/keys/` makes the
+  fetch verify normally - no `--allow-untrusted` is needed or wanted.
+* **The guest has no `/etc/apk/repositories`.** Melange hands repositories to
+  apk itself, so a pipeline that fetches extra packages must name them:
+  `apk fetch --arch aarch64 -X $repo/main -X $repo/community -o <dir> <pkgs>`,
+  and `<dir>` must already exist (`Bad file descriptor` otherwise).
+* **Zig's driver does not search a sysroot on its own.** Pass
+  `-isystem $sysroot/usr/include -L$sysroot/usr/lib -L$sysroot/lib` alongside
+  `--sysroot`; without them `configure` cannot find the target's libraries even
+  though the sysroot has them.
+* **The next wall is the curses probe**: `checking for tgetent in -lncurses...
+  no` and then `configure: error: No curses library functions found`, on a
+  sysroot that carries both `ncurses-dev`'s `.so` symlinks and `ncurses-libs`.
+  The failing link has to be reproduced with the pinned Zig SDK in hand (a
+  probe environment that installs Zig from the shared cache) to see the
+  linker's own error - `zig cc` isn't in a minimal environment, and the probe
+  that would have shown it had no Zig to run.
+
+Nothing after the curses probe is tested, and the recipe was not kept: an unrun
+recipe is scaffolding, not progress. The plan above plus these three findings
+are what the next attempt needs.
