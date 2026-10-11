@@ -257,6 +257,12 @@ ext4, label `ELIXOS`, mounted on `/priv`:
 /priv/postgres/log/     uid/gid 70, mode 0755; logs are mode 0644 (M18)
 ```
 
+The system database itself is not on this list: it lives inside the cluster
+above. The BEAM (uid 1000) reaches it over loopback as the `postgres` role,
+trust-authenticated (ADR-053), and the scheduler's jobs are rows in the
+`oban_jobs` table there (M19, ADR-057) - a job enqueued at the prompt and a
+job still scheduled after a power cycle are the same row.
+
 `/priv/crash` belongs to uid/gid 1000 so ERTS can create its dumps. PID 1
 prepares it before each launch, including a relaunch after a crash. Ownership
 does not follow symlinks, and retention opens the directory without following

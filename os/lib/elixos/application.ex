@@ -100,6 +100,13 @@ defmodule Elixos.Application do
             # Validate/open the shim reply fd before generation code can ask
             # for helpers, without blocking the heartbeat writer while waiting.
             {Elixos.Privileges, []},
+            # The database and the scheduler start before the restore (M19):
+            # a generation's oban declarations are collected while its modules
+            # and services restore, and no queue exists until Elixos.Oban
+            # .activate/0 below, once this tree - restore included - is up.
+            # Both are non-critical: a failure is logged, not fatal.
+            {Elixos.Postgres, mode: env.mode},
+            {Elixos.Oban, mode: env.mode},
             # The generation the shim launched, loaded before anything can use
             # it; a failure here stops the tree on purpose (ADR-007).
             {Elixos.Boot.Restore, {image, env}},
@@ -108,8 +115,6 @@ defmodule Elixos.Application do
             # supervisor and restored with what they remembered (M15).
             {DynamicSupervisor, name: Elixos.Agents.Supervisor, strategy: :one_for_one},
             {Elixos.Agents, {image, env.mode}},
-            # Construct the async manager before either frontend can query it.
-            {Elixos.Postgres, mode: env.mode},
             # Key-only SSH into the user's REPL (M12). Not boot-critical: with
             # no network, or in rescue, it logs and steps aside (the prompt
             # still comes up).
@@ -121,7 +126,16 @@ defmodule Elixos.Application do
             {Elixos.Boot.AutoCommit, env: env}
           ]
 
-          Supervisor.start_link(children, strategy: :one_for_one, name: Elixos.Supervisor)
+          case Supervisor.start_link(children, strategy: :one_for_one, name: Elixos.Supervisor) do
+            {:ok, pid} ->
+              # The tree, the restore included, is up: the scheduler may run
+              # queues now, and not a moment earlier (M19).
+              Elixos.Oban.activate()
+              {:ok, pid}
+
+            other ->
+              other
+          end
         end
 
       {:error, {kind, name}} ->

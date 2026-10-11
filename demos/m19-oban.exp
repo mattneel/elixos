@@ -1,0 +1,118 @@
+#!/usr/bin/expect -f
+# M19: Oban is the machine's scheduler. A worker defined at the prompt runs a
+# job now; a job scheduled for later is a row in Postgres, is still there after
+# a power cycle, and runs on the next boot.
+set timeout 300
+expect_after {
+    timeout {
+        puts stderr "\nDEMO ABORTED waiting for a pattern. Last output:\n$expect_out(buffer)"
+        exit 1
+    }
+}
+
+proc boot {} {
+    global env spawn_id
+    spawn -noecho qemu-system-x86_64 \
+        -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+        -nographic -no-reboot \
+        -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+        -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+        -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+        -device virtio-rng-pci -nic none
+    expect "iex(1)> "
+    send {IEx.configure(colors: [enabled: false])}
+    send "\r"
+    expect -re {iex\([0-9]+\)> }
+    sleep 1
+}
+
+boot
+
+# The scheduler's manager waits for Postgres itself, migrates Oban's schema
+# once, and only then lets a queue run.
+send {Elixos.Oban.status()}
+send "\r"
+expect -re {\{:ok, #PID<[0-9]+\.[0-9]+\.[0-9]+>\}}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# A worker is an ordinary module, defined right here at the prompt.
+send {defmodule Demo.Job do
+  use Oban.Worker, queue: :default
+
+  @impl Oban.Worker
+  def perform(%Oban.Job{args: %{"line" => line}}) do
+    File.write!("/priv/jobs.log", line <> "\n", [:append])
+    :ok
+  end
+end}
+send "\r"
+expect -re {\{:module, Demo.Job\}}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# Enqueued now: it runs now, in the same VM.
+send {Elixos.Oban.enqueue(Demo.Job, %{"line" => "before"})}
+send "\r"
+expect -re {\{:ok, %Oban.Job\{}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send {File.read!("/priv/jobs.log")}
+send "\r"
+expect -exact {"before\n"}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# Scheduled for later: the job is a row in Postgres, and it has not run.
+send {Elixos.Oban.enqueue(Demo.Job, %{"line" => "after"}, schedule_in: 45)}
+send "\r"
+expect -re {\{:ok, %Oban.Job\{}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+send {Elixos.Postgres.query("select queue, state from oban_jobs order by id")}
+send "\r"
+expect -re {default \| scheduled}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+# The module goes into the image; the row is already durable in Postgres.
+send {Elixos.save()}
+send "\r"
+expect -re {\{:ok, 1\}}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+send {Elixos.poweroff()}
+send "\r"
+expect -exact {elixos-shim: shutdown poweroff}
+expect eof
+sleep 2
+
+# Power on: the module comes back from the image, the job from Postgres.
+boot
+
+send {Code.ensure_loaded?(Demo.Job)}
+send "\r"
+expect -re {[\r\n]+true[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# The scheduled job comes due after the power cycle and runs.
+send {Enum.find(1..120, fn _ -> Process.sleep(1000); File.read!("/priv/jobs.log") =~ "after" end)}
+send "\r"
+expect -re {[\r\n]+1[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+send {File.read!("/priv/jobs.log")}
+send "\r"
+expect -exact {"before\nafter\n"}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send {Elixos.poweroff()}
+send "\r"
+expect -exact {elixos-shim: shutdown poweroff}
+expect eof

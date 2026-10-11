@@ -1489,3 +1489,55 @@ The host runs all 64 unit tests and both release targets compile. Record
 this addition with the native implementation so the acceptance audit can
 distinguish added compiler coverage from an unapproved test change.
 
+## ADR-057: Oban is an OS dependency on the system database
+
+**Status:** accepted (M19)
+
+**Context.** Jobs must survive a power cycle and retry: the state that makes
+that true is Postgres (M18), and what turns it into a scheduler is Oban.
+The factory ships OTP and Elixir from its own packages, and every runtime
+dependency of `os/` needs an ADR. Oban's own schema also has to exist before
+its first queue - the factory build has no `mix ecto.migrate` and no shell
+(ADR-012).
+
+**Decision.** `oban 2.24.1`, `ecto_sql 3.14.0` and `postgrex 0.22.4` are
+direct dependencies of `os/`. Their whole closure is pure BEAM (no NIFs, no
+ports, no build step beyond compilation), so they cross-build with everything
+else and ship in the factory release.
+
+One `Ecto.Repo` (`Elixos.Oban.Repo`) connects to M18's database as the
+`postgres` role over loopback - the same host, role and database
+`Elixos.Postgres.query/1` already uses, with `-A trust` authentication
+(ADR-053). There is no second database and no password to carry: the
+postmaster listens on loopback only and refuses everything else.
+
+`Elixos.Oban.Manager` owns the lifecycle and is not boot-critical: wait for
+Postgres, start the Repo, run Oban's schema as a real Ecto migration
+(`Elixos.Oban.Migration` -> `Oban.Migrations.up/1`, recorded in
+`schema_migrations`), and only then start Oban - and only after
+`Elixos.Oban.activate/0`, which `Elixos.Application` calls once the
+supervision tree is up. The manager starts *before* `Elixos.Boot.Restore`,
+so a generation's `configure_app!/2` boot MFAs are collected while the image
+restores and no queue can run against a half-restored image. A refused
+declaration raises, so the boot fails and the shim falls back (ADR-007)
+rather than booting half-configured.
+
+An app's `elixos:` key gains `oban: [queues: [name: limit], cron:
+[{expression, module}]]`, validated by `Elixos.Oban.Declaration` (five-field
+expressions, positive limits, worker modules). The declaration is persisted
+with the app's services and requirements in one journal entry, and becomes a
+boot MFA. Queue names under `elixos_` are reserved for the system. Two apps
+may share a queue only when they agree on the limit; a disagreement is
+refused, never silently overwritten. Live installs and removals change the
+real queues through Oban's own API; a cron change restarts the Oban
+supervisor with the new plugin list while the Repo stays up.
+
+**Consequences.** A job enqueued at the prompt is a row in Postgres the
+moment it is accepted, and a scheduled job runs after a power cycle because
+its worker module comes back with the generation. There is no scheduler in
+rescue, and none appears when Postgres fails: `status/0` stays
+`{:error, :not_running}`. Stopping the VM stops Oban before the shim stops
+Postgres, so an interrupted power-off costs an incomplete job's retry, not
+its row. A future Oban upgrade that changes the schema is one new version in
+`Elixos.Oban.Migration`.
+

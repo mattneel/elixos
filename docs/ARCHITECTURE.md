@@ -204,12 +204,16 @@ See DECISIONS.md, open questions.
 
 `Elixos.Application` opens `Elixos.Shim.Control` on the inherited fd
 (heartbeats start), then `Elixos.Privileges` on the separate reply fd, before
-restoring the generation and running its boot spec. The recorder and agent
-supervisors follow. `Elixos.Postgres` constructs its asynchronous manager
-before SSH and the console login REPL; SQL readiness never blocks login.
-`Elixos.Boot.AutoCommit` runs only in normal mode. A boot-critical restore
-failure exits the VM non-zero so the shim counts the attempt (ADR-007);
-database and SSH startup failures remain non-critical.
+restoring the generation and running its boot spec. `Elixos.Postgres` and
+`Elixos.Oban` construct their asynchronous managers next (M18, M19): the
+restore's boot spec includes each installed app's `Elixos.Oban.configure_app!/2`
+MFAs, so the scheduler's declarations are collected while modules and services
+restore. The recorder and agent supervisors follow, then SSH and the console
+login REPL. `Elixos.Oban.activate/0` runs once the tree - restore included -
+is up, and only then may a queue run a job; `Elixos.Boot.AutoCommit` runs only
+in normal mode. A boot-critical restore failure exits the VM non-zero so the
+shim counts the attempt (ADR-007); database, scheduler and SSH startup
+failures remain non-critical.
 
 ## §6 REPLs are the shells (ADR-012)
 
@@ -240,8 +244,10 @@ The VM's working directory never moves (ADR-016).
   `if config_target() == :elixos, do: import_config("elixos.exs")`.
   Builds land in `_build/elixos_<env>`.
 - **Install metadata in `mix.exs`.** The `elixos:` project key (services,
-  persist, min_os, boot); plain Mix ignores it. Validated by
-  `Elixos.Package.Spec`.
+  oban, persist, min_os, boot); plain Mix ignores it. Validated by
+  `Elixos.Package.Spec`. The `oban:` declaration (`queues:`, `cron:`) is
+  persisted with the app and becomes part of the generation's boot spec, so an
+  installed app's queues and cron come back with the image (ADR-057).
 - **The OS provides the API.** Apps depend on
   `{:elixos, "~> 0.1", targets: :elixos}`; the installer satisfies it with the
   running OS and refuses a bundled copy.

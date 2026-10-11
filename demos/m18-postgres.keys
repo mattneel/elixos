@@ -1,0 +1,16 @@
+# Real PG17 uid70, 0700 cluster, read-only system image, extensions and durable row.
+Elixos.Postgres.query("select version()")
+PostgreSQL 17.
+{70, "700", {:ok,
+Uid:
+/system squashfs ro,
+CREATE EXTENSION
+2.828
+CREATE EXTENSION
+INSERT 0 1
+elixos-shim: shutdown poweroff
+Elixos.Postgres.query("select value from readings")
+42
+database system was shut down at
+true
+elixos-shim: shutdown poweroff

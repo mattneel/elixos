@@ -125,17 +125,20 @@ defmodule Elixos.Image do
   @impl true
   def handle_call(:apps, _from, state), do: {:reply, state.apps, state}
 
-  def handle_call({:record_app, app, version, services}, from, state) do
-    handle_call({:record_app, app, version, services, %{}}, from, state)
-  end
-
-  def handle_call({:record_app, app, version, services, deps}, _from, state) do
-    with {:ok, _seq} <- Journal.append(state.journal, {:app, app, version, services}),
-         {:ok, _seq} <- Journal.append(state.journal, {:app_deps, app, deps}) do
+  def handle_call({:record_app, app, version, services, deps, oban}, _from, state) do
+    # One journal entry: an app's services, requirements and scheduler
+    # declaration are one install, and a replay must never see half of it.
+    with {:ok, _seq} <- Journal.append(state.journal, {:app, app, version, services, deps, oban}) do
       {:reply, :ok,
        %{
          state
-         | apps: Map.put(state.apps, app, %{version: version, services: services, deps: deps})
+         | apps:
+             Map.put(state.apps, app, %{
+               version: version,
+               services: services,
+               deps: deps,
+               oban: oban
+             })
        }}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
@@ -217,9 +220,10 @@ defmodule Elixos.Image do
       number: Generation.next_number(dir),
       parent: if(saved == [], do: 0, else: Enum.max(saved)),
       modules: state.modules,
-      # The services of every installed app boot with this generation: that is
-      # what makes an install survive a power cycle (M11).
-      boot: Enum.uniq(Keyword.get(opts, :boot, []) ++ service_boot(state.apps)),
+      # The scheduler declarations and services of every installed app boot
+      # with this generation: that is what makes an install survive a power
+      # cycle (M11, M19).
+      boot: Enum.uniq(Keyword.get(opts, :boot, []) ++ oban_boot(state.apps) ++ service_boot(state.apps)),
       created_at: DateTime.utc_now()
     }
 
@@ -276,21 +280,14 @@ defmodule Elixos.Image do
 
   @doc """
   Records that `app` (at `version`) is installed with `services` from its
-  `elixos:` key: journaled like a module, so it replays at boot. (M11)
+  `elixos:` key, the `deps` it requires (ADR-015) and its `oban:`
+  declaration: journaled as one entry, so the whole install replays at boot.
+  (M11, M15, M19)
   """
-  @spec record_app(t(), atom(), String.t(), [term()]) :: :ok | {:error, term()}
-  def record_app(image, app, version, services) do
-    record_app(image, app, version, services, %{})
-  end
-
-  @doc """
-  The same, with what the package requires: `%{dep => requirement}`, so an
-  install can be weighed against the installed set (ADR-015). (M15)
-  """
-  @spec record_app(t(), atom(), String.t(), [term()], %{atom() => String.t()}) ::
+  @spec record_app(t(), atom(), String.t(), [term()], %{atom() => String.t()}, keyword()) ::
           :ok | {:error, term()}
-  def record_app(image, app, version, services, deps) do
-    GenServer.call(image, {:record_app, app, version, services, deps}, :infinity)
+  def record_app(image, app, version, services, deps, oban) do
+    GenServer.call(image, {:record_app, app, version, services, deps, oban}, :infinity)
   end
 
   @doc """
@@ -339,14 +336,18 @@ defmodule Elixos.Image do
   defp apps_of(entries) do
     Enum.reduce(entries, %{}, fn {_seq, entry}, apps ->
       case entry do
+        # The whole install in one entry (M19).
+        {:app, app, version, services, deps, oban} ->
+          Map.put(apps, app, %{version: version, services: services, deps: deps, oban: oban})
+
+        # Historical entries: M11 wrote services, M15 added requirements
+        # separately. They replay as an install that declared no scheduler.
         {:app, app, version, services} ->
           Map.put(apps, app, %{version: version, services: services})
 
         {:uninstall, app} ->
           Map.delete(apps, app)
 
-        # What a package requires, so the resolver can weigh an install
-        # against what is already there (M15).
         {:app_deps, app, deps} ->
           Map.update(apps, app, %{deps: deps}, &Map.put(&1, :deps, deps))
 
@@ -374,6 +375,16 @@ defmodule Elixos.Image do
     for {_app, %{services: services}} <- apps,
         service <- services,
         do: {Elixos.Package, :start_service, [service]}
+  end
+
+  # An app's scheduler declaration is part of the same boot spec, and comes
+  # first: queues are configured before the services that may enqueue.
+  # configure_app!/2 raises on a refused declaration, which fails the boot
+  # (a generation does not boot half-configured).
+  defp oban_boot(apps) do
+    for {app, %{oban: oban}} <- apps,
+        oban != [],
+        do: {Elixos.Oban, :configure_app!, [app, oban]}
   end
 
   defp working_set(entries) do

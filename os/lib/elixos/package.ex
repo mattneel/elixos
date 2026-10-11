@@ -109,9 +109,23 @@ defmodule Elixos.Package do
          :ok <- apply_config(root),
          :ok <- install_tree(app, ebin, root),
          :ok <- load(app, installed_ebin(app)),
+         :ok <- configure_oban(app, spec.oban),
          :ok <- start_services(spec.services),
          :ok <- record(app, version, spec, deps) do
       {:ok, app}
+    end
+  end
+
+  # The scheduler is configured before the app's services start - a service
+  # may enqueue - and a refusal is an install failure, not a silent drop: the
+  # app is not recorded, so the next boot does not pretend it was installed.
+  # No scheduler (rescue, or Postgres down) is not a refusal: the declaration
+  # is recorded and applies at the next normal boot.
+  defp configure_oban(app, declaration) do
+    case Elixos.Oban.configure_app(app, declaration) do
+      :ok -> :ok
+      {:error, :not_running} -> :ok
+      {:error, reason} -> {:error, {:oban, reason}}
     end
   end
 
@@ -322,7 +336,7 @@ defmodule Elixos.Package do
   defp record(app, version, spec, deps) do
     case Process.whereis(Elixos.Image) do
       nil -> {:error, :no_image}
-      image -> Elixos.Image.record_app(image, app, version, spec.services, deps)
+      image -> Elixos.Image.record_app(image, app, version, spec.services, deps, spec.oban)
     end
   end
 
@@ -433,6 +447,9 @@ defmodule Elixos.Package do
 
       image ->
         with {:ok, services} <- Elixos.Image.forget_app(image, name) do
+          # The declaration leaves with the app; a scheduler that is not
+          # running has nothing to remove.
+          _ = Elixos.Oban.configure_app(name, [])
           stop_services(services)
           unload(name)
           _ = File.rm_rf(installed_dir(name))

@@ -1,0 +1,89 @@
+#!/usr/bin/expect -f
+# M18: PG17 as uid 70, two real extensions, persistent rows and clean shutdown.
+set timeout 300
+expect_after {
+    timeout {
+        puts stderr "\nDEMO ABORTED waiting for a pattern. Last output:\n$expect_out(buffer)"
+        exit 1
+    }
+}
+
+proc boot {} {
+    global env spawn_id
+    spawn -noecho qemu-system-x86_64 \
+        -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+        -nographic -no-reboot \
+        -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+        -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+        -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+        -device virtio-rng-pci -nic none
+    expect "iex(1)> "
+    send {IEx.configure(colors: [enabled: false])}
+    send "\r"
+    expect -re {iex\([0-9]+\)> }
+    sleep 1
+}
+
+boot
+send {Elixos.Postgres.query("select version()")}
+send "\r"
+expect -exact {PostgreSQL 17.}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send {s = File.stat!("/priv/postgres/data"); {s.uid, Integer.to_string(Bitwise.band(s.mode, 0o777), 8), Elixos.Postgres.status()}}
+send "\r"
+expect -re {\{70, "700", \{:ok, [0-9]+\}\}}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send {{:ok, p} = Elixos.Postgres.status(); File.read!("/proc/#{p}/status") |> String.split("\n") |> Enum.find(&String.starts_with?(&1, "Uid:")) |> IO.puts()}
+send "\r"
+expect -re {Uid:[ \t]+70[ \t]+70[ \t]+70[ \t]+70}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send {File.read!("/proc/mounts") |> String.split("\n") |> Enum.find(&String.contains?(&1, " /system "))}
+send "\r"
+expect -re {/system squashfs ro,}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send {Elixos.Postgres.query("create extension vector; select '[1,2,3]'::vector <-> '[3,2,1]'::vector")}
+send "\r"
+expect -exact {CREATE EXTENSION}
+expect -exact {2.828}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send {Elixos.Postgres.query("create extension timescaledb; create table readings (at timestamptz not null, value integer); select create_hypertable('readings', 'at'); insert into readings values (now(), 42)")}
+send "\r"
+expect -exact {CREATE EXTENSION}
+expect -exact {INSERT 0 1}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send {Elixos.poweroff()}
+send "\r"
+expect -exact {elixos-shim: shutdown poweroff}
+expect eof
+sleep 2
+
+boot
+send {Elixos.Postgres.query("select value from readings")}
+send "\r"
+expect -re {[\r\n]+42[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send {Path.wildcard("/priv/postgres/log/*.log") |> Enum.map(&File.read!/1) |> Enum.any?(&String.contains?(&1, "database system was shut down at"))}
+send "\r"
+expect -re {[\r\n]+true[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send {Elixos.poweroff()}
+send "\r"
+expect -exact {elixos-shim: shutdown poweroff}
+expect eof
+sleep 1

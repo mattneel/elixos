@@ -76,6 +76,7 @@ defmodule Elixos.Package.Spec do
       {:ok,
        %__MODULE__{
          services: Keyword.get(elixos, :services, []),
+         oban: Keyword.get(elixos, :oban, []),
          persist: Keyword.get(elixos, :persist, []),
          min_os: Keyword.get(elixos, :min_os),
          boot: Keyword.get(elixos, :boot, :auto)
@@ -92,10 +93,14 @@ defmodule Elixos.Package.Spec do
 
   defp check({:services, _other}), do: [services: :invalid]
 
-  # TODO(M19): validate queues (name => positive concurrency) and cron
-  # ({crontab, module}); until the milestone implements it, no declaration is
-  # accepted.
-  defp check({:oban, _value}), do: [oban: :invalid]
+  # Queues and cron are validated by the scheduler's own declaration module
+  # (M19): the shape an app writes is the shape Oban is configured with.
+  defp check({:oban, oban}) do
+    case Elixos.Oban.Declaration.validate(oban) do
+      :ok -> []
+      {:error, :invalid} -> [oban: :invalid]
+    end
+  end
 
   defp check({:persist, paths}) when is_list(paths) do
     Enum.flat_map(paths, fn

@@ -50,5 +50,14 @@ defmodule Elixos.MixProject do
   # rather than being installed from a repository at run time. Its closure is
   # pure BEAM (no NIFs) and its OTP dependencies (mnesia, via jido_signal)
   # come from the same cross-built OTP as everything else.
-  defp deps, do: [{:jido, "~> 2.4"}]
+  # Oban, Ecto SQL and Postgrex are the scheduler on M18's Postgres (ADR-057,
+  # M19). Pure BEAM, no NIFs: the postmaster is a shim helper and the BEAM
+  # reaches it as an ordinary PostgreSQL client over loopback.
+  defp deps,
+    do: [
+      {:jido, "~> 2.4"},
+      {:oban, "~> 2.24"},
+      {:ecto_sql, "~> 3.14"},
+      {:postgrex, "~> 0.22"}
+    ]
 end

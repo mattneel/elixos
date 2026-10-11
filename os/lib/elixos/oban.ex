@@ -6,22 +6,67 @@ defmodule Elixos.Oban do
   fail and retry; an app declares its queues and its cron entries in its
   `elixos:` key, next to its services (M11's spec), and `options/1` turns one
   app's declaration into Oban's options. Oban is not boot-critical and does
-  not run in rescue; it is stopped by the same shutdown hook as Postgres.
+  not run in rescue; the VM's shutdown stops it before the shim stops Postgres.
+
+  `start_link/1` takes `:mode` (`:normal` or `:rescue`) and, for an isolated
+  instance, `:name` (this supervisor, `Elixos.Oban` by default), `:manager`
+  (`Elixos.Oban.Manager`), `:repo` (`Elixos.Oban.Repo`) and `:oban` (the
+  Oban instance's own name, `Oban`). The accessors below address the default
+  instance.
+
+  Boot order is load-bearing: the manager starts before
+  `Elixos.Boot.Restore`, so a generation's `configure_app!/2` boot MFAs are
+  collected while the image restores, and `activate/0` - called once the
+  supervision tree is up - releases the queues, so no job can run against a
+  half-restored image. A declaration that is rejected at boot raises, which
+  fails the boot and lets the shim fall back (ADR-007).
   """
+
+  use Supervisor
 
   alias Elixos.Package.Spec
 
-  @doc "The running scheduler: `{:ok, pid}` or `{:error, :not_running}`."
+  @manager Elixos.Oban.Manager
+
+  @doc "Starts the scheduler manager. See the moduledoc for the options."
+  @spec start_link(keyword()) :: Supervisor.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name, __MODULE__)
+    Supervisor.start_link(__MODULE__, opts, name: name)
+  end
+
+  @impl true
+  def init(opts) do
+    Supervisor.init([{Elixos.Oban.Manager, opts}], strategy: :one_for_one)
+  end
+
+  @doc """
+  The running scheduler: `{:ok, pid}` or `{:error, :not_running}`.
+
+  The first normal-mode caller waits, bounded, while the database comes up and
+  the migrations run; rescue, and a scheduler that failed to start, answer at
+  once.
+  """
   @spec status() :: {:ok, pid()} | {:error, :not_running}
-  def status, do: Elixos.NotImplemented.raise!(19, "Elixos.Oban.status/0")
+  def status do
+    case manager() do
+      nil -> {:error, :not_running}
+      pid -> GenServer.call(pid, :status, :infinity)
+    end
+  end
 
   @doc """
   Inserts `worker` with `args` (keyword `opts` go to `Oban.Job.new/3`: queue,
   `schedule_in`, priority, and so on).
+
+  Like `status/0`, this waits for bounded startup, then returns Oban's real
+  insert result; `{:error, :not_running}` when there is no scheduler.
   """
   @spec enqueue(module(), map(), keyword()) :: {:ok, term()} | {:error, term()}
-  def enqueue(_worker, _args, _opts \\ []) do
-    Elixos.NotImplemented.raise!(19, "Elixos.Oban.enqueue/3")
+  def enqueue(worker, args, opts \\ []) do
+    with {:ok, instance} <- await_instance() do
+      worker.new(args, opts) |> Oban.insert(instance)
+    end
   end
 
   @doc """
@@ -29,5 +74,69 @@ defmodule Elixos.Oban do
   and the `Oban.Plugins.Cron` plugin it needs, if any.
   """
   @spec options(Spec.t()) :: keyword()
-  def options(_spec), do: Elixos.NotImplemented.raise!(19, "Elixos.Oban.options/1")
+  def options(%Spec{oban: oban}) do
+    queues = Elixos.Oban.Declaration.queues(oban)
+    cron = Elixos.Oban.Declaration.cron(oban)
+
+    [queues: queues]
+    |> Enum.reject(fn {_key, value} -> value == [] end)
+    |> Kernel.++(if cron == [], do: [], else: [plugins: [%{crontab: cron}]])
+  end
+
+  @doc """
+  Adds or replaces the `oban:` declaration of installed app `app`, `[]` to
+  remove it, and applies the change to the running scheduler.
+
+  `:ok` accepts it; `{:error, :invalid}` refuses a malformed declaration, and
+  `{:error, {:conflict, queue}}` refuses one that disagrees with another app's
+  limit for the same queue - the accepted configuration is left alone. A
+  declaration accepted while no scheduler runs is kept for the next normal
+  boot; a declaration is never quietly dropped.
+  """
+  @spec configure_app(atom(), keyword()) :: :ok | {:error, term()}
+  def configure_app(app, declaration) do
+    case manager() do
+      nil -> {:error, :not_running}
+      pid -> GenServer.call(pid, {:configure_app, app, declaration}, :infinity)
+    end
+  end
+
+  @doc """
+  `configure_app/2`, as a boot MFA: a rejected declaration raises
+  `Elixos.Oban.ConfigurationError` so the generation cannot boot half-configured.
+  """
+  @spec configure_app!(atom(), keyword()) :: :ok
+  def configure_app!(app, declaration) do
+    case configure_app(app, declaration) do
+      :ok -> :ok
+      {:error, reason} -> raise Elixos.Oban.ConfigurationError, {app, reason}
+    end
+  end
+
+  @doc """
+  Releases the queues, once the supervision tree - and with it the restored
+  image - is up. Called by `Elixos.Application` after the children start;
+  queues never run before it.
+  """
+  @spec activate() :: :ok
+  def activate do
+    case manager() do
+      nil -> :ok
+      pid -> GenServer.call(pid, :activate, :infinity)
+    end
+  end
+
+  defp await_instance do
+    case manager() do
+      nil -> {:error, :not_running}
+      pid -> GenServer.call(pid, :await_instance, :infinity)
+    end
+  end
+
+  defp manager do
+    case Process.whereis(@manager) do
+      nil -> nil
+      pid -> pid
+    end
+  end
 end
