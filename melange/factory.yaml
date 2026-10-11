@@ -43,6 +43,17 @@ environment:
 
 pipeline:
   - runs: |
+      # The release is our bytecode, our dependencies' bytecode and symlinks
+      # into the machine's own OTP install (include_erts: false, ADR-041), so
+      # it is architecture-neutral: scripts/build-image.sh builds it once, in
+      # the native x86_64 environment, and the aarch64 package installs that
+      # tree (ADR-060). Without it the build below still works.
+      if [ -d /home/build/prebuilt/factory ]; then
+        cp -a /home/build/prebuilt/factory/. "${{targets.destdir}}/"
+        echo "factory: installed the natively built release"
+        exit 0
+      fi
+
       version="$(sed -n 's/^  @version "\(.*\)"$/\1/p' /home/build/os/mix.exs)"
       if [ "$version" != "${{package.version}}" ]; then
         echo "factory: os/mix.exs says $version, this package says ${{package.version}}" >&2

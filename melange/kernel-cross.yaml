@@ -1,0 +1,109 @@
+# The aarch64 kernel, cross-compiled on the *build host* (ADR-060).
+#
+# A melange pipeline runs inside the target rootfs, so building for arm64 in it
+# means running an emulated aarch64 compiler for every object: ~25 minutes. The
+# fix is the kernel's own cross mode - LLVM=1 with the native clang/lld - which
+# compiles the same kernel in a few minutes on the build host.
+#
+# Zig's `cc` is not that compiler here: Kbuild's LLVM mode appends its own
+# --target triple and expects a clang driver, and zig's driver (which is
+# clang-shaped) accepts the arguments and then silently produces no output for
+# the -S steps the kernel needs. Zig stays the cross compiler for the shim and
+# postgres-init (`zig build -Dtarget=...`, their own build.zig).
+#
+# This package is a build tool, not something the image installs: it emits
+# `boot/Image`, which scripts/build-image.sh feeds to the aarch64
+# `elixos-kernel` package (see the prebuilt branch there).
+package:
+  name: elixos-kernel-cross
+  version: "7.2.9"
+  epoch: 0
+  description: "Elixos kernel for arm64, cross-compiled by Zig on the build host (build tool)"
+  copyright:
+    - license: GPL-2.0-only
+  dependencies:
+    runtime: []
+
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+    packages:
+      - alpine-release=3.24.2-r0
+      - bash
+      - bc
+      - binutils
+      - bison
+      - build-base
+      - clang
+      - coreutils
+      - curl
+      - diffutils
+      - findutils
+      - flex
+      - gawk
+      - elfutils-dev
+      - lld
+      - openssl-dev
+      - llvm
+      - make
+      - perl
+      - tar
+      - xz
+      - zstd
+
+pipeline:
+  - runs: |
+      # One cache directory, shared with the shim build through --cache-dir:
+      # the kernel tarball below must not be re-downloaded on every iteration.
+      cache=/var/cache/melange
+      version="$(sed -n 's/^KERNEL_VERSION=//p' /home/build/kernel/VERSION)"
+      sha="$(sed -n 's/^KERNEL_SHA256=//p' /home/build/kernel/VERSION)"
+      if [ "$version" != "${{package.version}}" ]; then
+        echo "kernel-cross: kernel/VERSION says $version, this package says ${{package.version}}" >&2
+        exit 1
+      fi
+      major="${version%%.*}"
+
+      # The tarball lives in the same cache as the compiler: an iteration on
+      # this recipe must not re-download 150 MB.
+      tarball="$cache/linux-${version}.tar.xz"
+      if [ ! -f "$tarball" ] || ! echo "${sha}  $tarball" | sha256sum -c - >/dev/null 2>&1; then
+        curl -fsSL -o "$tarball.tmp" \
+          "https://cdn.kernel.org/pub/linux/kernel/v${major}.x/linux-${version}.tar.xz"
+        echo "${sha}  $tarball.tmp" | sha256sum -c -
+        mv "$tarball.tmp" "$tarball"
+      fi
+
+      mkdir -p /tmp/k
+      tar -xJf "$tarball" -C /tmp/k --strip-components=1
+      cd /tmp/k
+
+      # Zig is the C compiler for everything that ends up in the image:
+      # `zig cc --target=aarch64-linux-musl` brings clang, lld and musl for
+      # arm64 in one pinned binary. The binutils and linker side is the
+      # kernel's own LLVM=1 mode (native ld.lld, llvm-nm, llvm-objcopy), which
+      # is also what kconfig's linker check expects; the host tools compile
+      # natively with the environment's clang.
+      # The kernel's own cross mode: LLVM=1 drives clang, ld.lld and the
+      # LLVM binutils from this native environment for the arm64 target. No
+      # libc is involved (the kernel is freestanding), so there is no sysroot
+      # and nothing from the target's package set.
+      make_cross() {
+        make LLVM=1 ARCH=arm64 "$@"
+      }
+
+      make_cross -s defconfig
+      scripts/kconfig/merge_config.sh -m -O . .config \
+        /home/build/kernel/elixos.config /home/build/kernel/config.aarch64 >/dev/null
+      make_cross -s olddefconfig
+      /home/build/scripts/check-kernel-config.sh .config \
+        /home/build/kernel/elixos.config /home/build/kernel/config.aarch64
+
+      make_cross -s -j"$(nproc)" Image
+      clang --version | head -n1 > .compiler
+
+      install -Dm0644 arch/arm64/boot/Image "${{targets.destdir}}/boot/Image"
+      install -Dm0644 .config "${{targets.destdir}}/boot/config.aarch64"
+      install -Dm0644 .compiler "${{targets.destdir}}/boot/compiler"

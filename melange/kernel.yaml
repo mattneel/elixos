@@ -66,6 +66,17 @@ pipeline:
           name=bzImage
           ;;
         aarch64)
+          # scripts/build-image.sh compiles the arm64 Image on the build host
+          # (LLVM cross, melange/kernel-cross.yaml, ADR-060) and stages it
+          # here: this package then only installs it, instead of compiling
+          # the same kernel under emulation. Without the staged image the
+          # emulated build below still works, so this stays a fast path and
+          # not a second source of truth.
+          if [ -f /home/build/prebuilt/kernel/boot/Image ]; then
+            install -Dm0644 /home/build/prebuilt/kernel/boot/Image "${{targets.destdir}}/boot/Image"
+            echo "kernel: installed the cross-compiled arm64 Image"
+            exit 0
+          fi
           make -s defconfig
           target=Image
           payload=arch/arm64/boot/Image

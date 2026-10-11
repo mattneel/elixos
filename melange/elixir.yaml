@@ -29,6 +29,16 @@ environment:
 
 pipeline:
   - runs: |
+      # Elixir is bytecode plus shell scripts: nothing in this package is
+      # architecture-specific, so scripts/build-image.sh builds it once, in
+      # the native x86_64 environment, and the aarch64 package installs that
+      # tree (ADR-060). Without it the build below still works.
+      if [ -d /home/build/prebuilt/elixir ]; then
+        cp -a /home/build/prebuilt/elixir/. "${{targets.destdir}}/"
+        echo "elixir: installed the natively built tree"
+        exit 0
+      fi
+
       version="$(sed -n 's/^elixir \([0-9.]*\).*/\1/p' /home/build/.tool-versions)"
       if [ "$version" != "${{package.version}}" ]; then
         echo "elixir: .tool-versions says $version, this package says ${{package.version}}" >&2

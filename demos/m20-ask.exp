@@ -1,0 +1,96 @@
+#!/usr/bin/expect -f
+# M20: questions are data. An agent asks the human through the Jido action, the
+# console shows the notice line, the answer is typed at the prompt, and the
+# action returns it into the agent's state.
+set timeout 300
+expect_after {
+    timeout {
+        puts stderr "\nDEMO ABORTED waiting for a pattern. Last output:\n$expect_out(buffer)"
+        exit 1
+    }
+}
+
+proc boot {} {
+    global env spawn_id
+    spawn -noecho qemu-system-x86_64 \
+        -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+        -nographic -no-reboot \
+        -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+        -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+        -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+        -device virtio-rng-pci -nic none
+    expect "iex(1)> "
+    send {IEx.configure(colors: [enabled: false])}
+    send "\r"
+    expect -re {iex\([0-9]+\)> }
+    sleep 1
+}
+
+boot
+
+# An agent that asks: the signal is routed to the OS's Ask action.
+send {defmodule Demo.AskAgent do
+  use Jido.Agent,
+    name: "asker",
+    schema: [answer: [type: :string, default: ""]],
+    signal_routes: [{"ask_human", Elixos.Ask.Action}]
+end}
+send "\r"
+expect -exact "{:module, Demo.AskAgent,"
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+send {Elixos.Agents.start(Demo.AskAgent, id: "asker", jido: Jido)}
+send "\r"
+expect -re {[\r\n]+\{:ok, #PID<[0-9]+\.[0-9]+\.[0-9]+>\}[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# The ask blocks its own process, not the prompt: it runs from a spawn.
+send {spawn(fn -> Jido.AgentServer.call(Elixos.Agents.whereis("asker"), Jido.Signal.new!("ask_human", %{kind: "text", prompt: "your name?"})) end)}
+send "\r"
+expect -re {[\r\n]+#PID<[0-9]+\.[0-9]+\.[0-9]+>[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# The console is the first front-end: the question announces itself.
+expect -re {elixos-ask: question [0-9]+ \(text\): your name\?}
+sleep 1
+
+send {Elixos.Ask.pending() |> Enum.map(& &1.prompt)}
+send "\r"
+expect -exact {["your name?"]}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# Answering is any front-end's job; this one is the prompt's.
+send {Elixos.Ask.answer(Elixos.Ask.pending() |> hd() |> Map.fetch!(:id), "matt")}
+send "\r"
+expect -re {[\r\n]+:ok[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# The action returns the answer, and the agent keeps it in its state.
+send {Enum.find(1..60, fn _ -> Process.sleep(250); Jido.AgentServer.state(Elixos.Agents.whereis("asker")).agent.state[:answer] == "matt" end)}
+send "\r"
+expect -re {[\r\n]+[0-9]+[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+send {Map.fetch!(Jido.AgentServer.state(Elixos.Agents.whereis("asker")).agent.state, :answer)}
+send "\r"
+expect -exact {"matt"}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# And the queue is empty again.
+send {Elixos.Ask.pending()}
+send "\r"
+expect -re {[\r\n]+\[\][\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send {Elixos.poweroff()}
+send "\r"
+expect -exact {elixos-shim: shutdown poweroff}
+expect eof

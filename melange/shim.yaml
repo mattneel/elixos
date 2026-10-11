@@ -67,8 +67,10 @@ pipeline:
       # /home/build), so the build happens right here; the staging is what
       # keeps it to the files this package needs.
       cd /home/build
+      # -fincremental keeps the per-architecture local cache useful across
+      # builds: unchanged Zig modules are not re-analyzed.
       zig build -Drelease -Dtest-hooks=true -Dtarget="${{build.arch}}-linux-none" \
-        --cache-dir "$cache/local/${{build.arch}}" --summary all
+        -fincremental --cache-dir "$cache/local/${{build.arch}}" --summary all
 
       install -Dm0755 zig-out/bin/init "${{targets.destdir}}/init"
       install -Dm0755 zig-out/bin/elixos-postgres-init "${{targets.destdir}}/usr/bin/elixos-postgres-init"

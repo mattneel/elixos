@@ -1,0 +1,10 @@
+# An agent's question reaches the console, the prompt answers it, and the
+# action returns the answer into the agent's state.
+{:module, Demo.AskAgent,
+{:ok, #PID<
+elixos-ask: question 1 (text): your name?
+["your name?"]
+:ok
+"matt"
+[]
+elixos-shim: shutdown poweroff

@@ -1604,3 +1604,58 @@ or the GUI, and both are gone when the machine is. The M20 acceptance asks
 from an agent, sees the notice on the console, answers at the prompt, and
 finds the answer in the agent's state. M27 adds a second view over the same
 queue without touching the askers.
+
+## ADR-060: aarch64 is cross-built on the host, not emulated
+
+**Status:** accepted (M19)
+
+**Context.** Every package whose recipe runs in an aarch64 melange environment
+runs its *compiler* through `qemu-aarch64-static` (ADR-041: "slower but fine").
+Measured on this host, that is not fine: the arm64 kernel alone spends ~25
+minutes compiling under emulation, and the whole aarch64 image used to take
+45-60 minutes - for the same bytes a native compiler produces in a few minutes.
+Two facts make most of that avoidable. A melange pipeline runs *inside the
+target rootfs*, so a cross build cannot happen in it. And three of the four
+built packages are not architecture-specific at all.
+
+**Decision.** Cross-build the arm64 artifacts natively, on the build host, and
+have the aarch64 package install them:
+
+* **Kernel** - `melange/kernel-cross.yaml` (an x86_64 build-tool package)
+  compiles `arch/arm64/boot/Image` with the kernel's own `LLVM=1` cross mode
+  (native clang/lld, no libc, no sysroot: the kernel is freestanding) and runs
+  the same config merge and `check-kernel-config.sh` guard as the target
+  build. `scripts/build-image.sh` stages the result and `melange/kernel.yaml`'s
+  aarch64 branch installs it instead of compiling; the emulated branch stays
+  for a checkout that has no staging. `boot/config.aarch64` travels with the
+  image so the config that produced it is inspectable. 25 minutes become ~5.
+* **Elixir and the factory** - both are bytecode, shell scripts and symlinks
+  into the machine's own OTP (`include_erts: false`); nothing in them depends
+  on the target architecture. The x86_64 build already builds them natively,
+  so the aarch64 packages install that same tree (`native_reuse` in
+  `scripts/build-image.sh`, a `prebuilt/` branch in each recipe). One build
+  serves both architectures, and an emulated `mix release` disappears.
+* **Shim and toolchain** were already native (`zig build -Dtarget=…`).
+* **OTP** stays emulated for now: cross-compiling OTP means a target sysroot
+  for openssl/ncurses/zlib, a matching build-host ERTS as bootstrap, and
+  `erl_xcomp_*` overrides for configure's runtime probes. That is a project of
+  its own, and it is the only emulated step left (docs/notes/melange-apko.md
+  records the plan).
+
+Zig is the cross compiler where the build system is ours: the shim and
+`postgres-init` are `zig build -Dtarget=aarch64-linux-none`. For the kernel it
+is clang: Kbuild's `LLVM=1` mode appends its own `--target` triple and expects
+a clang driver, and Zig's clang-shaped driver accepts those arguments and then
+silently produces no output for the `-S` steps Kbuild needs. `build.zig`
+cannot drive Kbuild, autotools or Mix - it is not a general make replacement -
+so those builds stay their own build systems, with the *compiler* and the
+*host* doing the crossing.
+
+**Consequences.** An aarch64 image rebuild costs about five minutes of kernel
+plus the assembly, instead of an hour; the only emulated work left is OTP. The
+artifacts are verifiable the same way as before - `test-qemu-aarch64` boots
+the image on `qemu-system-aarch64` and the M16 acceptance defines a module,
+saves it and power-cycles - and the kernel's own config guard still runs on
+the cross-compiled config. A cross-built artifact is part of the package
+inputs, so changing the kernel config or the OS source invalidates exactly the
+packages it should.

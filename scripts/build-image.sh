@@ -73,20 +73,129 @@ stage() {
   cp -r "$ROOT/melange" "$SRC/"
 }
 
-shim_inputs() { # The staged native inputs, not HEAD or unrelated userland.
+package_inputs() { # package_inputs <arch> <package>: hash of everything the recipe reads
+  local arch="$1" pkg="$2" path
+  local -a paths
+  case "$pkg" in
+    kernel) paths=(kernel melange/kernel.yaml prebuilt/kernel) ;;
+    otp) paths=(.tool-versions melange/otp.yaml) ;;
+    elixir) paths=(.tool-versions melange/elixir.yaml prebuilt/elixir) ;;
+    factory) paths=(os hex .tool-versions melange/factory.yaml prebuilt/factory) ;;
+    shim) paths=(shim spec .zig-version build.zig build.zig.zon melange/shim.yaml) ;;
+    toolchain) paths=(toolchain .zig-version melange/toolchain.yaml) ;;
+    *) paths=(melange) ;;
+  esac
+
   {
-    printf 'target=%s\nhost=%s\n' "$1" "$HOST_ARCH"
+    printf 'arch=%s\nhost=%s\npackage=%s\n' "$arch" "$HOST_ARCH" "$pkg"
+    # The tools that run the build are inputs too: a new melange or a new
+    # signing key must not reuse what the old one produced.
     sha256sum "$MELANGE" "$KEY.pub"
     (
       cd "$SRC"
-      sha256sum .zig-version build.zig build.zig.zon melange/shim.yaml scripts/build-image.sh
-      find shim spec -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+      # This script is the recipe's other half and never changes an APK.
+      sha256sum scripts/build-image.sh
+      for path in "${paths[@]}"; do
+        [ -e "$path" ] || continue
+        if [ -d "$path" ]; then
+          find "$path" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+        else
+          sha256sum "$path"
+        fi
+      done
     )
   } | sha256sum | cut -d' ' -f1
 }
 
+kernel_cross_inputs() { # kernel_cross_inputs: what the native arm64 build reads
+  {
+    printf 'package=kernel-cross\n'
+    sha256sum "$MELANGE" "$KEY.pub" "$ROOT/melange/kernel-cross.yaml"
+    (
+      cd "$SRC"
+      sha256sum scripts/build-image.sh
+      for path in kernel scripts; do
+        find "$path" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+      done
+    )
+  } | sha256sum | cut -d' ' -f1
+}
+
+# The arm64 kernel, compiled natively on the build host (ADR-060): a melange
+# pipeline runs inside the target rootfs, so the only way to cross is a
+# separate, native step whose artifact the aarch64 package installs. This is
+# the kernel's own LLVM=1 cross mode; the kernel is freestanding, so no
+# sysroot and no target packages are involved.
+kernel_cross() {
+  local stamp="$BUILD/.kernel-cross.inputs" repo="$BUILD/apk/x86_64" inputs apk
+  local cached_inputs="" cached_sha="" cached_apk=""
+  inputs="$(kernel_cross_inputs)"
+  if [ -f "$stamp" ]; then
+    read -r cached_inputs cached_sha cached_apk < "$stamp" || true
+  fi
+
+  apk="$repo/x86_64/$cached_apk"
+  if [ -n "${FORCE:-}" ] || [ "$inputs" != "$cached_inputs" ] || [ ! -f "$apk" ] ||
+     [ "$(sha256sum "$apk" 2>/dev/null | cut -d' ' -f1)" != "$cached_sha" ]; then
+    echo "build-image: melange kernel-cross.yaml (arm64 kernel, native Zig cross)"
+    rm -f "$repo"/x86_64/elixos-kernel-cross-*.apk "$stamp"
+    # The same compiler cache and host-arch variable the shim package uses:
+    # one pinned Zig SDK, shared, outside melange's per-build workspace.
+    mkdir -p "$ZIG_CACHE"
+    printf 'ELIXOS_ZIG_HOST_ARCH=%s\n' "$HOST_ARCH" > "$ZIG_CACHE/host.env"
+    "$MELANGE" build "$ROOT/melange/kernel-cross.yaml" --arch x86_64 --source-dir "$SRC" \
+      --out-dir "$repo" --signing-key "$KEY" -r "$repo" -k "$KEY.pub" \
+      --cache-dir "$ZIG_CACHE" --env-file "$ZIG_CACHE/host.env" >/dev/null
+    apk="$(ls "$repo"/x86_64/elixos-kernel-cross-*.apk | head -n1)"
+    [ -f "$apk" ] || { echo "build-image: no elixos-kernel-cross APK was produced" >&2; return 1; }
+    printf '%s %s %s\n' "$inputs" "$(sha256sum "$apk" | cut -d' ' -f1)" "$(basename "$apk")" > "$stamp"
+  else
+    echo "build-image: elixos-kernel-cross inputs unchanged (cache hit)"
+  fi
+
+  stage_prebuilt kernel "$apk"
+}
+
+# Adopt a native build: unpack the APK it produced into the staging area the
+# architecture's package installs from. melange APKs are tar streams a plain
+# tar reads (mkdisk.sh does the same for the toolchain).
+stage_prebuilt() { # stage_prebuilt <name> <apk>
+  local name="$1" archive="$2" dir="$SRC/prebuilt/$1" tmp="$SRC/prebuilt/.$1.$$"
+  rm -rf "$tmp"
+  mkdir -p "$tmp"
+  tar -xzf "$archive" --warning=no-unknown-keyword -C "$tmp"
+  [ -n "$(ls -A "$tmp")" ] || {
+    echo "build-image: the native $name build produced nothing" >&2
+    rm -rf "$tmp"
+    return 1
+  }
+  rm -rf "$dir"
+  mv "$tmp" "$dir"
+  echo "build-image: staged the native $name build"
+}
+
+# Elixir and the factory are architecture-neutral (ADR-060): build them once
+# in the native x86_64 environment - the same recipes the x86_64 image uses -
+# and hand the aarch64 packages the tree instead of rebuilding it emulated.
+native_reuse() {
+  local pkg pname repo="$BUILD/apk/x86_64" apk
+  for pkg in elixir factory; do
+    pname="elixos-$pkg"
+    if [ -n "${FORCE:-}" ] || ! ls "$repo/$HOST_ARCH/$pname"-*.apk >/dev/null 2>&1; then
+      echo "build-image: melange $pkg.yaml (native, for the $HOST_ARCH image)"
+      "$MELANGE" build "$SRC/melange/$pkg.yaml" --arch "$HOST_ARCH" --source-dir "$SRC" \
+        --out-dir "$repo" --signing-key "$KEY" \
+        -r "$repo" -k "$KEY.pub" >/dev/null
+    fi
+    apk="$(ls "$repo/$HOST_ARCH/$pname"-*.apk | head -n1)"
+    [ -f "$apk" ] || { echo "build-image: no $pname APK to reuse" >&2; return 1; }
+    stage_prebuilt "$pkg" "$apk"
+  done
+}
+
 build_packages() { # build_packages <arch>
-  local arch="$1" repo="$BUILD/apk/$arch" pkg pname file inputs stamp cached_inputs cached_sha cached_apk actual_sha
+  local arch="$1" repo="$BUILD/apk/$arch" pkg pname file inputs stamp actual
+  local cached_inputs="" cached_sha="" cached_apk=""
   local -a extra apks
   # Dependency order, not glob order: OTP before Elixir and the factory (they
   # build against it), the kernel and the shim independent, the toolchain last
@@ -95,48 +204,52 @@ build_packages() { # build_packages <arch>
     file="$SRC/melange/$pkg.yaml"
     [ -f "$file" ] || continue
     pname="elixos-$pkg"
+    inputs="$(package_inputs "$arch" "$pkg")"
+    stamp="$repo/$arch/.$pname.inputs"
+    cached_inputs="" cached_sha="" cached_apk=""
+    if [ -f "$stamp" ]; then
+      read -r cached_inputs cached_sha cached_apk < "$stamp" || true
+    fi
+
+    # A hit needs the recipe's inputs to match *and* the APK the last build
+    # published to still be those bytes: an APK that exists is not an APK
+    # that is current, and a stale factory would ship the wrong OS.
+    if [ -z "${FORCE:-}" ] && [ "$inputs" = "$cached_inputs" ] &&
+       [ -n "$cached_apk" ] && [ -f "$repo/$arch/$cached_apk" ]; then
+      actual="$(sha256sum "$repo/$arch/$cached_apk" | cut -d' ' -f1)"
+      if [ "$actual" = "$cached_sha" ]; then
+        echo "build-image: [$arch] $pname inputs unchanged (cache hit)"
+        continue
+      fi
+    fi
+
     extra=()
     if [ "$pkg" = shim ]; then
-      inputs="$(shim_inputs "$arch")"
-      stamp="$repo/$arch/.elixos-shim.inputs"
-      cached_inputs="" cached_sha="" cached_apk=""
-      if [ -f "$stamp" ]; then
-        read -r cached_inputs cached_sha cached_apk < "$stamp" || true
-      fi
-      if [ -z "${FORCE:-}" ] && [ "$inputs" = "$cached_inputs" ] &&
-         [ -n "$cached_apk" ] && [ -f "$repo/$arch/$cached_apk" ]; then
-        actual_sha="$(sha256sum "$repo/$arch/$cached_apk" | cut -d' ' -f1)"
-        if [ "$actual_sha" = "$cached_sha" ]; then
-          echo "build-image: [$arch] $pname native inputs unchanged (APK cache hit)"
-          continue
-        fi
-      fi
+      # Only the shim builds with Zig; its compiler and local/global caches
+      # live outside melange's per-build workspace (see docs/notes).
       mkdir -p "$ZIG_CACHE"
       printf 'ELIXOS_ZIG_HOST_ARCH=%s\n' "$HOST_ARCH" > "$ZIG_CACHE/host.env"
       extra=(--cache-dir "$ZIG_CACHE" --env-file "$ZIG_CACHE/host.env")
-      # Publish only this recipe's APK; an old higher version must not win.
-      rm -f "$repo/$arch/$pname"-*.apk "$stamp"
-    elif [ -z "${FORCE:-}" ] && ls "$repo/$arch/$pname"-*.apk >/dev/null 2>&1; then
-      # Other expensive native packages retain their existing explicit cache.
-      echo "build-image: [$arch] $pname already built (FORCE=1 rebuilds)"
-      continue
     fi
+
+    # Publish only this recipe's APK; an old build must not shadow the new one,
+    # and the stamp leaves with it.
     echo "build-image: [$arch] melange $(basename "$file")"
+    rm -f "$repo/$arch/$pname"-*.apk "$stamp"
     # -r/-k let a package build against the ones built before it (the factory
     # needs OTP and Elixir; melange would otherwise only see Alpine).
     "$MELANGE" build "$file" --arch "$arch" --source-dir "$SRC" \
       --out-dir "$repo" --signing-key "$KEY" \
       -r "$repo" -k "$KEY.pub" "${extra[@]}" >/dev/null
-    if [ "$pkg" = shim ]; then
-      apks=("$repo/$arch/$pname"-*.apk)
-      [ "${#apks[@]}" -eq 1 ] && [ -f "${apks[0]}" ] || {
-        echo "build-image: [$arch] expected one newly built $pname APK" >&2
-        return 1
-      }
-      actual_sha="$(sha256sum "${apks[0]}" | cut -d' ' -f1)"
-      printf '%s %s %s\n' "$inputs" "$actual_sha" "${apks[0]##*/}" > "$stamp.tmp"
-      mv "$stamp.tmp" "$stamp"
+
+    apks=("$repo/$arch/$pname"-*.apk)
+    if [ "${#apks[@]}" -ne 1 ] || [ ! -f "${apks[0]}" ]; then
+      echo "build-image: [$arch] expected exactly one freshly built $pname APK" >&2
+      return 1
     fi
+    actual="$(sha256sum "${apks[0]}" | cut -d' ' -f1)"
+    printf '%s %s %s\n' "$inputs" "$actual" "${apks[0]##*/}" > "$stamp.tmp"
+    mv "$stamp.tmp" "$stamp"
   done
 }
 
@@ -249,6 +362,13 @@ build_arch() { # build_arch <arch>
   local arch="$1" work="$BUILD/$arch" digest second
   mkdir -p "$work"
   build_system "$arch"
+
+  # The arm64 kernel is compiled natively before its package, which installs
+  # the artifact; everything else is built in this architecture's environment.
+  if [ "$arch" = aarch64 ]; then
+    kernel_cross
+    native_reuse
+  fi
 
   build_packages "$arch"
   build_index "$arch"
