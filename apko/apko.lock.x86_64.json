@@ -494,18 +494,18 @@
         "version": "0.0.0-r0",
         "architecture": "x86_64",
         "signature": {
-          "range": "bytes=0-687",
-          "checksum": "sha1-ar4pV7jCiB7BHGWJSrh4KFiPF3g="
+          "range": "bytes=0-693",
+          "checksum": "sha1-XAcytwOIZzssdBCc4EPhuDhycI4="
         },
         "control": {
-          "range": "bytes=688-2489",
-          "checksum": "sha1-UZGedT854gI19CK4Cjc86gouuJY="
+          "range": "bytes=694-2492",
+          "checksum": "sha1-6kQEadQuZg7deuCm0oaDmKlIAv0="
         },
         "data": {
-          "range": "bytes=2490-2148974",
-          "checksum": "sha256-89OXF1qp7nhO61uCYfwbNUBIQvcHMTfvSBtVIdQhduc="
+          "range": "bytes=2493-2149338",
+          "checksum": "sha256-6kZHHRgme6nIEdHsysM8MRiI9ARe3LhU0qugpezYLNM="
         },
-        "checksum": "Q1UZGedT854gI19CK4Cjc86gouuJY="
+        "checksum": "Q16kQEadQuZg7deuCm0oaDmKlIAv0="
       }
     ]
   }

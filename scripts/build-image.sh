@@ -124,7 +124,9 @@ kernel_cross_inputs() { # kernel_cross_inputs: what the native arm64 build reads
 # the kernel's own LLVM=1 cross mode; the kernel is freestanding, so no
 # sysroot and no target packages are involved.
 kernel_cross() {
-  local stamp="$BUILD/.kernel-cross.inputs" repo="$BUILD/apk/x86_64" inputs apk
+  # A build tool, not an image package: it lives in its own repository, so no
+  # image glob (elixos-kernel-*.apk) can ever pick it up as a kernel.
+  local repo="$BUILD/apk-cross" stamp="$BUILD/apk-cross/.kernel-cross.inputs" inputs apk
   local cached_inputs="" cached_sha="" cached_apk=""
   inputs="$(kernel_cross_inputs)"
   if [ -f "$stamp" ]; then
@@ -134,8 +136,9 @@ kernel_cross() {
   apk="$repo/x86_64/$cached_apk"
   if [ -n "${FORCE:-}" ] || [ "$inputs" != "$cached_inputs" ] || [ ! -f "$apk" ] ||
      [ "$(sha256sum "$apk" 2>/dev/null | cut -d' ' -f1)" != "$cached_sha" ]; then
-    echo "build-image: melange kernel-cross.yaml (arm64 kernel, native Zig cross)"
-    rm -f "$repo"/x86_64/elixos-kernel-cross-*.apk "$stamp"
+    echo "build-image: melange kernel-cross.yaml (arm64 kernel, native cross)"
+    rm -rf "$repo/x86_64" "$stamp"
+    mkdir -p "$repo/x86_64"
     # The same compiler cache and host-arch variable the shim package uses:
     # one pinned Zig SDK, shared, outside melange's per-build workspace.
     mkdir -p "$ZIG_CACHE"
