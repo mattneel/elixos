@@ -42,6 +42,7 @@ tar, so nothing here needs root):
 /bin/busybox, /lib/…           Alpine's base: busybox, baselayout, musl
 /etc/ssl/certs/…               the CA bundle (ca-certificates-bundle)
 /etc/elixos/helpers           root-owned named-helper allow-list (M17)
+/usr/bin/elixos-postgres-init  libc-free guard which directly execs initdb (M18)
 /proc /sys /dev /dev/shm /run /tmp  mount points, declared in the apko config
 /priv                          mount point for the persistent disk
 ```
@@ -52,8 +53,12 @@ anything done at runtime, so rescue mode always has something to boot.
 **/priv** is the persistent ext4 disk (layout in PROTOCOL.md §7). Everything
 the user creates lives there.
 
-There is no `/bin`, no `/usr`, no `/etc` beyond what a feature needs (for
-example a CA bundle for Hex in M11).
+**/system** is a separate, read-only gzip SquashFS containing PostgreSQL 17,
+its client, extensions and Alpine library closure (M18, ADR-052). PID 1
+mounts `/priv/system/system.squashfs` only in normal mode. ICU and timezone
+data are exported through read-only bind mounts at their compiled-in
+`/usr/share/icu` and `/usr/share/zoneinfo` paths; the factory declares only
+empty mount points. Rescue needs neither the service image nor its binaries.
 
 ## §3 The shim (PID 1, Zig)
 
@@ -64,20 +69,25 @@ tested in QEMU.
 
 ### §3.1 Duties
 
-1. Mount `/proc`, `/sys`, `/dev` (devtmpfs), `/run`, `/tmp`; then `/priv`,
+1. Mount `/proc`, `/sys`, `/dev` (devtmpfs), `/dev/shm`, `/run`, `/tmp`; recreate
+   `/dev/shm` after devtmpfs hides the initramfs directory. Then mount `/priv`,
    waiting up to `elixos.data_wait` seconds for that device to appear (the
    kernel does not wait for USB or SD storage before running `/init`).
 2. Parse `/proc/cmdline`, read the fixed helper list, prepare root-owned sticky
    store/generation directories and the private sealing workspace, then read
    `/priv/boot.state`, plan, persist and log.
+   Normal launches also prepare the read-only system image and PostgreSQL's
+   uid-70 data/log directories; failure disables the service, not the prompt.
 3. Fork and exec ERTS as uid/gid 1000, groups `input`/`video`, with only
    `CAP_NET_BIND_SERVICE` and `PR_SET_NO_NEW_PRIVS` (PROTOCOL.md §3, ADR-046).
 4. Event loop on epoll: a signalfd (SIGCHLD, SIGTERM, SIGINT, SIGPWR), the
    control pipe, and a timerfd for the heartbeat deadline.
 5. Reap every child. As PID 1 it inherits orphans; zombies must never pile up.
 6. Relaunch the BEAM after an exit nobody asked for (short backoff), or carry
-   out a requested shutdown: SIGTERM, then SIGKILL stragglers, sync, unmount
-   `/priv`, `reboot(2)`.
+   out a requested shutdown. After the BEAM exits, give PostgreSQL SIGINT and
+   up to 30 seconds to finish fast shutdown; then SIGTERM/SIGKILL remaining
+   helpers and stragglers, sync, unmount the data exports, `/system` and
+   `/priv`, and call `reboot(2)`.
 
 The helper allow-list supplies the executable, literal argv and uid/gid;
 the BEAM supplies only the name. Replies use a separate pipe. The shim owns
@@ -192,12 +202,14 @@ See DECISIONS.md, open questions.
 
 ## §5 The BEAM side of boot
 
-`Elixos.Application`, in order: `Elixos.Shim.Control` on the inherited fd
-(heartbeats start) → `Elixos.Privileges` on the separate reply fd → restore
-the generation and run its boot spec →
-`Elixos.Boot.AutoCommit` (normal mode only) → the login REPL on the console via
-`:shell.start_interactive/1`. A failure before the REPL must exit the VM
-non-zero so the shim counts the attempt (ADR-007).
+`Elixos.Application` opens `Elixos.Shim.Control` on the inherited fd
+(heartbeats start), then `Elixos.Privileges` on the separate reply fd, before
+restoring the generation and running its boot spec. The recorder and agent
+supervisors follow. `Elixos.Postgres` constructs its asynchronous manager
+before SSH and the console login REPL; SQL readiness never blocks login.
+`Elixos.Boot.AutoCommit` runs only in normal mode. A boot-critical restore
+failure exits the VM non-zero so the shim counts the attempt (ADR-007);
+database and SSH startup failures remain non-critical.
 
 ## §6 REPLs are the shells (ADR-012)
 

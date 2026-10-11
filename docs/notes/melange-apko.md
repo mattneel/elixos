@@ -76,6 +76,13 @@ apko v1.4.10, both by sha256).
   instead of `--arch`; use `apko build` and take the layer.
 - Keys can be committed: the config's keyring may name a repo-local path
   (`apko/keys/...`), and the lockfile embeds the key material too.
+- Include `alpine-release=3.24.2-r0` in every melange build environment and
+  the service image, as the factory already does. The package supplies real
+  `/etc/os-release`; omitting it makes apko warn about missing release metadata.
+  Do not suppress the warning or invent a distro file outside the package
+  database. Actual metadata probes passed in all six build environments on
+  both architectures, and both service-image builds completed without that
+  warning.
 - The layer's device nodes cannot be extracted without root. They do not need
   to be: the tar carries major/minor, and `gen_init_cpio` can declare them.
 
@@ -139,3 +146,23 @@ apko v1.4.10, both by sha256).
   small GenServer that traps exits, monitors the daemon and calls
   `:ssh.stop_daemon/1` on termination. The regression checks normal daemon
   exit, EOF on an open connection and refusal of new connections.
+
+## Service images (M18)
+
+- Declaring `/dev/shm` in apko does not survive mounting devtmpfs on `/dev`.
+  PID 1 must recreate that directory after devtmpfs, then mount its mode-1777
+  tmpfs. Otherwise the base-mount failure sends an ordinary boot to rescue.
+- A changed kernel fragment does not change an already cached native APK.
+  Rebuild `elixos-kernel` for the affected target and run the fragment guard
+  against that package's actual `.config`. The old x86_64 package lacked
+  SquashFS even though the new fragment required it.
+- Moving Alpine's library closure under `/system` does not relocate
+  compiled-in data paths. `initdb` reached ICU's `und` locale and failed with
+  `U_FILE_ACCESS_ERROR` until `/system/usr/share/icu` was exported at
+  `/usr/share/icu`; PostgreSQL likewise needs timezone data at
+  `/usr/share/zoneinfo`. Both exports are read-only bind mounts, normal mode
+  only, released before the service image (ADR-052).
+- Host image outputs are deliberately mode 0444. Replace a previously built
+  `system.squashfs` with `install -m0444`, not `cp` onto its unwritable inode,
+  so a second build succeeds without making the shipped image writable.
+

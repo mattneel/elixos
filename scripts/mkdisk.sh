@@ -36,7 +36,25 @@ TOOLCHAIN_APK="${packages[0]}"
 tar -xzf "$TOOLCHAIN_APK" -C "$STAGE" --warning=no-unknown-keyword toolchain
 [ -x "$STAGE/toolchain/zig" ] || { echo "disk: $TOOLCHAIN_APK carried no toolchain/zig" >&2; exit 1; }
 
+# The system service tree is a separate immutable filesystem, never a factory
+# overlay. PID 1 loop-mounts this image read-only at /system in normal mode.
+SYSTEM="$BUILD/$ARCH/system.squashfs"
+[ -f "$SYSTEM" ] || {
+  echo "disk: no system image at $SYSTEM; run scripts/build-image.sh $ARCH" >&2
+  exit 1
+}
+install -d -m0755 "$STAGE/system"
+install -m0444 "$SYSTEM" "$STAGE/system/system.squashfs"
+
 rm -f "$DISK"
 truncate -s "$SIZE" "$DISK"
 mkfs.ext4 -q -F -L ELIXOS -E root_owner=0:0 -d "$STAGE" "$DISK"
+# mkfs -d copies host uid/gid values. Builds need not run as root, so explicitly
+# set the protected service image's ownership and modes inside ext4 itself.
+debugfs -w -R 'set_inode_field /system uid 0' "$DISK" >/dev/null 2>&1
+debugfs -w -R 'set_inode_field /system gid 0' "$DISK" >/dev/null 2>&1
+debugfs -w -R 'set_inode_field /system mode 040755' "$DISK" >/dev/null 2>&1
+debugfs -w -R 'set_inode_field /system/system.squashfs uid 0' "$DISK" >/dev/null 2>&1
+debugfs -w -R 'set_inode_field /system/system.squashfs gid 0' "$DISK" >/dev/null 2>&1
+debugfs -w -R 'set_inode_field /system/system.squashfs mode 0100444' "$DISK" >/dev/null 2>&1
 echo "disk: $DISK ($SIZE, ext4, label ELIXOS, toolchain $(du -sh "$STAGE/toolchain" | cut -f1), $(basename "$TOOLCHAIN_APK"))"

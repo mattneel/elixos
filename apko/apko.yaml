@@ -35,6 +35,11 @@ accounts:
       gid: 1000
       homedir: /priv/home
       shell: /bin/false
+    - username: postgres
+      uid: 70
+      gid: 70
+      homedir: /priv/postgres
+      shell: /bin/false
   groups:
     - groupname: elixos
       gid: 1000
@@ -44,14 +49,21 @@ accounts:
     - groupname: video
       gid: 27
       members: [elixos]
+    - groupname: postgres
+      gid: 70
 
 # apko runs no install scripts: anything a package's script would have created
 # has to be declared. /priv is the persistent disk's mount point - the shim
 # mounts it before the BEAM starts, and a missing mount point sends the boot to
-# rescue; /dev/shm is dynamic shared memory's (M18's Postgres mounts a tmpfs
-# over it, so the directory has to exist).
+# rescue. PID 1 recreates /dev/shm after devtmpfs hides this declaration.
+# The two data mountpoints export non-relocatable service assets only in normal mode.
 paths:
   - path: /priv
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /system
     type: directory
     uid: 0
     gid: 0
@@ -61,6 +73,16 @@ paths:
     uid: 0
     gid: 0
     permissions: 0o1777
+  - path: /usr/share/icu
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /usr/share/zoneinfo
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
 
 archs:
   - x86_64

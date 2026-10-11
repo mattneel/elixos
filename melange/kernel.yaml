@@ -21,6 +21,7 @@ environment:
     repositories:
       - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
     packages:
+      - alpine-release=3.24.2-r0
       - build-base
       - bash
       - bc

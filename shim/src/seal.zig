@@ -360,7 +360,7 @@ fn stream(source: linux.fd_t, destination: ?linux.fd_t, length: u64, expected_ha
 }
 
 fn protected(name: []const u8) bool {
-    const names = [_][]const u8{ "boot.state", "generations", "store", "toolchain", ".seal", "postgres" };
+    const names = [_][]const u8{ "boot.state", "generations", "store", "toolchain", ".seal", "postgres", "system" };
     for (names) |reserved| {
         if (std.mem.eql(u8, name, reserved)) return true;
     }

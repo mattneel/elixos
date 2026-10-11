@@ -37,6 +37,12 @@ pub const cmdline = @import("cmdline.zig");
 pub const recovery = @import("recovery.zig");
 pub const helpers = @import("helpers.zig");
 pub const seal = @import("seal.zig");
+pub const system_image = @import("system_image.zig");
+pub const postgres_init = @import("postgres_init.zig");
+
+// The supervising frame lives until reboot. Shutdown can also happen before
+// supervision exists, in which case there are no image-declared helpers.
+var active_session: ?*Session = null;
 
 var helper_list: helpers.AllowList = .{};
 
@@ -352,12 +358,13 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
 // ---------------------------------------------------------------------------
 // Boot steps
 
-/// /proc, /sys, /dev, /run and /tmp. Returns false if any of them failed.
+/// /proc, /sys, /dev, /run, /tmp and /dev/shm. Failed mounts enter rescue.
 fn mountBase() bool {
     const Mount = struct {
         target: [*:0]const u8,
         fstype: [*:0]const u8,
         data: usize = 0,
+        create: ?linux.mode_t = null,
     };
     const mounts = [_]Mount{
         .{ .target = "/proc", .fstype = "proc" },
@@ -365,10 +372,17 @@ fn mountBase() bool {
         .{ .target = "/dev", .fstype = "devtmpfs" },
         .{ .target = "/run", .fstype = "tmpfs", .data = @intFromPtr("mode=0755") },
         .{ .target = "/tmp", .fstype = "tmpfs", .data = @intFromPtr("mode=1777") },
+        // devtmpfs hides apko's /dev/shm mountpoint; recreate it on that mount.
+        .{ .target = "/dev/shm", .fstype = "tmpfs", .data = @intFromPtr("mode=1777"), .create = 0o1777 },
     };
     var ok = true;
     for (mounts) |m| {
-        const err = linux.errno(linux.mount(m.fstype, m.target, m.fstype, 0, m.data));
+        var err: linux.E = .SUCCESS;
+        if (m.create) |permissions| {
+            err = linux.errno(linux.mkdirat(linux.AT.FDCWD, m.target, permissions));
+            if (err == .EXIST) err = .SUCCESS;
+        }
+        if (err == .SUCCESS) err = linux.errno(linux.mount(m.fstype, m.target, m.fstype, 0, m.data));
         if (err != .SUCCESS) {
             // Not fatal in itself: losing /proc only costs us the command line.
             var name_buffer: [24]u8 = undefined;
@@ -769,6 +783,12 @@ const Session = struct {
     /// Forks and execs `plan` with a fresh control pipe, then arms the
     /// heartbeat deadline with the boot grace (PROTOCOL.md §2 and §3).
     fn spawn(self: *Session, plan: recovery.Plan) void {
+        if (plan.launch.mode == .rescue) {
+            self.stopHelpers();
+            system_image.unmount() catch |err| log("cannot unmount system image ({t})", .{err});
+        } else if (self.disk_mounted) {
+            prepareSystem();
+        }
         // Before the fork: the child may reach ERTS's crash handler before
         // this process would otherwise have created the directory, and a dump
         // whose directory is missing is not written at all.
@@ -848,6 +868,54 @@ const Session = struct {
         rescue.arm(self.beam, self.ctl_fd, self.reply_fd, self.plan.launch.generation, &self.helper_pids, self.overrides.safe, self.disk_mounted, self.requested);
     }
 
+    fn prepareSystem() void {
+        system_image.mount() catch |err| {
+            log("system image unavailable ({t}), services disabled", .{err});
+            return;
+        };
+        system_image.preparePostgres() catch |err| {
+            log("postgres directories unavailable ({t}), services disabled", .{err});
+            system_image.unmount() catch |unmount_err| log("cannot unmount system image ({t})", .{unmount_err});
+        };
+    }
+
+    /// The database remains alive until the BEAM has stopped. PostgreSQL's
+    /// fast shutdown must complete before the generic straggler kill.
+    fn stopHelpers(self: *Session) void {
+        for (helper_list.helpers[0..helper_list.len], 0..) |*helper, index| {
+            if (self.helper_pids[index] == 0 or !std.mem.eql(u8, helper.name[0..helper.name_len], "postgres")) continue;
+            _ = linux.kill(self.helper_pids[index], .INT);
+            if (!self.waitHelper(index, 30_000)) {
+                log("helper shutdown timeout name=postgres, killing", .{});
+                _ = linux.kill(self.helper_pids[index], .KILL);
+            }
+        }
+        for (self.helper_pids) |pid| {
+            if (pid != 0) _ = linux.kill(pid, .TERM);
+        }
+        sleepMs(50);
+        for (self.helper_pids, 0..) |pid, index| {
+            if (pid != 0 and !self.waitHelper(index, 0)) _ = linux.kill(pid, .KILL);
+        }
+        self.rearm();
+    }
+
+    fn waitHelper(self: *Session, index: usize, grace_ms: i64) bool {
+        const deadline = monotonicMs() + grace_ms;
+        while (true) {
+            var status: i32 = 0;
+            const result = linux.wait4(self.helper_pids[index], &status, linux.W.NOHANG, null);
+            const err = linux.errno(result);
+            if ((err == .SUCCESS and result != 0) or err == .CHILD) {
+                self.helper_pids[index] = 0;
+                return true;
+            }
+            if (err == .INTR) continue;
+            if (err != .SUCCESS or monotonicMs() >= deadline) return false;
+            sleepMs(25);
+        }
+    }
+
     /// One read of the control pipe: applies what it can, reports whether
     /// anything was read, and closes the channel on EOF or a hard error.
     fn readControl(self: *Session) bool {
@@ -904,6 +972,13 @@ const Session = struct {
     }
 
     fn startHelper(self: *Session, name: []const u8) void {
+        if ((std.mem.eql(u8, name, "postgres") or std.mem.eql(u8, name, "postgres-init")) and
+            (self.plan.launch.mode != .normal or !system_image.mounted()))
+        {
+            log("helper refused name={s}", .{name});
+            self.helperReply(name, null);
+            return;
+        }
         for (helper_list.helpers[0..helper_list.len], 0..) |*helper, index| {
             if (!std.mem.eql(u8, helper.name[0..helper.name_len], name)) continue;
             if (self.helper_pids[index] != 0) {
@@ -932,7 +1007,8 @@ const Session = struct {
                     offset += std.mem.sliceTo(arg, 0).len + 1;
                 }
                 const envp = [_:null]?[*:0]const u8{
-                    "PATH=/usr/bin:/bin:/usr/sbin:/sbin",
+                    system_image.path_environment,
+                    system_image.library_environment,
                     "LANG=C.UTF-8",
                     "HOME=/priv",
                 };
@@ -1144,6 +1220,7 @@ fn supervise(
         .plan = plan,
         .state = state,
     };
+    active_session = &session;
     // An adopted state comes from disk: the running boot counted its attempt
     // when it started, and a fresh launch counts the plan's.
     if (adopted) |a| session.adopt(a) else session.spawn(plan);
@@ -1258,12 +1335,14 @@ fn logBeamExit(status: u32) void {
 /// 9. Shutdown. PID 1 does not exit (ADR-002); the kernel powers the machine
 /// off, reboots or halts, and if it refuses we idle forever.
 fn shutdown(kind: recovery.Shutdown) noreturn {
+    if (active_session) |session| session.stopHelpers();
     // Stragglers first (ARCHITECTURE.md §3.1): ask, then insist. -1 means
     // every process except us, which is what PID 1 is for.
     _ = linux.kill(-1, .TERM);
     sleepMs(50);
     _ = linux.kill(-1, .KILL);
     linux.sync();
+    system_image.unmount() catch |err| log("cannot unmount system image ({t})", .{err});
     _ = linux.umount2("/priv", 0);
     log("shutdown {t}", .{kind});
     const cmd: linux.LINUX_REBOOT.CMD = switch (kind) {
@@ -1466,4 +1545,6 @@ test {
     std.testing.refAllDecls(recovery);
     std.testing.refAllDecls(helpers);
     std.testing.refAllDecls(seal);
+    std.testing.refAllDecls(system_image);
+    std.testing.refAllDecls(postgres_init);
 }

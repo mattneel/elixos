@@ -35,6 +35,7 @@ fi
 echo "images and tests:"
 need qemu-system-x86_64 qemu-system-x86 "boots every QEMU test"
 need mkfs.ext4 e2fsprogs "persistent disk image"
+need mksquashfs squashfs-tools "read-only PostgreSQL system image (M18)"
 need debugfs e2fsprogs "tests read/write the disk image without root"
 need mformat mtools "ESP image (M13)"
 need ssh-keygen openssh-client "SSH test keys (M12)"

@@ -50,9 +50,15 @@ Any malformed, duplicate or overflowing list disables the entire list.
 
 The reply pipe carries `HELPER <name> OK <pid>\n` (positive canonical u32)
 or `HELPER <name> REFUSED\n`. Unknown names and failed forks are refused and
-logged (§6). One live child per name is reused; exited children are reaped.
-Helpers run as the declared uid/gid, without the BEAM's supplementary groups,
-and are stopped after the BEAM during shutdown.
+logged (§6); PostgreSQL helpers are also refused in rescue or without the
+mounted system image. One live child per name is reused; exited children are
+reaped. `OK` acknowledges a fork, not successful exec or SQL readiness.
+Helpers run as the declared uid/gid, without the BEAM's supplementary groups
+or capabilities. PostgreSQL helpers receive a fixed child-only library/PATH
+environment rooted in `/system`; caller argv and environment are never used.
+After the BEAM stops, the shim sends PostgreSQL SIGINT and waits up to 30
+seconds for fast shutdown before stopping other helpers. Deadline expiry is
+logged before SIGKILL, never presented as clean shutdown (ADR-053).
 
 `Elixos.Privileges` serializes requests independently of Control's heartbeat.
 Timeouts do not replay effects: an active timed-out request retains its place
@@ -217,6 +223,10 @@ Placeholders: `<g>` generation, `<n>` number, `<m>` `normal|rescue`,
 | `cannot exec helper name=<name>, exiting`                              | fixed helper executable failed        | M17  |
 | `cannot format helper handoff, powering off`                           | panic handoff could not be prepared   | M17  |
 | `cannot own crash directory (<error>)`                                 | writable dump directory could not be prepared | M17 |
+| `system image unavailable (<error>), services disabled`                 | normal-mode image preparation failed  | M18  |
+| `postgres directories unavailable (<error>), services disabled`        | safe database ownership preparation failed | M18 |
+| `cannot unmount system image (<error>)`                                | a service mount could not be released | M18  |
+| `helper shutdown timeout name=postgres, killing`                       | PostgreSQL exceeded its fast-shutdown grace | M18 |
 
 `attempt=<n>` is the plan's `next_state.attempts`. When planning from an
 unreadable or unmountable state, the shim uses the defaults (`0/0/0`).
@@ -242,6 +252,9 @@ ext4, label `ELIXOS`, mounted on `/priv`:
 /priv/hex/repos.exs     trusted Hex repositories (M14, ADR-019)
 /priv/hex/keys/         each repo's public key, `<name>.pub`
 /priv/hex/cache/        fetched registries and tarballs
+/priv/system/system.squashfs  root-owned immutable service image, mode 0444 (M18)
+/priv/postgres/data/    PostgreSQL cluster, uid/gid 70, mode 0700 (M18)
+/priv/postgres/log/     uid/gid 70, mode 0755; logs are mode 0644 (M18)
 ```
 
 `/priv/crash` belongs to uid/gid 1000 so ERTS can create its dumps. PID 1

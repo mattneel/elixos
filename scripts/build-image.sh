@@ -23,6 +23,8 @@
 #   x86_64:  build/bzImage, build/initramfs.cpio.gz   (where the tests look)
 #   aarch64: build/aarch64/Image, build/aarch64/initramfs.cpio.gz
 #   both:    build/<arch>/rootfs.tar, sbom-<arch>.spdx.json, rootfs.digest
+#   both:    build/<arch>/system.squashfs, system/sbom-<arch>.spdx.json,
+#            system.digest (a second gzip SquashFS assembly must agree)
 #
 # Everything is pinned: our packages by the sha256s in their melange YAMLs, the
 # Alpine set by the lockfile, melange and apko by
@@ -44,6 +46,7 @@ BUILD_DATE="${BUILD_DATE:-2026-01-01T00:00:00Z}"
 [ -x "$MELANGE" ] || { echo "build-image: no melange; run scripts/install-build-tools.sh" >&2; exit 1; }
 [ -x "$APKO" ] || { echo "build-image: no apko; run scripts/install-build-tools.sh" >&2; exit 1; }
 [ -x "$ROOT/scripts/mkinitramfs.sh" ] || { echo "build-image: scripts/mkinitramfs.sh missing" >&2; exit 1; }
+[ -x "$(command -v mksquashfs)" ] || { echo "build-image: no mksquashfs; install squashfs-tools" >&2; exit 1; }
 
 mkdir -p "$BUILD/apk" "$MIRROR"
 if [ ! -f "$KEY" ]; then
@@ -111,20 +114,73 @@ assemble() { # assemble <arch> <output tar>
     "$ROOT/apko/apko.yaml" "elixos:$arch" "$out"
 }
 
+system_lock() { # system_lock <arch>: retain committed pins until config changes
+  local arch="$1" config="$ROOT/apko/system.yaml" lockfile="$ROOT/apko/system.lock.$1.json"
+  if ! python3 - "$config" "$lockfile" <<'PY'
+import base64, hashlib, json, sys
+try:
+    checksum = "sha256-" + base64.b64encode(hashlib.sha256(open(sys.argv[1], "rb").read()).digest()).decode()
+    current = json.load(open(sys.argv[2]))["config"]["checksum"]
+except (OSError, KeyError, ValueError):
+    sys.exit(1)
+sys.exit(0 if current == checksum else 1)
+PY
+  then
+    "$APKO" lock "$config" --arch "$arch" --cache-dir "$MIRROR" --output "$lockfile"
+  fi
+}
+
+assemble_system() { # assemble_system <arch> <work directory>
+  local arch="$1" work="$2" epoch
+  epoch="$(date -u -d "$BUILD_DATE" +%s)"
+  mkdir -p "$work"
+  "$APKO" build --lockfile "$ROOT/apko/system.lock.$arch.json" --arch "$arch" \
+    --build-date "$BUILD_DATE" --sbom-path "$work" --cache-dir "$MIRROR" \
+    "$ROOT/apko/system.yaml" "elixos-system:$arch" "$work/rootfs.tar"
+  rm -rf "$work/oci" "$work/rootfs"
+  mkdir -p "$work/oci" "$work/rootfs"
+  tar -xf "$work/rootfs.tar" -C "$work/oci"
+  local layers=("$work"/oci/*.tar.gz)
+  [ "${#layers[@]}" -eq 1 ] && [ -f "${layers[0]}" ] || {
+    echo "build-image: [$arch] expected exactly one system layer" >&2; return 1;
+  }
+  # Services use the machine's /dev, not /system/dev. Exclude apko's device
+  # placeholders so assembling this read-only asset does not require root.
+  tar -xzf "${layers[0]}" -C "$work/rootfs" --exclude='dev/*' --exclude='./dev/*'
+  # Stable ordering, timestamps, ownership and compressor concurrency. Do not
+  # append: an old filesystem must never influence a new image.
+  mksquashfs "$work/rootfs" "$work/system.squashfs" -noappend -comp gzip \
+    -all-root -no-xattrs -mkfs-time "$epoch" -all-time "$epoch" -processors 1 -no-progress
+}
+
+build_system() { # build_system <arch>
+  local arch="$1" work="$BUILD/$1" digest second
+  system_lock "$arch"
+  assemble_system "$arch" "$work/system"
+  check_sbom "$arch" "$work/system/sbom-$arch.spdx.json" "$ROOT/apko/system.yaml"
+  assemble_system "$arch" "$work/system-again" >/dev/null
+  digest="$(sha256sum "$work/system/system.squashfs" | cut -d' ' -f1)"
+  second="$(sha256sum "$work/system-again/system.squashfs" | cut -d' ' -f1)"
+  [ "$digest" = "$second" ] || {
+    echo "build-image: [$arch] system not reproducible: $digest vs $second" >&2; return 1;
+  }
+  install -m0444 "$work/system/system.squashfs" "$work/system.squashfs"
+  echo "$digest" > "$work/system.digest"
+  echo "build-image: [$arch] system digest $digest (two builds agree)"
+}
+
 layer_digest() { # layer_digest <image tar>: the layer file *is* named by its digest
   tar -tf "$1" | grep -E '\.tar\.gz$' | head -n1
 }
 
-check_sbom() { # check_sbom <arch> <sbom>
-  local arch="$1" sbom="$2"
-  # Every elixos-* package the image config asks for must be in the SBOM with
-  # its version - that is the acceptance's "the SBOM lists at least the kernel,
-  # OTP and Elixir versions", and it tightens as the packages land.
-  python3 - "$ROOT/apko/apko.yaml" "$sbom" "$arch" <<'PY'
+check_sbom() { # check_sbom <arch> <sbom> [config]
+  local arch="$1" sbom="$2" config="${3:-$ROOT/apko/apko.yaml}"
+  # Every requested package must have its resolved version in the SBOM.
+  python3 - "$config" "$sbom" "$arch" <<'PY'
 import json, re, sys
 
 config, sbom, arch = sys.argv[1], sys.argv[2], sys.argv[3]
-wanted = re.findall(r"^\s*- (elixos-[a-z]+)$", open(config).read(), re.M)
+wanted = re.findall(r"^\s*- ([a-z][a-z0-9-]*)(?:[=@][^\s]+)?$", open(config).read().split("  packages:\n", 1)[1].split("\n\n", 1)[0], re.M)
 packages = {p["name"]: p.get("versionInfo", "") for p in json.load(open(sbom))["packages"]}
 
 for name in wanted:
@@ -142,6 +198,7 @@ PY
 build_arch() { # build_arch <arch>
   local arch="$1" work="$BUILD/$arch" digest second
   mkdir -p "$work"
+  build_system "$arch"
 
   build_packages "$arch"
   build_index "$arch"

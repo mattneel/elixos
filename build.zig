@@ -39,6 +39,18 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(shim);
 
+    const postgres_init = b.addExecutable(.{
+        .name = "elixos-postgres-init",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("shim/src/postgres_init.zig"),
+            .target = target,
+            .optimize = optimize,
+            .single_threaded = true,
+        }),
+    });
+    postgres_init.root_module.addOptions("build_options", options);
+    b.installArtifact(postgres_init);
+
     // Unit tests run natively on the dev host (WSL2 is x86_64 Linux as well).
     const tests = b.addTest(.{
         .root_module = shimModule(b, b.graph.host, .Debug, options),

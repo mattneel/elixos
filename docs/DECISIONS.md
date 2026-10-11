@@ -1474,3 +1474,18 @@ assertion, regex and timeout unchanged.
 than two concurrent writers. This acceptance-fixture correction is committed
 separately from the M18 implementation.
 
+## ADR-056: Declaration coverage includes the service-image native modules
+
+**Status:** accepted (M18)
+
+**Decision.** Extend the shim's existing `refAllDecls` test with
+`system_image` and `postgres_init`, preserving every existing reference.
+The standalone init guard is also a real build target, not a lazily
+unreferenced declaration. This is the coverage required by AGENTS.md for
+new files on the pinned Zig nightly.
+
+**Consequences.** The protected test block is stronger, not relaxed.
+The host runs all 64 unit tests and both release targets compile. Record
+this addition with the native implementation so the acceptance audit can
+distinguish added compiler coverage from an unapproved test change.
+
