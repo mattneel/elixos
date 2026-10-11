@@ -1328,3 +1328,31 @@ scheduler.
 
 **Consequences.** Native speed is earned per function and reversible per tool,
 and a native crash before promotion costs only the peer.
+
+## ADR-051: Agent IDs remain strings, not permanent atoms
+
+**Status:** accepted
+
+**Context.** Plain-agent registration used `String.to_atom("elixos.agent.#{id}")`.
+A disposable BEAM probe retained all 5,000 generated names after garbage
+collection. That establishes an atom leak, not agent capacity: an atom is
+never collected, even after the agent stops.
+
+**Decision.** Register plain-agent child pids with OTP's `:global`, using
+`{Elixos.Agents, supervisor_pid, binary_id}` as the key. No ID-derived atom is
+created. The supervisor pid scopes names to this tree, including connected
+peer instances and distribution started after the agents. OTP monitors the
+registered child and removes the name when it exits; supervisor restarts
+register the replacement under the same key. Jido's existing string-keyed
+registry is unchanged.
+
+The supervisor's child-start MFA must register another process, not itself.
+`:global.register_name/2` supports that; `Registry.register/3` does not.
+This preserves generic agents' `start_link/1` contract without imposing a
+`:name` option or adding a second custom registry process.
+
+**Consequences.** Registration uses OTP's distributed coordination when peers
+are connected. A disposable, isolated BEAM exercised lookup, duplicate
+rejection, crash/restart, snapshots and 256 sequential start/stop lifecycles
+with zero added atoms after warm-up. Maximum live agents was one: this is
+lifecycle/retention evidence, not a capacity result.

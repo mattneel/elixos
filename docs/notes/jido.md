@@ -100,12 +100,16 @@ report - so a lookup cannot be built on it, and a record that caches the pid
 points at the dead one after a crash anyway. Two ways out, one per agent kind:
 a plain agent starts through `Elixos.Agents.start_agent_child/3`, whose MFA is
 the child spec's `start`, so every start (a supervisor restart included)
-registers the process under `:"elixos.agent.<id>"`; a Jido agent is in its
-instance's `Registry`, whose name `Jido.registry_name/1` derives
-(`Module.concat(instance, Registry)`), and `Jido.AgentServer.whereis/2` reads
-it. Jido is a Mix dependency now (ADR-036), so those are direct calls that
-either compile or fail the build - the `apply/3` indirection the packaging
-days needed is gone.
+registers the child pid with OTP's `:global`. The key is
+`{Elixos.Agents, supervisor_pid, binary_id}`: IDs stay strings and names from
+other supervisor trees cannot collide. Unlike `Registry.register/3`, this
+supports registering the child from the supervisor process without requiring
+the child's `start_link/1` to understand a `:name` option. Names disappear
+when the child exits; a restart registers its replacement (ADR-051).
+A Jido agent is in its instance's `Registry`, whose name
+`Jido.registry_name/1` derives (`Module.concat(instance, Registry)`), and
+`Jido.AgentServer.whereis/2` reads it. Jido is a Mix dependency now (ADR-036),
+so those are direct calls that either compile or fail the build.
 
 **Provider responses.** A hosted provider answers `Transfer-Encoding: chunked`
 as often as not, and the body assembles from hex-size lines -

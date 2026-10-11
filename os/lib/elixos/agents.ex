@@ -194,14 +194,12 @@ defmodule Elixos.Agents do
     end
   end
 
-  # Where the agent with this id is, or nil. A DynamicSupervisor reports its
-  # children with an `:undefined` id, so a lookup cannot ask *it*: a plain
-  # agent registers a name of ours (on every start, including a restart - the
-  # child's start MFA is `start_agent_child/3`), and a Jido agent is in its
-  # instance's registry, which survives its restart too.
+  # Every plain-agent start, including supervisor restarts, registers its binary
+  # ID as data. The supervisor pid scopes names to this tree, including when a
+  # connected peer runs its own Elixos instance. Jido already has a string registry.
   defp live_pid(id, %{module: module, opts: opts}) do
-    case Process.whereis(agent_name(id)) do
-      nil ->
+    case :global.whereis_name(registration_key(id)) do
+      :undefined ->
         if jido_agent?(module) do
           Jido.AgentServer.whereis(Jido.registry_name(Keyword.get(opts, :jido, Jido)), id)
         end
@@ -211,22 +209,24 @@ defmodule Elixos.Agents do
     end
   end
 
-  defp agent_name(id), do: String.to_atom("elixos.agent.#{id}")
+  defp registration_key(id), do: {__MODULE__, Process.whereis(Elixos.Agents.Supervisor), id}
 
   @doc false
   # The child spec's start MFA: the agent starts and its name is registered,
   # which is what a lookup reads after a supervisor restart.
   def start_agent_child(module, id, opts) do
-    if Process.whereis(agent_name(id)) do
+    key = registration_key(id)
+
+    if :global.whereis_name(key) != :undefined do
       {:error, {:already_started, id}}
     else
       case module.start_link(opts) do
         {:ok, pid} ->
-          try do
-            Process.register(pid, agent_name(id))
-            {:ok, pid}
-          rescue
-            ArgumentError ->
+          case :global.register_name(key, pid) do
+            :yes ->
+              {:ok, pid}
+
+            :no ->
               # Lost a race with another start of the same id: that one wins,
               # and this child does not exist.
               Process.exit(pid, :shutdown)
