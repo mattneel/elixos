@@ -968,10 +968,21 @@ dependency (ADR); `Elixos.Browser` starts the adapter only in normal mode,
 stops it on poweroff, and never lets it block the prompt.
 
 **Done when.** `make ci` is green with `MILESTONE=25`, both test files pass,
-and the ADR records the loader decision - or M25 is explicitly abandoned in
-the roadmap with the reason.
+and the ADR records the loader decision - or M25 is explicitly abandoned in the
+roadmap with the reason.
 
-- [ ] Demo recorded: `demos/m25-browser.mp4` (`make demo M=25`).
+**Done (2026-10-11).** `make ci` green at `MILESTONE=25`: 298 host tests, 51
+QEMU tests, and both images building with two agreeing digests each. The loader
+arm taken is ADR-064 - the pinned upstream Lightpanda, stripped, with the
+private glibc it needs in the package's own directory under `/system/browser`,
+started through glibc's own loader, which `command/1` turns into argv. The stack
+is ADR-065 - `cdp_ex` behind the same session/page interface `jido_browser`'s
+Lightpanda adapter expects, with the process a Port; `light_cdp` and
+`jido_browser` itself were evaluated and rejected there with evidence. The
+on-box toolchain gained Rust (ADR-066), and the acceptance now releases its
+first VM before the rescue boot (ADR-067).
+
+- [x] Demo recorded: `demos/m25-browser.mp4` (`make demo M=25`).
 
 ---
 

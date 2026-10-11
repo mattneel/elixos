@@ -1,0 +1,9 @@
+# A browser to call from the prompt: it ships in the read-only system image,
+# comes up with the system, and the verbs work - navigate, evaluate, screenshot.
+# Keys match at the start of a line, in order (demos/check.sh).
+{:ok, #PID<
+{:ok,
+ ["/system/browser/glibc/ld-linux-x86-64.so.2", "--library-path",
+{:ok, "hello from a data url"}
+{13458, <<137, 80, 78, 71>>}
+elixos-shim: shutdown poweroff
