@@ -55,7 +55,7 @@ pipeline:
       # the manifest scripts/build-image.sh staged next to the tree.
       if [ -f /home/build/prebuilt/factory.links ]; then
         while IFS="$(printf '\t')" read -r link target; do
-          dest="${targets.destdir}/$link"
+          dest="${{targets.destdir}}/$link"
           mkdir -p "$(dirname "$dest")"
           ln -sfn "$target" "$dest"
         done < /home/build/prebuilt/factory.links

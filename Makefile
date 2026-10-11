@@ -12,7 +12,7 @@ BUILD ?= build
 export ELIXOS_BUILD := $(abspath $(BUILD))
 
 .PHONY: help check-tools test test-shim deps test-os test-qemu test-qemu-aarch64 ci audit demo demos \
-        image reproducible uefi-image disk qemu format clean distclean
+        image images reproducible uefi-image disk qemu format clean distclean
 
 help: ## List targets
 	@awk -F':.*## ' '/^[a-z0-9-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -35,11 +35,11 @@ test-os: deps ## ExUnit tests for the Elixir userland (no QEMU)
 test-qemu: deps image ## Boot real images in QEMU (slow): os/test/integration
 	cd os && ELIXOS_QEMU=1 ELIXOS_MILESTONE=$(MILESTONE) mix test test/integration
 
-test-qemu-aarch64: image ## The aarch64 smoke set, on qemu-system-aarch64 (TCG: slow)
+test-qemu-aarch64: images ## The aarch64 smoke set, on qemu-system-aarch64 (TCG: slow)
 	cd os && ELIXOS_QEMU=1 ELIXOS_QEMU_AARCH64=1 ELIXOS_MILESTONE=$(MILESTONE) \
 	  mix test test/integration/m16_aarch64_test.exs
 
-ci: test test-qemu ## Everything for the current milestone
+ci: test test-qemu images ## Everything for the current milestone, both architectures
 
 audit: ## Fail if a shipped test, Zig test block or vector changed without an ADR
 	scripts/audit-tests.sh
@@ -51,9 +51,12 @@ demo: ## Record and check one demo: make demo M=4 (demos/README.md)
 demos: ## Record and check every demo up to MILESTONE
 	demos/demo.sh --all
 
-image: ## The images QEMU boots, both architectures (M16: melange + apko, ADR-041)
+image: ## This machine's image, incrementally (M16: melange + apko, ADR-041)
 	scripts/build-image.sh
 	scripts/mkdisk.sh
+
+images: image ## Both architectures (aarch64 is cross-built, but emulated OTP is slow)
+	scripts/build-image.sh aarch64
 	scripts/mkdisk.sh aarch64
 
 reproducible: ## Assemble the x86_64 rootfs twice from the lockfile; print the one digest

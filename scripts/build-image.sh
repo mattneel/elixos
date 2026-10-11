@@ -172,11 +172,12 @@ stage_prebuilt() { # stage_prebuilt <name> <apk>
   # melange's workspace copy does not carry symlinks whose target is outside
   # the tree (the release's links into /usr/local/lib/erlang, Elixir's bin
   # links): record them here so the package can recreate them itself.
-  ( cd "$tmp" && find . -type l -printf '%P\t%l\n' ) | LC_ALL=C sort > "$tmp.links"
+  ( cd "$tmp" && find . -type l -printf '%P\t%l\n' ) | LC_ALL=C sort > "$dir.links.tmp"
 
   rm -rf "$dir"
   mv "$tmp" "$dir"
-  echo "build-image: staged the native $name build ($(wc -l < "$tmp.links") symlink(s) recorded)"
+  mv "$dir.links.tmp" "$dir.links"
+  echo "build-image: staged the native $name build ($(wc -l < "$dir.links") symlink(s) recorded)"
 }
 
 # Elixir and the factory are architecture-neutral (ADR-060): build them once
