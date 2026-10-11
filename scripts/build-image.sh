@@ -387,16 +387,6 @@ assemble_arch() { # assemble_arch <arch>: root filesystem, initramfs, kernel
   local arch="$1" work="$BUILD/$arch" digest second
   mkdir -p "$work"
   build_system "$arch"
-
-  # The arm64 kernel is compiled natively before its package, which installs
-  # the artifact; everything else is built in this architecture's environment.
-  if [ "$arch" = aarch64 ]; then
-    kernel_cross
-    native_reuse
-  fi
-
-  build_packages "$arch"
-  build_index "$arch"
   lock "$arch"
   assemble "$arch" "$work/rootfs.tar"
 
@@ -438,11 +428,26 @@ assemble_arch() { # assemble_arch <arch>: root filesystem, initramfs, kernel
 
 build_arch() { # build_arch <arch>
   local arch="$1" work="$BUILD/$arch" inputs stamp
+  mkdir -p "$work"
+
+  # The packages first: each decides for itself whether its recipe's inputs
+  # moved. The image key below must see the APKs this run would actually
+  # install, so it cannot be checked before them.
+  if [ "$arch" = aarch64 ]; then
+    kernel_cross
+    native_reuse
+  fi
+  build_packages "$arch"
+  build_index "$arch"
+
+  # Assembly (root filesystem, reproducibility, initramfs, squashfs) is the
+  # other expensive half: skip it when the lockfiles, the APKs and the packers
+  # are the ones that produced what is already there.
   inputs="$(image_inputs "$arch")"
   stamp="$work/.image.inputs"
   if [ -z "${FORCE:-}" ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$inputs" ] &&
      [ -f "$work/initramfs.cpio.gz" ] && [ -f "$work/rootfs.digest" ]; then
-    echo "build-image: [$arch] image inputs unchanged (cache hit)"
+    echo "build-image: [$arch] assembly inputs unchanged (cache hit)"
     publish_host_artifacts "$arch" "$work"
     return 0
   fi

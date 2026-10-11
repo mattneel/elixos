@@ -23,6 +23,7 @@ means a failing test first, then the fix).
 | `m17-escape-hatch.mp4` | M17 | uid 1000, refused recovery-file writes and an unknown helper, then a saved module survives a power cycle and its generation is sealed |
 | `m18-postgres.mp4` | M18 | PostgreSQL 17 answers from the prompt as uid 70, both extensions load from the read-only `/system` image, and a row survives the power cycle with a clean shutdown |
 | `m19-oban.mp4` | M19 | a worker defined at the prompt runs a job now, and a job scheduled for later survives a power cycle and runs on the next boot |
+| `m20-ask.mp4` | M20 | an agent asks the human through the Jido action, the console shows the notice line, the prompt answers, and the answer returns into the agent's state |
 
 ## Play, record, check
 

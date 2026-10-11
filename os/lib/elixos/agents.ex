@@ -273,20 +273,30 @@ defmodule Elixos.Agents do
   end
 
   # A Jido instance is a supervision tree of its own (registry, agent
-  # supervisor, worker pool): the first agent that needs it starts it.
+  # supervisor, worker pool): the first agent that needs it starts it. An
+  # instance module writes its own `start_link/0` (`use Jido`); the library
+  # module itself only has `start_link/1`, and naming it is how an agent joins
+  # the instance the OS calls `Jido` - that is what `jido: Jido` means.
   defp start_jido(instance) do
-    if Process.whereis(instance) do
-      :ok
-    else
-      {:ok, _apps} = Application.ensure_all_started(:jido)
+    cond do
+      Process.whereis(instance) ->
+        :ok
 
-      case apply(instance, :start_link, []) do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
-        {:error, reason} -> {:error, {:jido_instance_failed, instance, reason}}
-      end
+      function_exported?(instance, :start_link, 0) ->
+        jido_started(instance, apply(instance, :start_link, []))
+
+      function_exported?(instance, :start_link, 1) ->
+        {:ok, _apps} = Application.ensure_all_started(:jido)
+        jido_started(instance, apply(instance, :start_link, [[name: instance]]))
+
+      true ->
+        {:error, {:jido_instance_failed, instance, :no_start_link}}
     end
   end
+
+  defp jido_started(_instance, {:ok, _pid}), do: :ok
+  defp jido_started(_instance, {:error, {:already_started, _pid}}), do: :ok
+  defp jido_started(instance, {:error, reason}), do: {:error, {:jido_instance_failed, instance, reason}}
 
   defp jido_agent?(module) do
     is_atom(module) and Code.ensure_loaded?(module) and

@@ -15,12 +15,12 @@ cyberdecks and SBCs. Images are built from pinned Alpine packages for
 
 ## Status
 
-**M1–M19 are landed:** live generations and recovery, on-box Mix builds, SSH,
+**M1–M20 are landed:** live generations and recovery, on-box Mix builds, SSH,
 UEFI boot, trusted Hex packages, Jido agents, package-built images, an
 unprivileged BEAM with sealed commits, a PostgreSQL system service, and Oban
 jobs that survive a power cycle.
 
-**Next:** questions the human answers.
+**Next:** the coding agent's toolset (M21).
 The coding-agent toolset and safe self-modification remain planned work.
 See the [roadmap and acceptance criteria](docs/ROADMAP.md).
 

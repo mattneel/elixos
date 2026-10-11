@@ -71,13 +71,13 @@ expect -re {iex\([0-9]+\)> }
 sleep 1
 
 # The action returns the answer, and the agent keeps it in its state.
-send {Enum.find(1..60, fn _ -> Process.sleep(250); Jido.AgentServer.state(Elixos.Agents.whereis("asker")).agent.state[:answer] == "matt" end)}
+send {Enum.find(1..60, fn _ -> Process.sleep(250); {:ok, s} = Jido.AgentServer.state(Elixos.Agents.whereis("asker")); s.agent.state[:answer] == "matt" end)}
 send "\r"
 expect -re {[\r\n]+[0-9]+[\r\n]+}
 expect -re {iex\([0-9]+\)> }
 sleep 1
 
-send {Map.fetch!(Jido.AgentServer.state(Elixos.Agents.whereis("asker")).agent.state, :answer)}
+send {{:ok, s} = Jido.AgentServer.state(Elixos.Agents.whereis("asker")); Map.fetch!(s.agent.state, :answer)}
 send "\r"
 expect -exact {"matt"}
 expect -re {iex\([0-9]+\)> }

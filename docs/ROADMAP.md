@@ -657,7 +657,15 @@ guesswork, and rescue runs none of it.
 **Done when.** `make ci` is green with `MILESTONE=20`, both test files pass,
 and the notice line and the question shape are in PROTOCOL.md.
 
-- [ ] Demo recorded: `demos/m20-ask.mp4` (`make demo M=20`).
+- [x] Done (2026-10-11): `os/test/elixos/ask_test.exs` (7 tests) and
+  `test/integration/m20_ask_test.exs` (1 test) pass: questions are data in
+  `Elixos.Ask` (ordering, several askers, a timeout, a dismissal, answers
+  validated against the question, an asker that goes away dismissing its
+  questions), the console prints the notice line, and the Jido action carries
+  the answer back into the agent's state (ADR-059; the notice line and the
+  question shape are in PROTOCOL.md §6, the fixture's own state-reading bug is
+  ADR-061).
+- [x] Demo recorded: `demos/m20-ask.mp4` (`make demo M=20`).
 
 ---
 
