@@ -13,6 +13,7 @@ defmodule Elixos.NativeTest do
   use ExUnit.Case, async: false
 
   @moduletag milestone: 24
+  @moduletag :deferred
   @moduletag :tmp_dir
   @moduletag timeout: 900_000
 

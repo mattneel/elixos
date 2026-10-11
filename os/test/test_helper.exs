@@ -30,8 +30,16 @@ future = for m <- (milestone + 1)..99//1, do: {:milestone, m}
 # and a normal x86_64 run never picks it up.
 arch_excludes = if System.get_env("ELIXOS_QEMU_AARCH64") == "1", do: [], else: [:aarch64]
 
+# M21-M24 (the agent arc: the OMP toolset, the coding agent, self-modification
+# and the native hot paths) are deferred until the human's own agent work
+# lands. Their tests stay in the suite as that arc's specification, tagged
+# `:deferred`; ADR-063 records the decision.
+deferred = [:deferred]
+
 exclude =
-  if System.get_env("ELIXOS_QEMU") == "1", do: future ++ arch_excludes, else: [:qemu | future]
+  if System.get_env("ELIXOS_QEMU") == "1",
+    do: deferred ++ future ++ arch_excludes,
+    else: [:qemu | deferred ++ future]
 
 ExUnit.configure(exclude: exclude)
 ExUnit.start()

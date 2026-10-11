@@ -19,6 +19,7 @@ defmodule Elixos.ToolsetDifferentialTest do
   use ExUnit.Case, async: false
 
   @moduletag milestone: 21
+  @moduletag :deferred
   @moduletag :tmp_dir
 
   @fixture_root Path.expand("../fixtures/omp", __DIR__)

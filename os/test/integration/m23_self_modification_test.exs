@@ -14,6 +14,7 @@ defmodule Elixos.Integration.M23SelfModificationTest do
 
   @moduletag :qemu
   @moduletag milestone: 23
+  @moduletag :deferred
   @moduletag timeout: 3_600_000
   @moduletag :tmp_dir
 

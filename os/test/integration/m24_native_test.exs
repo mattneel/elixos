@@ -14,6 +14,7 @@ defmodule Elixos.Integration.M24NativeTest do
 
   @moduletag :qemu
   @moduletag milestone: 24
+  @moduletag :deferred
   @moduletag timeout: 1_200_000
   @moduletag :tmp_dir
 

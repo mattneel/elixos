@@ -673,6 +673,10 @@ and the notice line and the question shape are in PROTOCOL.md.
 
 ## M21: The OMP toolset on Elixos
 
+> **Deferred (ADR-063).** This milestone waits for the human's agent work
+> (the pinned OMP toolset). It is not abandoned: its tests stay in the suite as
+> the specification, tagged `:deferred`, and the arc resumes there.
+
 **Goal.** An agent on the box gets the whole coding-agent toolset: every tool
 the pinned OMP SDK exposes, with the same names, parameters, outputs and error
 behaviour, so a prompt written for OMP works unchanged. The first
@@ -767,6 +771,10 @@ pass, and ADR-047 holds.
 
 ## M22: The on-box coding agent
 
+> **Deferred (ADR-063).** This milestone waits for the human's agent work
+> (the pinned OMP toolset). It is not abandoned: its tests stay in the suite as
+> the specification, tagged `:deferred`, and the arc resumes there.
+
 **Goal.** A coding agent lives on the machine. A Jido agent owns the loop and
 uses M21's toolset; it starts from IEx or over SSH like any REPL session,
 reads its project instructions from the repository it works in, asks the human
@@ -819,6 +827,10 @@ and ADR-048 holds.
 ---
 
 ## M23: Self-modification
+
+> **Deferred (ADR-063).** This milestone waits for the human's agent work
+> (the pinned OMP toolset). It is not abandoned: its tests stay in the suite as
+> the specification, tagged `:deferred`, and the arc resumes there.
 
 **Goal.** The agent can change Elixos itself - OS code, its own tools, its own
 prompt - and those changes reach the running system only through generations:
@@ -878,6 +890,10 @@ and ADR-049 holds.
 ---
 
 ## M24: Native hot paths
+
+> **Deferred (ADR-063).** This milestone waits for the human's agent work
+> (the pinned OMP toolset). It is not abandoned: its tests stay in the suite as
+> the specification, tagged `:deferred`, and the arc resumes there.
 
 **Goal.** Measured hot paths of the toolset move to Zig through Zigler, as pure
 functions, one at a time - promoted only when the differential suite says they

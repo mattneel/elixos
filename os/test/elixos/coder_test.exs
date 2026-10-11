@@ -13,6 +13,7 @@ defmodule Elixos.CoderTest do
   import ExUnit.CaptureLog
 
   @moduletag milestone: 22
+  @moduletag :deferred
   @moduletag :tmp_dir
   @moduletag timeout: 60_000
 

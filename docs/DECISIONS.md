@@ -1719,3 +1719,29 @@ notices and the REPL - so console assertions no longer race a background
 service's narration, and a failed `initdb` is recorded on the disk instead of
 scrolling away. PROTOCOL.md §7 carries the new path, and the M04, M18, M19 and
 M20 acceptances were re-run against it.
+
+## ADR-063: The agent arc (M21-M24) is deferred; the list resumes at M25
+
+**Status:** accepted (human decision, 2026-10-11)
+
+**Context.** M21 pins the OMP toolset: an inventory taken from
+`@oh-my-pi/pi-coding-agent`, with fixtures that assert our implementation
+matches that pin. M22-M24 build on those tools - the on-box coding agent, the
+self-modification loop, the native hot paths - and reference them throughout
+(the self-modification and native-hot-path tests most of all). That toolset
+belongs to the human's own agent work (`~/src/clanklet`), so building it here
+means pinning a target that is still moving.
+
+**Decision.** Do not start M21-M24 now; start at M25 instead. Their tests stay
+in the suite unchanged and tagged `:deferred`, so the specification for that
+arc survives and `make test` keeps meaning something. `test/test_helper.exs`
+excludes the tag in both modes, each of the four roadmap sections says in place
+that it is deferred, and this ADR is the reason on record.
+
+**Consequences.** `MILESTONE` moves to 25 with M21-M24 not green: the gate is a
+linear count, so a deferral has to be expressed by a tag rather than a hole in
+the numbering. To resume the arc, delete the `:deferred` lines (this ADR already
+covers that change to the shipped tests), set `MILESTONE` back to 21 and work
+the tests in order. Nothing in M25-M27 depends on the toolset: the browser
+test's two toolset references are re-scoped to `Elixos.Browser` directly, and
+M26's tests never mention it.
