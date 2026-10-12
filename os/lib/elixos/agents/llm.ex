@@ -29,6 +29,10 @@ defmodule Elixos.Agents.LLM do
   Both response shapes are read: chat completions
   (`choices[0].message.content`) and responses (`output[].content[].text`),
   including the server-sent-events framing a streaming response arrives in.
+
+  Hosted HTTPS providers retain CA and peer verification. Hostnames use OTP's
+  HTTPS matcher, including single-label wildcard certificates; a wildcard does
+  not authorize unrelated domains or arbitrary subdomain depth.
   """
 
   require Logger
@@ -260,7 +264,16 @@ defmodule Elixos.Agents.LLM do
 
   defp connect(%URI{scheme: "https", host: host, port: port}) do
     with {:ok, certs} <- cacerts() do
-      options = [:binary, active: false, verify: :verify_peer, cacerts: certs, depth: 3]
+      options = [
+        :binary,
+        active: false,
+        verify: :verify_peer,
+        cacerts: certs,
+        depth: 3,
+        customize_hostname_check: [
+          match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
+        ]
+      ]
       # apply/3: the compiler does not need :ssl on its path to call it, and
       # the image's ERTS may not carry it at all (the caller checked).
       case apply(:ssl, :connect, [String.to_charlist(host), port || 443, options, 10_000]) do
