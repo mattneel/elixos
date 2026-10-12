@@ -1,0 +1,27 @@
+[package]
+name = "elixos-toolhost"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+# ADR-047/071: portable engines from the immutable OMP checkout. The source
+# preparation/build verifies the revision; none of the N-API/Bun addon ships.
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+flume = "0.12"
+tokio = { version = "1", features = ["full"] }
+pi-walker = { path = "../build/upstream/oh-my-pi/crates/pi-walker" }
+pi-vfs = { path = "../build/upstream/oh-my-pi/crates/pi-vfs" }
+pi-shell = { path = "../build/upstream/oh-my-pi/crates/pi-shell" }
+
+# pi-builtins and pi-shell must share the patched interpreter/parser types.
+[patch.crates-io]
+brush-core = { path = "../build/upstream/oh-my-pi/crates/vendor/brush-core" }
+brush-parser = { path = "../build/upstream/oh-my-pi/crates/vendor/brush-parser" }
+
+[profile.release]
+panic = "unwind"
+lto = "thin"
+strip = "symbols"
