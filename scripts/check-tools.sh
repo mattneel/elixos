@@ -103,6 +103,8 @@ if [ "$agg_found" != yes ]; then
   status=1
 fi
 need ffmpeg ffmpeg "encodes the demos as mp4"
+need ffprobe ffmpeg "inspects actual framebuffer demo videos (M27)"
+echo "  info     M27 graphics         QEMU virtio-gpu + usb-kbd, OTP UNIX sockets/JSON; no display server needed"
 
 echo "versions:"
 if command -v zig >/dev/null 2>&1; then

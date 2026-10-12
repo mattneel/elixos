@@ -2,3 +2,4 @@
 # The shim owns helper execution; callers supply names only.
 postgres-init 70:70 /usr/bin/elixos-postgres-init
 postgres 70:70 /system/usr/libexec/postgresql17/postgres -D /priv/postgres/data -c listen_addresses=127.0.0.1 -c unix_socket_directories= -c shared_preload_libraries=timescaledb -c logging_collector=on -c log_directory=/priv/postgres/log -c log_filename=postgresql-%Y-%m-%d_%H%M%S.log -c log_file_mode=0644
+console-handover 0:0 /usr/bin/elixos-console-handover

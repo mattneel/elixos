@@ -21,6 +21,8 @@ contents:
     # so /system carries it - binary, private glibc and manifest - and the
     # rootfs does not (ADR-064).
     - elixos-browser
+    # M27's raster NIF and private, target-correct musl ELF closure.
+    - elixos-gui-renderer
 
 accounts:
   users:

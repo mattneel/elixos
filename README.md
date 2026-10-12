@@ -21,8 +21,10 @@ an unprivileged BEAM with sealed commits, PostgreSQL, persistent Oban jobs,
 the Ask question queue, a headless browser, Rust tooling, and installed packages
 resolved as Mix dependencies.
 
-**In progress:** the framebuffer GUI (M27). Emerge is a dependency; the dialogs,
-framebuffer integration and input handling are not implemented yet.
+**In progress:** the framebuffer GUI (M27). The
+[synchronized GUI and IEx development recording](demos/m27-gui.mp4) shows all
+four Ask dialog kinds, real keyboard input and console handback on x86_64.
+ARM64 renderer packaging and the full milestone gate are still in progress.
 
 **Deferred:** the coding-agent toolset, on-box coding agent, safe self-modification
 and native hot paths (M21–M24), by [ADR-063](docs/DECISIONS.md).

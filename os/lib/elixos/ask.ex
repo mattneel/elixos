@@ -89,6 +89,15 @@ defmodule Elixos.Ask do
   def pending, do: call(:pending)
 
   @doc """
+  Subscribes this process to queue changes and returns the current snapshot.
+
+  Subsequent snapshots arrive as `{:elixos_ask, questions}`, oldest first.
+  Subscription and the initial snapshot are atomic; exiting removes the view.
+  """
+  @spec subscribe() :: {:ok, [Question.t()]} | {:error, :not_running}
+  def subscribe, do: call(:subscribe)
+
+  @doc """
   Answers `id` with `value`, which is checked against the question: `:ok`, or
   `{:error, :invalid_answer}` (the question never allowed that answer) or
   `{:error, :unknown_question}` (nothing is open under that id).
@@ -110,8 +119,11 @@ defmodule Elixos.Ask do
   @impl true
   def init(opts) do
     case Keyword.get(opts, :mode, :normal) do
-      :rescue -> :ignore
-      :normal -> {:ok, %{questions: [], next_id: 1, waiters: %{}, monitors: %{}}}
+      :rescue ->
+        :ignore
+
+      :normal ->
+        {:ok, %{questions: [], next_id: 1, waiters: %{}, monitors: %{}, subscribers: %{}}}
     end
   end
 
@@ -131,6 +143,7 @@ defmodule Elixos.Ask do
           Map.put(state.monitors, question.id, Process.monitor(question.asker))
         )
         |> schedule_timeout(question, opts)
+        |> publish()
 
       {:noreply, state}
     else
@@ -139,6 +152,17 @@ defmodule Elixos.Ask do
   end
 
   def handle_call(:pending, _from, state), do: {:reply, state.questions, state}
+
+  def handle_call(:subscribe, from, state) do
+    pid = asker(from)
+
+    subscribers =
+      if Map.has_key?(state.subscribers, pid),
+        do: state.subscribers,
+        else: Map.put(state.subscribers, pid, Process.monitor(pid))
+
+    {:reply, {:ok, state.questions}, %{state | subscribers: subscribers}}
+  end
 
   def handle_call({:answer, id, value}, _from, state) do
     case find(state, id) do
@@ -172,9 +196,16 @@ defmodule Elixos.Ask do
   # The asker is a front-end that must not be left waiting: when it goes away
   # (its session ended, its process was killed) its questions leave the queue,
   # never answered by guesswork.
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
+  def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
+    subscribers =
+      if Map.get(state.subscribers, pid) == ref,
+        do: Map.delete(state.subscribers, pid),
+        else: state.subscribers
+
+    state = %{state | subscribers: subscribers}
     ids = for question <- state.questions, question.asker == pid, do: question.id
-    {:noreply, Enum.reduce(ids, state, &drop(&2, &1))}
+    state = Enum.reduce(ids, state, &drop(&2, &1))
+    {:noreply, if(ids == [], do: state, else: publish(state))}
   end
 
   def handle_info(_message, state), do: {:noreply, state}
@@ -259,6 +290,7 @@ defmodule Elixos.Ask do
         GenServer.reply(from, reply)
         %{state | waiters: waiters}
     end
+    |> publish()
   end
 
   # The asker is gone; nobody is replied to.
@@ -274,6 +306,14 @@ defmodule Elixos.Ask do
         %{state | monitors: monitors}
     end
     |> Map.update!(:questions, &Enum.reject(&1, fn question -> question.id == id end))
+  end
+
+  defp publish(state) do
+    Enum.each(state.subscribers, fn {pid, _ref} ->
+      send(pid, {:elixos_ask, state.questions})
+    end)
+
+    state
   end
 
   defp asker({pid, _tag}), do: pid

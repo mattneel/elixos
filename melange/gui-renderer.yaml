@@ -1,0 +1,120 @@
+# Emerge 0.4.2's raster NIF: musl only, never a GNU NIF in the musl BEAM.
+# x86_64 uses the upstream embedded CPU artifact; ARM64 builds the same profile
+# from the verified Hex source with its Cargo.lock and immutable rust-skia pin.
+package:
+  name: elixos-gui-renderer
+  version: "0.4.2"
+  epoch: 0
+  description: "Emerge raster renderer and its private musl dependency closure"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime: []
+
+vars:
+  source-sha256: b3c3aa07f91c419f2fb38d966187abe3c67dfe3aa7dc63c0ac3f0e437646d315
+  x86_64-sha256: a944d8092f908e99482cdd7e70c050e692f54670921af6ca1bf7c93c0f2a16c4
+
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+    packages:
+      - alpine-release=3.24.2-r0
+      - bash
+      - ca-certificates
+      - curl
+      - tar
+      - binutils
+      - patchelf
+      - lddtreepax
+      - libstdc++=15.2.0-r5
+      - libgcc=15.2.0-r5
+      - musl=1.2.6-r2
+      # Build tools execute in the target Alpine environment, including ARM64.
+      - rust
+      - cargo
+      - build-base
+      - clang
+      - clang-dev
+      - llvm-dev
+      - python3
+      - git
+      - ninja
+      - gn=0_git20260717-r0
+      - cmake
+      - pkgconf
+
+pipeline:
+  - runs: |
+      set -eu
+      arch="${{build.arch}}"
+      case "$arch" in
+        x86_64|aarch64) ;;
+        *) echo "gui-renderer: unsupported architecture $arch" >&2; exit 1 ;;
+      esac
+      triple="$arch-unknown-linux-musl"
+      dest="${{targets.destdir}}/gui/$triple"
+      mkdir -p "$dest/lib" /tmp/renderer
+      cd /tmp/renderer
+      curl -fsSL -o emerge.tar "https://repo.hex.pm/tarballs/emerge-${{package.version}}.tar"
+      echo "${{vars.source-sha256}}  emerge.tar" | sha256sum -c -
+      tar -xf emerge.tar contents.tar.gz
+      mkdir source
+      tar -xzf contents.tar.gz -C source
+      mkdir -p "$dest/licenses"
+      cp source/LICENSE source/NOTICE source/THIRD_PARTY_ASSETS.md "$dest/licenses/"
+      if [ "$arch" = x86_64 ]; then
+        asset="libemerge_skia-v${{package.version}}-nif-2.15-$triple.so"
+        curl -fsSL -o nif.tar.gz \
+          "https://github.com/emerge-elixir/emerge/releases/download/v${{package.version}}/$asset.tar.gz"
+        echo "${{vars.x86_64-sha256}}  nif.tar.gz" | sha256sum -c -
+        tar -xzf nif.tar.gz
+        install -m 0755 "$asset" "$dest/libemerge_skia.so"
+      else
+        cd source/native/emerge_skia
+        # Cargo verifies registry crate checksums and the git revision from the
+        # shipped lock. Force Skia's source path: no unchecked binary cache.
+        export FORCE_SKIA_BUILD=1
+        # Skia's bundled ARM64 GN is glibc-linked; use Alpine's native musl GN.
+        export SKIA_GN_COMMAND=/usr/bin/gn
+        # Clang's Rust target omits Alpine's vendor in its C++ header search.
+        # Use the installed GCC's target-specific headers, only in this build.
+        export CPLUS_INCLUDE_PATH="/usr/include/c++/$(g++ -dumpfullversion)/$(g++ -dumpmachine)"
+        export SKIA_GN_ARGS="skia_use_fontconfig=false skia_use_system_freetype2=false"
+        export RUSTFLAGS="-Ctarget-feature=-crt-static"
+        export CARGO_PROFILE_RELEASE_STRIP=symbols
+        cargo build --locked --release --lib --no-default-features --features embedded-cpu
+        install -m 0755 target/release/libemerge_skia.so "$dest/libemerge_skia.so"
+      fi
+      # Resolve the actual ELF closure, not an assumed list. All paths below
+      # are build-guest libraries from signed Alpine APKs. Copy dereferenced
+      # files under their DT_NEEDED names and reject anything unresolved.
+      # A DSO has no PT_INTERP, and Alpine has no glibc ld.so.conf. Give the
+      # static resolver musl's library directories, only for this build step.
+      LD_LIBRARY_PATH=/lib:/usr/local/lib:/usr/lib \
+        lddtreepax -l "$dest/libemerge_skia.so" > /tmp/renderer/closure
+      while IFS= read -r lib; do
+        [ "$lib" = "$dest/libemerge_skia.so" ] && continue
+        case "$lib" in
+          /lib/*|/usr/lib/*)
+            [ -f "$lib" ] || { echo "gui-renderer: missing $lib" >&2; exit 1; }
+            cp -L "$lib" "$dest/lib/$(basename "$lib")"
+            ;;
+          *) echo "gui-renderer: unresolved or unexpected dependency $lib" >&2; exit 1 ;;
+        esac
+      done < /tmp/renderer/closure
+      # musl searches each DSO's RUNPATH; dependencies of libstdc++ also remain
+      # inside this private directory. No global LD_LIBRARY_PATH is required.
+      patchelf --set-rpath '$ORIGIN/lib' "$dest/libemerge_skia.so"
+      for lib in "$dest"/lib/*; do
+        [ -f "$lib" ] || continue
+        case "$(basename "$lib")" in
+          libc.musl-*|ld-musl-*) ;;
+          *) patchelf --set-rpath '$ORIGIN' "$lib" ;;
+        esac
+      done
+      readelf -h "$dest/libemerge_skia.so"
+      readelf -d "$dest/libemerge_skia.so"
+      (cd "$dest" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum) > "$dest/SHA256SUMS"

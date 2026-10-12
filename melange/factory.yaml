@@ -39,27 +39,6 @@ environment:
 
 pipeline:
   - runs: |
-      # Reuse is safe only for pure-BEAM dependencies: bytecode and symlinks into
-      # the target's own OTP install are architecture-neutral (ADR-060/066).
-      # M27 added Emerge's NIF; target-aware factory packaging is still required
-      # before the GUI can ship. This reuse path does not convert native code.
-      # Without a prebuilt tree the build below runs in the package environment.
-      if [ -d /home/build/prebuilt/factory ]; then
-        cp -a /home/build/prebuilt/factory/. "${{targets.destdir}}/"
-      # The symlink layout the native build had (links into the machine's
-      # own OTP install, which melange's workspace copy cannot carry): replay
-      # the manifest scripts/build-image.sh staged next to the tree.
-      if [ -f /home/build/prebuilt/factory.links ]; then
-        while IFS="$(printf '\t')" read -r link target; do
-          dest="${{targets.destdir}}/$link"
-          mkdir -p "$(dirname "$dest")"
-          ln -sfn "$target" "$dest"
-        done < /home/build/prebuilt/factory.links
-      fi
-
-        echo "factory: installed the natively built release"
-        exit 0
-      fi
 
       version="$(sed -n 's/^  @version "\(.*\)"$/\1/p' /home/build/os/mix.exs)"
       if [ "$version" != "${{package.version}}" ]; then
@@ -68,6 +47,8 @@ pipeline:
       fi
 
       export MIX_ENV=prod HEX_HOME=/tmp/hex MIX_HOME=/tmp/mix
+      export ELIXOS_GUI_PACKAGED=1 EMERGE_SKIA_BUILD=1
+      export TARGET_ARCH="${{build.arch}}" TARGET_OS=linux TARGET_ABI=musl TARGET_VENDOR=unknown
       mix local.hex "${{vars.hex}}" --force >/dev/null
 
       cd /home/build/os
@@ -86,6 +67,24 @@ pipeline:
       mkdir -p "$dest"
       cp -a /tmp/rel/. "$dest/"
       rm -rf "$dest/bin"
+      # The factory carries target-compiled loader BEAM, never native code.
+      # Use one real library name, not RustlerPrecompiled's versioned aliases.
+      # The directory symlink makes Rustler's app-relative load path explicit.
+      for emerge in "$dest"/lib/emerge-*; do
+        [ -d "$emerge/priv" ] || { echo "factory: Emerge priv missing" >&2; exit 1; }
+        rm -rf "$emerge/priv/native"
+        ln -s "/system/gui/${{build.arch}}-unknown-linux-musl" "$emerge/priv/native"
+        # Native code embeds the fonts; a release does not copy native/ or
+        # top-level notices. Keep redistribution texts with the Emerge app.
+        licenses="$emerge/priv/licenses"
+        mkdir -p "$licenses"
+        cp /home/build/os/deps/emerge/LICENSE /home/build/os/deps/emerge/NOTICE "$licenses/"
+        cp -a /home/build/os/deps/emerge/licenses/. "$licenses/"
+        for font in inter jetbrains-mono; do
+          install -m 0644 "/home/build/os/deps/emerge/native/emerge_skia/src/fonts/$font/OFL.txt" \
+            "$licenses/$font-OFL.txt"
+        done
+      done
 
       # The release carries this project and its Hex dependencies; the OTP
       # applications themselves live in the machine's own OTP install

@@ -73,11 +73,9 @@ defmodule Elixos.MixProject do
       {:ecto_sql, "~> 3.14"},
       {:postgrex, "~> 0.22"},
       {:cdp_ex, "~> 0.10"},
-      # M27's renderer dependency; the GUI itself is still stubbed.
-      # compiled_backends: [] selects raster, not musl. The image build must
-      # provide a target-compatible NIF; aarch64 musl needs a source build.
-      # Planned input comes from Elixos's evdev helper, not Emerge's headless
-      # renderer (docs/notes/emerge.md).
-      {:emerge, "~> 0.4.2"}
+      # The image packages Emerge's musl raster NIF separately from its BEAM.
+      # Rustler generates a loader without compiling/downloading native code.
+      {:rustler, "~> 0.38.0", runtime: false},
+      {:emerge, "0.4.2"}
     ]
 end

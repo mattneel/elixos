@@ -1045,10 +1045,11 @@ queue's questions to the panel, the person answers with the keyboard, and IEx
 stays alive behind it - a GUI that is never in the boot-critical path, whose
 first app is the queue M20 already has.
 
-**In progress.** Emerge 0.4.2 and `compiled_backends: []` are configured.
-`Elixos.GUI`'s entry points still raise `TODO(M27)`; off-screen dialogs, the
-framebuffer sink, input helper, console handover and QEMU GPU/QMP support
-remain unimplemented. No GUI acceptance or demo has passed yet.
+**In progress.** The four off-screen dialogs, framebuffer sink, evdev input,
+lease-based console handover and QEMU GPU/QMP support are implemented.
+`make test` and the x86_64 GUI acceptance have passed; the synchronized
+development demo exercises real keyboard input for all four dialog kinds.
+ARM64 renderer packaging and the full milestone gate are still in progress.
 
 **Acceptance.** `test/elixos/emerge_render_test.exs` (each Ask dialog renders
 with no display and its pixels are checked) and
@@ -1064,14 +1065,14 @@ the console works again after the GUI exits (rescue stays text-only).
   `config :emerge, compiled_backends: []` selects the *raster backend profile*,
   not the libc target. The host fetch selected `x86_64-unknown-linux-gnu--raster`;
   RustlerPrecompiled selects the target from ERTS and `TARGET_*` overrides.
-  M27 must pin and verify the musl artifact at image-build time (ADR-009),
-  then package it for the target. Emerge 0.4.2 lists x86_64 musl but no
-  aarch64 musl precompiled target; ARM64 needs a source build. A native NIF
-  also invalidates blanket x86_64 factory reuse for aarch64 (ADR-066).
+  The image pins and verifies the x86_64 musl artifact at build time
+  (ADR-009, ADR-069) and packages its private dependency closure.
+  Emerge 0.4.2 lists no aarch64 musl precompiled target; ARM64 uses a locked
+  source build. Both architectures now package their own factory loader.
 - *Rendering off-screen.* `EmergeSkia.Native.render_tree_to_pixels_nif/2` and
   `render_tree_to_png_nif/2` accept a serialized EMRG tree and raster options
-  and render synchronously with no window. The planned host test uses the
-  pixel buffer; the GUI wrapper is not implemented yet.
+  and render synchronously with no window. The GUI wrapper uses
+  `EmergeSkia.TreeRenderer.render_to_pixels/3` for the pixel-buffer tests.
 - *Input is ours, not Emerge's.* 0.4.2 has **no API to inject input into the
   renderer**; events only flow out (`set_input_target/2`, `set_input_mask/2`,
   `Emerge.handle_input/2`), and a headless raster renderer has no input device
@@ -1084,29 +1085,28 @@ the console works again after the GUI exits (rescue stays text-only).
   The QEMU test injects at `Elixos.GUI.input/1`, the same entry the helper
   feeds - `{:key, key, :press | :release}`, `{:pointer, x, y}`,
   `{:button, button, :press | :release}` - and QEMU's own keyboard through a
-  QMP socket (`sendkey`, and `screendump` for the demo's frames) is the
-  hardware-level variant for the demo, and the harness grows that socket
-  without changing anything existing.
-- *Kernel.* `/dev/fb0` needs `CONFIG_FB_DEVICE` (off today: fbcon uses fbdev
-  emulation without the node); `virtio-gpu` is already built in, so QEMU needs
-  only `-device virtio-gpu-pci`. The fragment change is configuration, never a
-  patch (ADR-001).
+  QMP socket (`send-key`, and `screendump` for the demo's frames) is the
+  hardware-level variant exercised by the demo.
+- *Kernel.* The common fragment enables `CONFIG_FB_DEVICE`,
+  `CONFIG_DRM_VIRTIO_GPU`, `CONFIG_INPUT_EVDEV` and `CONFIG_VIRTIO_INPUT`.
+  QEMU adds `virtio-gpu-pci` and `virtio-keyboard-pci`. These are configuration
+  changes, never a kernel patch (ADR-001).
 - *Console handover.* While the GUI owns the screen, unbind fbcon through its
   entry under `/sys/class/vtconsole`; rebind it when the GUI exits. Those
   writes need root, so the handover is a privileged helper on M17's allow-list
   (`console-handover`, ADR-046): the BEAM asks for it by name and cannot run
   anything else as root. The input helper's grab dies with the helper, so a
   crash returns the keyboard.
-- *Failure modes.* The GUI is never boot-critical: a renderer, NIF or helper
-  failure leaves IEx on the console working, and rescue stays text-only. The
-  NIF runs inside the VM, so a Skia crash takes the VM down with it - which is
-  exactly why the GUI is a service on top of the OS and not a dependency of
-  anything; an ADR records that.
+- *Failure modes.* The GUI is never boot-critical: renderer load/start or
+  helper failures leave the console available, and rescue stays text-only.
+  The NIF runs inside the VM, so a Skia crash can take the VM down with it
+  (ADR-069). Lease closure restores fbcon after ordinary GUI/helper death;
+  restarting a SIGKILLed broker restores abandoned bindings (ADR-070).
 
 **Done when.** `make ci` is green with `MILESTONE=27`, both test files pass,
 and the ADRs (the renderer as a service; the input path) are written.
 
-- [ ] Demo recorded: `demos/m27-gui.mp4` from QEMU screendump frames, next to the console recording (`make demo M=27`).
+- [ ] Milestone demo gate: `demos/m27-gui.mp4` combines synchronized framebuffer and console recordings (`make demo M=27`). Development recording published; tick at the completed milestone gate.
 
 ---
 

@@ -10,13 +10,13 @@ defmodule Elixos.Application do
     2. `Elixos.Privileges` on the inherited helper reply fd (M17).
     3. The asynchronous PostgreSQL and Oban managers (M18, M19), before restore.
     4. The generation's modules and boot spec (`Elixos.Image.restore/2`, M6).
-    5. The recorder, agents, Ask queue, browser manager and SSH.
+    5. The recorder, agents, Ask queue, framebuffer GUI, browser manager and SSH.
     6. The login REPL via `:shell.start_interactive/1` (M4, M9), then auto-commit.
     7. `Elixos.Oban.activate/0`, once the complete supervision tree is up.
 
   Control, privileges, restore, login and auto-commit failures must exit the VM
   non-zero so the shim counts the attempt and falls back (ADR-007). Database,
-  scheduler, browser and SSH startup failures remain non-critical.
+  scheduler, GUI, browser and SSH startup failures remain non-critical.
   """
   use Application
 
@@ -120,6 +120,9 @@ defmodule Elixos.Application do
             # action and every front-end sees the same queue. Not boot-critical,
             # and rescue runs none of it.
             {Elixos.Ask, mode: env.mode},
+            # Raster dialogs and framebuffer/input ownership are optional.
+            # Initialization is asynchronous; rescue never acquires the console.
+            {Elixos.GUI, mode: env.mode},
             # The headless browser (M25): the ecosystem's stack over a Port,
             # given the binary the image ships. Not boot-critical and rescue
             # runs none of it, so a broken adapter costs the browser and not

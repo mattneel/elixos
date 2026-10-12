@@ -349,3 +349,49 @@ reads by evaluating it (`Code.eval_file/1`), because it holds PEM keys.
 
 Reads and writes of `repos.exs` are atomic (temporary file, fsync, rename,
 fsync of each directory), like every other file Elixos keeps.
+
+## §9 Framebuffer GUI and console lease (M27)
+
+The GUI is a view of the Ask queue, not its owner. `Elixos.Ask.subscribe/0`
+atomically returns `{:ok, questions}` and subscribes the calling process to
+`{:elixos_ask, questions}` snapshots when the pending queue changes.
+Answers and dismissals retain the M20 Ask API and validation.
+
+`Elixos.GUI.status/0` returns `{:ok, pid}` only after the first frame has
+been presented. `stop/0` stops rendering, releases input grabs and waits for
+console handback; success is `:ok`. Rescue does not start a GUI.
+`render_dialog/1` works without a display and returns
+`{:ok, %{width: 640, height: 480, pixels: rgba_binary}}`.
+
+### IO Port
+
+`/usr/bin/elixos-gui-io` runs as uid 1000. Stdin and stdout use **packet-4**:
+a four-byte big-endian unsigned payload length followed by that many bytes,
+without a trailing newline. Helper-to-BEAM payloads are ASCII:
+
+| Payload | Meaning |
+|---|---|
+| `READY <width> <height>` | Framebuffer validated and input devices acquired |
+| `PRESENTED` | The complete supplied frame has been written to the framebuffer |
+| `KEY <code> <value>` | Linux evdev keycode; value 0 release, 1 press, 2 repeat |
+| `POINTER <x> <y>` | Pixel position, bounded to the visible framebuffer |
+| `BUTTON <code> <value>` | Linux evdev button code and value |
+
+BEAM-to-helper payloads are tightly packed RGBA8888, exactly
+`width * height * 4` bytes. A zero-length payload requests shutdown.
+Unsupported framebuffer formats, malformed packets and lost evdev input
+fail the session rather than being silently accepted. The helper converts
+RGBA into the framebuffer's validated true-color layout.
+
+### Root-owned lease
+
+The fixed allow-listed `console-handover` helper starts the broker or reuses
+the existing one. `/run/elixos-console.sock` is root:1000, mode 0660; the
+broker also checks `SO_PEERCRED` for uid 1000. There is one active lease.
+
+The connected IO helper receives byte `R` only after fbcon has been
+unbound. For a graceful release it sends byte `C`; the broker rebinds fbcon,
+replies `C`, then closes the lease. EOF, unexpected data or an error also
+releases the lease and triggers rebind before another lease is granted.
+No peer supplies a path or a sysfs command. Broker SIGKILL cannot perform
+cleanup; starting the broker again restores abandoned console bindings.

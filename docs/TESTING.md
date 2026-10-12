@@ -22,7 +22,7 @@ For iteration on the current work, `make check M=27` builds the host image,
 runs the Zig and ExUnit host suites through M27, then only
 `test/integration/m27_*.exs`. Use the full `make ci` at the milestone boundary,
 not after every edit. `make check M=26` can verify the completed baseline while
-M27 is still red.
+M27's ARM64 packaging and full gate are still in progress.
 
 ## Milestones
 
@@ -79,6 +79,10 @@ there and both sides must handle it. The format is documented in the file.
   Each disk carries its own architecture's toolchain. It uses e2fsprogs'
   `debugfs`, so no root and no mounting. Only use it while QEMU is not running.
   Guest `/priv/x` is `/x` here.
+- `Elixos.Test.QMP`: the GPU-enabled harness opens a private Unix QMP socket
+  and adds virtio GPU/keyboard devices. The M27 demo sends actual QEMU keys
+  and captures framebuffer PPMs through this helper; the shipped acceptance
+  also exercises the `Elixos.GUI.input/1` front-end seam.
 
 **Conventions.**
 - QEMU tests live in `os/test/integration/`, are tagged `:qemu`, and set a

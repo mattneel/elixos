@@ -36,9 +36,9 @@ tar, so nothing here needs root):
 `kernel/config.aarch64` hold architecture-specific options. The merge is
 checked by `scripts/check-kernel-config.sh`. On the x86_64 build host,
 `melange/kernel-cross.yaml` and `melange/otp-cross.yaml` cross-build the
-aarch64 kernel and ERTS natively (ADR-060). Elixir bytecode can be reused;
-the factory reuse path is safe only while its dependencies are pure BEAM.
-M27's Emerge NIF makes target-specific factory packaging necessary.
+aarch64 kernel and ERTS natively (ADR-060). Elixir bytecode is reused across
+architectures; the factory is packaged separately for each target because
+Emerge's native loader must select that target's musl renderer (ADR-069).
 
 `scripts/build-image.sh` keys APK reuse on each recipe's inputs and the
 published APK checksum, and keys image assembly separately. An OS source
@@ -71,8 +71,10 @@ the user creates lives there.
 **/system** is a separate, read-only gzip SquashFS containing PostgreSQL 17,
 its client, pgvector, TimescaleDB and their Alpine library closure (M18,
 ADR-052), plus Lightpanda and its private glibc under `/system/browser`
-(M25, ADR-064). PID 1 mounts `/priv/system/system.squashfs` only in normal
-mode. ICU and timezone data are exported through read-only bind mounts at
+(M25, ADR-064), and the target-specific Emerge raster NIF with its private
+musl library closure under `/system/gui` (M27, ADR-069).
+PID 1 mounts `/priv/system/system.squashfs` only in normal mode. ICU and
+timezone data are exported through read-only bind mounts at
 their compiled-in `/usr/share/icu` and `/usr/share/zoneinfo` paths; the
 factory declares only empty mount points. Rescue needs neither the service
 image nor its binaries.
@@ -393,11 +395,40 @@ OS dependency: ADR-065 records why it and `light_cdp` were rejected.
 `screenshot/0` returns PNG bytes, and `stop/0` closes the adapter.
 The browser does not run in rescue and cannot block console startup.
 
-## §12 GUI status (M27, in progress)
+## §12 Framebuffer GUI (M27, in progress)
 
-Emerge 0.4.2 is a dependency and the OS config selects its raster-only
-backend profile. `Elixos.GUI` is still a `TODO(M27)` contract: dialog
-rendering, `/dev/fb0` output, evdev input and console handover are not
-implemented. The architecture above does not yet start a GUI.
-The roadmap and `docs/notes/emerge.md` distinguish the planned integration
-from the verified host artifact selection.
+`Elixos.GUI` starts asynchronously after the Ask queue in normal mode, and
+only when `/dev/fb0` exists. Rescue remains console-only. The GUI renders
+text, choice, multi-choice and confirmation dialogs from the existing Ask
+queue; resolving a dialog uses `Elixos.Ask.answer/2` or `dismiss/1`, not a
+second question store. Ask subscriptions provide an atomic initial snapshot
+and subsequent queue changes.
+
+Emerge 0.4.2 runs a headless CPU raster renderer. It delivers RGBA8888
+`VideoInterop.Frame` binaries to the GUI owner process, which validates the
+dimensions, format and stride before sending them to the libc-free
+`elixos-gui-io` Port. The helper writes the fbdev mapping and acknowledges
+each presented frame. One frame is in flight; newer pending frames replace
+older pending frames rather than building an unbounded queue.
+
+The same helper reads evdev keyboard and pointer events. Elixir owns focus,
+text editing, selections and Ask validation. A root-owned console-handover
+broker grants a single lease to uid 1000, unbinds the framebuffer console
+while the GUI owns it, and rebinds it before acknowledging a graceful stop
+or admitting another lease. Closing the lease also restores the console
+after an ordinary GUI/helper failure (ADR-070).
+
+The image owns the renderer ABI: the x86_64 musl artifact is checksum-pinned;
+ARM64 uses the locked source build because upstream ships no ARM64 musl
+artifact. Each target's factory points at its own renderer and private
+dependency closure. A renderer-only change does not invalidate kernel or
+OTP packages. Backend selection alone does not choose musl.
+
+GUI startup failures are non-critical and the login REPL still starts. The
+renderer is a NIF inside the BEAM, however: a native crash can still terminate
+the VM. Input-device hotplug currently requires restarting the GUI.
+
+The host suite, four off-screen raster dialogs and the x86_64 GPU acceptance
+have passed. The [development recording](../demos/m27-gui.mp4) exercises real
+evdev keys and console handback. ARM64 packaging and the full milestone gate
+are not yet complete; the roadmap checklist remains unticked.

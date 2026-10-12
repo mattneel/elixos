@@ -27,7 +27,7 @@ defmodule Elixos.Test.QEMU do
 
   # iex_prompt: number of the last `iex(N)>` prompt seen, so `iex/3` can tell
   # the next prompt from IEx redrawing the current one (it does, on every line).
-  defstruct [:port, :os_pid, :iex_prompt, buffer: "", transcript: ""]
+  defstruct [:port, :os_pid, :iex_prompt, :qmp, :qmp_path, buffer: "", transcript: ""]
 
   @type t :: %__MODULE__{}
 
@@ -49,6 +49,7 @@ defmodule Elixos.Test.QEMU do
       console and artifacts the guest gets
     * `:uefi` - `{esp_image, ovmf_code, ovmf_vars_copy}`: boot through firmware
       instead of `-kernel`/`-initrd`
+    * `:gpu` - add a virtio framebuffer, virtio keyboard and private QMP socket
   """
   @spec boot(map(), keyword()) :: t()
   def boot(_context, opts) do
@@ -56,6 +57,10 @@ defmodule Elixos.Test.QEMU do
     arch = Keyword.get(opts, :arch, :x86_64)
     binary = qemu_binary(arch)
     qemu = System.find_executable(binary) || flunk("#{binary} not found")
+
+    qmp_path =
+      if Keyword.get(opts, :gpu, false),
+        do: "/tmp/exq-#{System.pid()}-#{System.unique_integer([:positive])}.sock"
 
     args =
       [
@@ -65,7 +70,8 @@ defmodule Elixos.Test.QEMU do
         ["-drive", "file=#{drive_path(disk)},if=virtio,format=raw"],
         ["-device", "virtio-rng-pci"],
         boot_args(arch, opts),
-        net_args(opts)
+        net_args(opts),
+        graphics_args(qmp_path)
       ]
       |> Enum.concat()
 
@@ -73,8 +79,15 @@ defmodule Elixos.Test.QEMU do
       Port.open({:spawn_executable, qemu}, [:binary, :exit_status, :stderr_to_stdout, args: args])
 
     {:os_pid, os_pid} = Port.info(port, :os_pid)
-    ExUnit.Callbacks.on_exit(fn -> kill(os_pid) end)
-    %__MODULE__{port: port, os_pid: os_pid}
+
+    ExUnit.Callbacks.on_exit(fn ->
+      kill(os_pid)
+      if qmp_path, do: File.rm(qmp_path)
+    end)
+
+    qmp = if qmp_path, do: Elixos.Test.QMP.connect(qmp_path, scale(10_000))
+    if qmp, do: ExUnit.Callbacks.on_exit(fn -> Elixos.Test.QMP.close(qmp) end)
+    %__MODULE__{port: port, os_pid: os_pid, qmp: qmp, qmp_path: qmp_path}
   end
 
   defp boot_args(arch, opts) do
@@ -157,6 +170,33 @@ defmodule Elixos.Test.QEMU do
           "virtio-net-pci,netdev=n0"
         ]
     end
+  end
+
+  defp graphics_args(nil), do: []
+
+  defp graphics_args(path) do
+    [
+      "-vga",
+      "none",
+      "-device",
+      "virtio-gpu-pci",
+      "-device",
+      "virtio-keyboard-pci",
+      "-qmp",
+      "unix:#{path},server=on,wait=off"
+    ]
+  end
+
+  @doc "Sends a real keyboard key (QEMU qcode, e.g. y, ret, tab) through QMP."
+  def send_key(%__MODULE__{qmp: qmp} = vm, qcode) when not is_nil(qmp) do
+    Elixos.Test.QMP.key(qmp, qcode, scale(10_000))
+    vm
+  end
+
+  @doc "Saves the actual graphics display as a PPM and returns the VM."
+  def screendump(%__MODULE__{qmp: qmp} = vm, path) when not is_nil(qmp) do
+    Elixos.Test.QMP.screendump(qmp, path, scale(10_000))
+    vm
   end
 
   defp artifact(env, name) do
@@ -402,10 +442,15 @@ defmodule Elixos.Test.QEMU do
 
   @doc "Kills QEMU now."
   def stop(vm) do
-    Port.close(vm.port)
-    kill(vm.os_pid)
-  catch
-    :error, _ -> kill(vm.os_pid)
+    try do
+      Port.close(vm.port)
+    catch
+      :error, _ -> :ok
+    after
+      kill(vm.os_pid)
+      if vm.qmp, do: Elixos.Test.QMP.close(vm.qmp)
+      if vm.qmp_path, do: File.rm(vm.qmp_path)
+    end
   end
 
   defp kill(os_pid), do: System.cmd("kill", ["-KILL", to_string(os_pid)], stderr_to_stdout: true)

@@ -74,4 +74,6 @@ pipeline:
 
       install -Dm0755 zig-out/bin/init "${{targets.destdir}}/init"
       install -Dm0755 zig-out/bin/elixos-postgres-init "${{targets.destdir}}/usr/bin/elixos-postgres-init"
+      install -Dm0755 zig-out/bin/elixos-gui-io "${{targets.destdir}}/usr/bin/elixos-gui-io"
+      install -Dm0755 zig-out/bin/elixos-console-handover "${{targets.destdir}}/usr/bin/elixos-console-handover"
       install -Dm0444 shim/helpers "${{targets.destdir}}/etc/elixos/helpers"

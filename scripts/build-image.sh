@@ -89,9 +89,10 @@ package_inputs() { # package_inputs <arch> <package>: hash of everything the rec
       fi
       ;;
     elixir) paths=(.tool-versions melange/elixir.yaml prebuilt/elixir prebuilt/elixir.links) ;;
-    factory) paths=(os hex .tool-versions melange/factory.yaml prebuilt/factory prebuilt/factory.links) ;;
+    factory) paths=(os hex .tool-versions melange/factory.yaml) ;;
     shim) paths=(shim spec .zig-version build.zig build.zig.zon melange/shim.yaml) ;;
     browser) paths=(melange/browser.yaml) ;;
+    gui-renderer) paths=(melange/gui-renderer.yaml) ;;
     toolchain) paths=(toolchain .zig-version melange/toolchain.yaml) ;;
     *) paths=(melange) ;;
   esac
@@ -200,15 +201,12 @@ stage_prebuilt() { # stage_prebuilt <name> <apk>
   echo "build-image: staged the native $name build ($(wc -l < "$dir.links") symlink(s) recorded)"
 }
 
-# Elixir and the factory are architecture-neutral: bytecode, shell scripts and
-# symlinks into the machine's own OTP install (ADR-060). The x86_64 build
-# already builds them natively, so the aarch64 packages install that same tree
-# instead of rebuilding it under emulation. That holds as long as no dependency
-# carries a NIF - the moment one does, the factory has to be built for the
-# target (ADR-066).
+# Elixir itself is architecture-neutral bytecode and symlinks into target OTP.
+# The factory is not: Emerge's loader is compiled with target-specific options
+# and points at that target's NIF. Never transplant the host factory tree.
 native_reuse() {
   local pkg pname repo="$BUILD/apk/x86_64" apk
-  for pkg in elixir factory; do
+  for pkg in elixir; do
     pname="elixos-$pkg"
     if [ -n "${FORCE:-}" ] || ! ls "$repo/$HOST_ARCH/$pname"-*.apk >/dev/null 2>&1; then
       echo "build-image: melange $pkg.yaml (native, for the $HOST_ARCH image)"
@@ -229,7 +227,7 @@ build_packages() { # build_packages <arch>
   # Dependency order, not glob order: OTP before Elixir and the factory (they
   # build against it), the kernel and the shim independent, the browser a
   # download-and-repack, the toolchain last (it needs only a compiler).
-  for pkg in kernel otp elixir factory shim browser toolchain; do
+  for pkg in kernel otp elixir gui-renderer factory shim browser toolchain; do
     file="$SRC/melange/$pkg.yaml"
     [ -f "$file" ] || continue
     pname="elixos-$pkg"
@@ -496,7 +494,7 @@ stage
 if [ "$#" -eq 0 ]; then
   # This machine's own image. The other architecture's takes several minutes
   # even with the native cross builds (kernel, ERTS) and the reused trees
-  # (Elixir, the factory), so it is asked for explicitly:
+  # (Elixir only), so it is asked for explicitly:
   # `scripts/build-image.sh aarch64`, or `make images`.
   set -- "$HOST_ARCH"
 fi

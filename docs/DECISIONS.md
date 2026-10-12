@@ -1972,3 +1972,100 @@ running VM already has and no repository provides. The build child must be
 able to load `Elixos.Package.SCM`, which it can - it boots the factory release
 and the module ships in `Elixos.Package`'s own app - and `Elixos.Package` now
 publishes `installed_dir/1` and `installed_version/1` for it to answer with.
+
+## ADR-069: Emerge renders CPU frames; the image owns the native ABI
+
+**Status:** accepted (M27)
+
+**Context.** Ask questions are OS data with independent front-ends (M20).
+The GUI must draw the four question kinds without making the prompt depend
+on a window system or a GPU. Emerge 0.4.2 provides a headless raster backend
+and binary `VideoInterop.Frame` output. Its native renderer is a Rustler NIF;
+selecting only raster backends does **not** select musl rather than glibc.
+A GNU NIF cannot be made compatible with the musl BEAM by disabling GPU APIs.
+
+**Decision.** Pin the Elixir dependency and `elixos-gui-renderer` recipe to
+Emerge **0.4.2** together. `Elixos.GUI.Dialog` builds an Emerge tree and owns
+selection/editing; `Elixos.GUI` subscribes to Ask and renders the oldest open
+question. Defaults prefill the view but never answer a question automatically.
+Off-screen capture uses the same tree as the live framebuffer.
+
+The service starts asynchronously after Ask, is temporary and non-critical,
+and starts nothing in rescue. Its renderer uses `backend: :headless`,
+`rendering_api: :raster`, binary RGBA8888 output, and the GUI process as owner.
+Received frames are validated before the framebuffer helper receives them.
+One frame is in flight; another replaces the pending frame rather than
+growing an output queue.
+
+The image packages the NIF independently from the factory BEAM:
+
+* x86_64 uses the checksum-verified upstream **musl embedded-CPU** artifact;
+* aarch64 builds that profile from the checksum-verified Hex source,
+  its Cargo.lock and pinned rust-skia revision, with Skia's source build forced;
+* each target's actual ELF closure is resolved from signed Alpine packages,
+  copied beside the NIF, and given private `$ORIGIN` RUNPATHs.
+
+The runtime location is `/system/gui/<arch>-unknown-linux-musl/`.
+The factory's Emerge `priv/native` directory links there. Rustler generates
+the target loader with native compilation skipped; it does not fetch or
+compile a renderer while the factory builds. Compile-time target options
+mean the factory is built per architecture; only architecture-neutral Elixir
+continues to reuse the host tree. The renderer package has its own input
+fingerprint, so factory edits do not invalidate the kernel, OTP or renderer.
+
+**Consequences.** The GUI checks the target artifact before invoking native
+code, and load/start errors leave the text console available. This is not
+process isolation: an actual NIF crash can take the entire BEAM down. The
+shim remains outside that VM and retains its recovery responsibilities.
+The pinned internal tree-capture API must be reviewed together with the
+recipe and host rendering acceptance when Emerge is upgraded.
+
+## ADR-070: Framebuffer input and fbcon handover are a leased native boundary
+
+**Status:** accepted (M27)
+
+**Context.** Emerge's headless renderer does not inject evdev input into the
+dialog. Writing `/dev/fb0` while fbcon owns it can lose the UI to console
+repaints, but the BEAM must not regain root privileges or accept arbitrary
+sysfs writes.
+
+**Decision.** Two libc-free Zig executables implement this boundary:
+
+* `/usr/bin/elixos-gui-io` runs with the user's identity, maps `/dev/fb0`,
+  discovers `/dev/input/event0` through `event255` and grabs those devices;
+* the allow-listed `console-handover` helper starts
+  `/usr/bin/elixos-console-handover` as root, or leaves its existing broker
+  running when the root-owned lock is already held.
+
+The broker's fixed Unix socket is `/run/elixos-console.sock`, root:1000,
+mode 0660; it admits only peers whose real uid is 1000. Publishing those
+permissions happens after `listen`, forming the startup readiness barrier.
+No client supplies a path, executable, uid or sysfs command. The broker
+discovers the kernel's actual framebuffer vtconsoles, grants group-only
+access to root-owned framebuffer/input character devices and unbinds fbcon
+for one connected lease.
+
+The IO Port uses packet-4 framing. It announces `READY <width> <height>`,
+accepts exact-size RGBA frames and acknowledges each completed framebuffer
+write with `PRESENTED`. Native evdev packets carry keycodes/values, pointer
+positions and button values; position changes precede a click in the same
+input batch. Elixir translates the default US keyboard layout and calls the
+same dialog-input seam as other front-ends. Autorepeat edits text and moves
+selection, but cannot submit, confirm, dismiss or repeatedly toggle a choice.
+
+A zero-length frame requests shutdown. The IO helper releases input grabs,
+requests lease release, waits for the broker's `C` acknowledgement **after**
+fbcon has been rebound, and exits. `GUI.stop/0` waits for that successful
+exit instead of treating Port closure as proof of console handback.
+Unexpected helper/GUI/BEAM death also closes the lease and causes rebind.
+
+**Consequences.** The helper supports packed true-color 16/24/32-bit
+framebuffers with up-to-eight-bit channels, including stride and visible
+offsets. Device discovery is bounded and happens at startup; hotplug needs
+a GUI restart. A lost evdev packet fails the session rather than inventing
+modifier releases. Broker SIGKILL cannot run cleanup; restarting the broker
+restores abandoned bindings before granting a new lease.
+
+The shim's `refAllDecls` test now includes both helper modules, strengthening
+lazy-analysis coverage. No shipped acceptance assertion, timeout or vector
+is removed or relaxed.

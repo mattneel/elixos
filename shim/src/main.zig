@@ -1547,4 +1547,6 @@ test {
     std.testing.refAllDecls(seal);
     std.testing.refAllDecls(system_image);
     std.testing.refAllDecls(postgres_init);
+    std.testing.refAllDecls(@import("gui_io.zig"));
+    std.testing.refAllDecls(@import("console_handover.zig"));
 }

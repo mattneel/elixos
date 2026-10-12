@@ -35,7 +35,14 @@ end
 
 # The GUI (M27): Emerge's raster-only backend profile, without Wayland/GPU/Mesa.
 # This selects the --raster variant, not a libc or CPU target.
-# RustlerPrecompiled derives that target from ERTS and TARGET_* overrides.
-# Host compilation currently selects the GNU raster artifact; musl/ARM64
-# packaging and checksum pinning still belong to M27 (docs/notes/emerge.md).
+# Host builds use RustlerPrecompiled normally. The factory builds its loader
+# for the target, but the NIF lives only in the read-only service image.
 config :emerge, compiled_backends: []
+
+if System.get_env("ELIXOS_GUI_PACKAGED") == "1" do
+  config :rustler_precompiled, :force_build, emerge: true
+
+  config :emerge, EmergeSkia.Native,
+    skip_compilation?: true,
+    load_from: {:emerge, "priv/native/libemerge_skia"}
+end
