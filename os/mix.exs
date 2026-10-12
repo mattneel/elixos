@@ -72,6 +72,13 @@ defmodule Elixos.MixProject do
       {:oban, "~> 2.24"},
       {:ecto_sql, "~> 3.14"},
       {:postgrex, "~> 0.22"},
-      {:cdp_ex, "~> 0.10"}
+      {:cdp_ex, "~> 0.10"},
+      # The GUI (M27) renders with Emerge's headless raster backend: the
+      # precompiled x86_64-unknown-linux-musl artifact is statically linked, so
+      # the same NIF loads on the host's glibc BEAM and on the box, and it needs
+      # no GPU, no Wayland and no Mesa. Input is ours, not Emerge's: 0.4.2 has
+      # no API to inject events into the renderer, so a small evdev helper
+      # streams them to the dialog's logic in Elixir (docs/DECISIONS.md).
+      {:emerge, "~> 0.4.2"}
     ]
 end

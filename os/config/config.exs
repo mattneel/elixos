@@ -32,3 +32,11 @@ config :elixos, Elixos.Oban.Repo,
 if config_target() == :elixos do
   import_config "elixos.exs"
 end
+
+# The GUI (M27): Emerge's minimal raster build - CPU raster, embedded FreeType,
+# no Wayland, no GPU, no Mesa. That is the statically linked
+# x86_64-unknown-linux-musl artifact, which loads on the host's glibc BEAM and
+# inside the image alike; without this the default gnu artifact wants libgbm and
+# libxkbcommon, which the image does not have (ADR-009: the box never
+# downloads, so what the image shows is what was pinned at build time).
+config :emerge, compiled_backends: []
