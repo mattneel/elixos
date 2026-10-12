@@ -41,8 +41,10 @@ test-qemu-aarch64: images ## The aarch64 smoke set, on qemu-system-aarch64 (TCG:
 
 ci: test test-qemu images ## Everything for the current milestone, both architectures
 
-check: test image ## While working on one milestone: host tests + its own integration tests, not the suite (M=26)
+check: image ## While working on one milestone: host tests + its own integration tests, not the suite (M=26)
 	@[ -n "$(M)" ] || { echo "usage: make check M=<milestone>" >&2; exit 1; }
+	zig build test -Dmilestone=$(M) --summary all
+	cd os && ELIXOS_MILESTONE=$(M) mix test
 	cd os && ELIXOS_QEMU=1 ELIXOS_MILESTONE=$(M) mix test test/integration/m$(M)_*.exs
 
 audit: ## Fail if a shipped test, Zig test block or vector changed without an ADR
