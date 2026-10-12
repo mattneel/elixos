@@ -11,7 +11,7 @@ MILESTONE := $(shell cat MILESTONE)
 BUILD ?= build
 export ELIXOS_BUILD := $(abspath $(BUILD))
 
-.PHONY: help check-tools test test-shim deps test-os test-qemu test-qemu-aarch64 ci audit demo demos \
+.PHONY: help check-tools test test-shim deps test-os test-qemu test-qemu-aarch64 check ci audit demo demos \
         image images reproducible uefi-image disk qemu format clean distclean
 
 help: ## List targets
@@ -40,6 +40,10 @@ test-qemu-aarch64: images ## The aarch64 smoke set, on qemu-system-aarch64 (TCG:
 	  mix test test/integration/m16_aarch64_test.exs
 
 ci: test test-qemu images ## Everything for the current milestone, both architectures
+
+check: test image ## While working on one milestone: host tests + its own integration tests, not the suite (M=26)
+	@[ -n "$(M)" ] || { echo "usage: make check M=<milestone>" >&2; exit 1; }
+	cd os && ELIXOS_QEMU=1 ELIXOS_MILESTONE=$(M) mix test test/integration/m$(M)_*.exs
 
 audit: ## Fail if a shipped test, Zig test block or vector changed without an ADR
 	scripts/audit-tests.sh
