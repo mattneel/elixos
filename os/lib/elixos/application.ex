@@ -2,9 +2,9 @@ defmodule Elixos.Application do
   @moduledoc """
   The OS application.
 
-  On the dev host (unit tests) `Elixos.Boot.Env.current/0` returns `{:ok, :host}`
-  and nothing is started. Under the shim (M4 onward) this is where the system
-  comes up, in order:
+  On the dev host, only the idle, supervised tool-peer owner starts; it boots
+  no engine until a tool needs one. Under the shim (M4 onward) the OS services
+  come up in order:
 
     1. `Elixos.Shim.Control` on the inherited control fd (heartbeats start).
     2. `Elixos.Privileges` on the inherited helper reply fd (M17).
@@ -79,9 +79,12 @@ defmodule Elixos.Application do
     for dir <- Path.wildcard(Path.join(os_priv(), "apps/*/ebin")), do: Code.append_path(dir)
 
     case Elixos.Boot.Env.current() do
-      # On the dev host (unit tests) there is no shim and nothing to start.
+      # Host tests need the same supervised, initially idle peer owner.
       {:ok, :host} ->
-        Supervisor.start_link([], strategy: :one_for_one, name: Elixos.Supervisor)
+        Supervisor.start_link([{Elixos.Toolset.Peer, []}],
+          strategy: :one_for_one,
+          name: Elixos.Supervisor
+        )
 
       {:ok, env} ->
         # Before anything can load a generation: the base stays the base.
@@ -101,6 +104,8 @@ defmodule Elixos.Application do
             # Validate/open the shim reply fd before generation code can ask
             # for helpers, without blocking the heartbeat writer while waiting.
             {Elixos.Privileges, []},
+            # Idle until a tool call; present before restore can start agents.
+            {Elixos.Toolset.Peer, []},
             # The database and the scheduler start before the restore (M19):
             # a generation's oban declarations are collected while its modules
             # and services restore, and no queue exists until Elixos.Oban

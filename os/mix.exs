@@ -26,7 +26,10 @@ defmodule Elixos.MixProject do
           include_erts:
             System.get_env("ELIXOS_INCLUDE_ERTS") != "0" and
               (System.get_env("ELIXOS_ERTS") || true),
-          include_executables_for: []
+          include_executables_for: [],
+          # ADR-047: ship the engine without loading its application spec;
+          # Jido discovery must never enumerate its NIFs in the main VM.
+          applications: [quickbeam: :none, oxc: :none]
         ]
       ]
     ]
@@ -76,6 +79,9 @@ defmodule Elixos.MixProject do
       # The image packages Emerge's musl raster NIF separately from its BEAM.
       # Rustler generates a loader without compiling/downloading native code.
       {:rustler, "~> 0.38.0", runtime: false},
-      {:emerge, "0.4.2"}
+      {:emerge, "0.4.2"},
+      # Loaded and started only by the supervised tool peer (ADR-047).
+      {:quickbeam, "0.11.3", runtime: false},
+      {:oxc, "0.19.0", runtime: false}
     ]
 end
