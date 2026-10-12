@@ -15,13 +15,17 @@ cyberdecks and SBCs. Images are built from pinned Alpine packages for
 
 ## Status
 
-**M1–M20 are landed:** live generations and recovery, on-box Mix builds, SSH,
-UEFI boot, trusted Hex packages, Jido agents, package-built images, an
-unprivileged BEAM with sealed commits, a PostgreSQL system service, and Oban
-jobs that survive a power cycle.
+**M1–M20, M25 and M26 are landed:** live generations and recovery, on-box Mix
+builds, SSH, UEFI boot, trusted Hex packages, Jido agents, package-built images,
+an unprivileged BEAM with sealed commits, PostgreSQL, persistent Oban jobs,
+the Ask question queue, a headless browser, Rust tooling, and installed packages
+resolved as Mix dependencies.
 
-**Next:** the coding agent's toolset (M21).
-The coding-agent toolset and safe self-modification remain planned work.
+**In progress:** the framebuffer GUI (M27). Emerge is a dependency; the dialogs,
+framebuffer integration and input handling are not implemented yet.
+
+**Deferred:** the coding-agent toolset, on-box coding agent, safe self-modification
+and native hot paths (M21–M24), by [ADR-063](docs/DECISIONS.md).
 See the [roadmap and acceptance criteria](docs/ROADMAP.md).
 
 ## Prior art and friends
@@ -40,9 +44,13 @@ See the [roadmap and acceptance criteria](docs/ROADMAP.md).
 
 ## Build and test
 
-`make check-tools` reports prerequisites, `make test` runs unit tests, and
-`make ci` boots the QEMU acceptance images. See [TESTING](docs/TESTING.md)
-for the test layers and [AGENTS.md](AGENTS.md) for the development loop.
+`make check-tools` reports prerequisites; `make test` runs unit tests.
+For focused iteration, `make check M=26` builds the host image and runs the
+unit tests through M26 plus that milestone's QEMU acceptance.
+`make ci` is the full gate: unit tests, the QEMU suite and both image builds;
+`make test-qemu-aarch64` runs the separate ARM64 smoke test.
+See [TESTING](docs/TESTING.md) for the test layers and [AGENTS.md](AGENTS.md)
+for the development loop.
 
 ## Docs
 
