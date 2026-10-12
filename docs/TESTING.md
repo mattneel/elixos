@@ -28,7 +28,7 @@ M27's ARM64 packaging and full gate are still in progress.
 
 `MILESTONE` selects the active gate, including a milestone whose implementation
 is still in progress. It is not a count of completed milestones. M27 is active;
-M1–M20, M25 and M26 are delivered; M21–M24 remain deferred under ADR-063.
+M1–M20, M25 and M26 are delivered. M21–M24 have resumed under ADR-071.
 
 - **Zig:** every test begins `try milestone.require(N);`, which returns
   `error.SkipZigTest` until `MILESTONE >= N`. The Makefile passes
@@ -39,8 +39,10 @@ M1–M20, M25 and M26 are delivered; M21–M24 remain deferred under ADR-063.
 - **Overrides:** `ELIXOS_MILESTONE=N` selects the ExUnit gate for a direct
   `mix test` command; `make check M=N` passes the selection to both host
   test layers and its integration run.
-- **Deferrals:** `:deferred` tests are excluded in both modes (ADR-063).
-  Increasing `MILESTONE` does not enable M21–M24.
+- **Resuming the agent arc:** the old `:deferred` tags still exclude M21–M24
+  while the new upstream inventory is recorded. The M21 start commit removes
+  those tags and selects M21, as ADR-063/ADR-071 require; raising `MILESTONE`
+  alone does not remove a tag.
 - **Architecture:** `:aarch64` integration tests are excluded unless
   `ELIXOS_QEMU_AARCH64=1`.
 

@@ -26,9 +26,13 @@ resolved as Mix dependencies.
 four Ask dialog kinds, real keyboard input and console handback on x86_64.
 ARM64 renderer packaging and the full milestone gate are still in progress.
 
-**Deferred:** the coding-agent toolset, on-box coding agent, safe self-modification
-and native hot paths (M21–M24), by [ADR-063](docs/DECISIONS.md).
+**Resumed:** the coding-agent toolset, on-box coding agent, safe self-modification
+and native hot paths (M21–M24). The [revision-pinned OMP-to-Jido inventory](docs/OMP_INVENTORY.md)
+is recorded; the port is next, without a `clanklet` prerequisite ([ADR-071](docs/DECISIONS.md)).
 See the [roadmap and acceptance criteria](docs/ROADMAP.md).
+
+**Planned graphics variants:** AMD and NVIDIA images using the human's
+in-progress GPUI + LiveView via Rustler stack, `live_gpui` ([ADR-072](docs/DECISIONS.md)).
 
 ## Prior art and friends
 
@@ -62,3 +66,4 @@ for the development loop.
 - [DECISIONS](docs/DECISIONS.md): ADRs and open questions
 - [ROADMAP](docs/ROADMAP.md): milestones and their acceptance tests
 - [TESTING](docs/TESTING.md): how the test layers, gating and QEMU harness work
+- [OMP inventory](docs/OMP_INVENTORY.md): upstream tools, prompts, skills and the Jido port map

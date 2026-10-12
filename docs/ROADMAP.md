@@ -8,10 +8,10 @@ Fast tests: `make test`. Focused iteration: `make check M=27`.
 Full QEMU suite: `make test-qemu` (M3 onward); milestone gate: `make ci`.
 The ARM64 smoke test is separate: `make test-qemu-aarch64`.
 
-**Current state:** M1–M20, M25 and M26 are delivered. M21–M24 are deferred
-by ADR-063. `MILESTONE=27` enables the unfinished GUI contract; Emerge's
-dependency and raster configuration are in the repo, but `Elixos.GUI` is
-still stubbed.
+**Current state:** M1–M20, M25 and M26 are delivered. M21–M24 have resumed
+against a fresh upstream OMP inventory (ADR-071), without a `clanklet`
+prerequisite. `MILESTONE=27` still selects the in-progress GUI gate: its host
+and x86_64 QEMU suites have passed; ARM64 packaging remains in progress.
 
 ---
 
@@ -681,9 +681,9 @@ and the notice line and the question shape are in PROTOCOL.md.
 
 ## M21: The OMP toolset on Elixos
 
-> **Deferred (ADR-063).** This milestone waits for the human's agent work
-> (the pinned OMP toolset). It is not abandoned: its tests stay in the suite as
-> the specification, tagged `:deferred`, and the arc resumes there.
+> **Resumed (ADR-071).** Inventory and port canonical upstream OMP 18.10.1
+> onto Jido Actions/Tools. The reference is commit
+> `90701813e5fba6919067848989378b4ee6239c13`; no `clanklet` prerequisite remains.
 
 **Goal.** An agent on the box gets the whole coding-agent toolset: every tool
 the pinned OMP SDK exposes, with the same names, parameters, outputs and error
@@ -704,12 +704,13 @@ error to the caller while the prompt keeps answering and the shim never
 notices (no missed heartbeat, no relaunch).
 
 **Notes.**
-- *The reference.* `@oh-my-pi/pi-coding-agent` 18.8.7
-  (`github.com/can1357/oh-my-pi`, `packages/coding-agent`), npm integrity
-  `sha512-CRjlRS/CmWKXD67iXScvPssI0PzFIuWOdkSh8/lYk3OEb1gcRy09iBuP6xaoD1/BZnFkug9sXC7CiG8xxfgjqQ==`:
-  the OMP this roadmap was written on. The pin moves only with a note in
-  DECISIONS.md, and the fixtures are re-recorded when it does.
-- *The inventory* is what the SDK's factories construct - `BUILTIN_TOOLS` and
+- *The reference.* The resumed arc targets upstream 18.10.1 at commit
+  `90701813e5fba6919067848989378b4ee6239c13` (ADR-071). The original 18.8.7
+  inventory in `os/test/fixtures/omp/inventory.exs` is historical until the
+  new inventory and actual upstream outcomes are recorded. A reference move
+  is never an excuse to synthesize expected results from the port.
+- *The original inventory* is what the 18.8.7 SDK's factories construct -
+  `BUILTIN_TOOLS` and
   `HIDDEN_TOOLS` in `src/tools/index.ts`, plus the settings-gated custom tools
   `src/sdk.ts` installs: `read`, `security_scan`, `bash`, `edit`, `ast_grep`,
   `ast_edit`, `ask`, `debug`, `ida`, `eval`, `github`, `glob`, `grep`, `find`,
@@ -779,9 +780,9 @@ pass, and ADR-047 holds.
 
 ## M22: The on-box coding agent
 
-> **Deferred (ADR-063).** This milestone waits for the human's agent work
-> (the pinned OMP toolset). It is not abandoned: its tests stay in the suite as
-> the specification, tagged `:deferred`, and the arc resumes there.
+> **Resumed (ADR-071).** Port the upstream prompt and skill surface onto the
+> Jido coding-agent runtime after M21's tools. The former human-agent-work
+> dependency no longer blocks this milestone.
 
 **Goal.** A coding agent lives on the machine. A Jido agent owns the loop and
 uses M21's toolset; it starts from IEx or over SSH like any REPL session,
@@ -836,9 +837,9 @@ and ADR-048 holds.
 
 ## M23: Self-modification
 
-> **Deferred (ADR-063).** This milestone waits for the human's agent work
-> (the pinned OMP toolset). It is not abandoned: its tests stay in the suite as
-> the specification, tagged `:deferred`, and the arc resumes there.
+> **Resumed (ADR-071).** Implement generation-only self-modification; it does
+> not depend on the human finishing a separate OMP integration. The original
+> candidate, health, evidence and fallback acceptance remains the contract.
 
 **Goal.** The agent can change Elixos itself - OS code, its own tools, its own
 prompt - and those changes reach the running system only through generations:
@@ -899,9 +900,9 @@ and ADR-049 holds.
 
 ## M24: Native hot paths
 
-> **Deferred (ADR-063).** This milestone waits for the human's agent work
-> (the pinned OMP toolset). It is not abandoned: its tests stay in the suite as
-> the specification, tagged `:deferred`, and the arc resumes there.
+> **Resumed (ADR-071).** Measure and port the toolset's native hot paths after
+> the reference differential suite is available. The original parity,
+> concurrent p99, peer-crash and artifact-pinning acceptance remains unchanged.
 
 **Goal.** Measured hot paths of the toolset move to Zig through Zigler, as pure
 functions, one at a time - promoted only when the differential suite says they
@@ -1116,3 +1117,14 @@ Wi-Fi (Q3), a DHCP client in Elixir, power-button handling from input events,
 kernel/factory upgrades on hardware (Q5), process-state persistence (Q2),
 gsh packaging (Q6), CRIU as a stretch goal. A terminal view in Emerge that
 hosts IEx as just another REPL session, so the GUI can become the shell.
+
+### Hardware-accelerated graphics profiles (ADR-072)
+
+Integrate the human's completed `live_gpui` stack — GPUI + LiveView via
+Rustler — and ship AMD and NVIDIA hardware-accelerated images. Each profile
+packages its vendor drivers, firmware and graphics userspace dependencies;
+the OS, LiveView and agent code remain shared. The current native-editor
+screenshot is a smoke test of that unfinished project, not a shipped backend.
+Verify real acceleration and native editing under busy callbacks, keyed-row
+reordering and view-process restart on each profile.
+
