@@ -1,0 +1,53 @@
+{
+  "arguments": {
+    "op": "view"
+  },
+  "committed_todo_phases": null,
+  "coverage": [
+    "nominal"
+  ],
+  "dropped_undefined": [
+    "output.isError"
+  ],
+  "effects": {
+    "session_dir": {},
+    "workspace": {}
+  },
+  "initial_session": {
+    "phases": []
+  },
+  "output": {
+    "content": [
+      {
+        "text": "Todo list is empty.",
+        "type": "text"
+      }
+    ],
+    "details": {
+      "op": "view",
+      "phases": [],
+      "storage": "memory"
+    }
+  },
+  "params": {
+    "op": "view"
+  },
+  "reference": {
+    "integrity": "sha512-xvHDKLcAsGvDwLQG6PHZEYiELQPKJ4NiSc/yeurja8IZkC7yALjR+2pbEiCT4cSdyIfEmHFDhDUze8hSxYpiZA==",
+    "package": "@oh-my-pi/pi-coding-agent",
+    "version": "18.10.1"
+  },
+  "roots": {
+    "session_dir": "/home/autark/src/elixos/build/omp-todo-fixture-record/view-empty/session",
+    "workspace": "/home/autark/src/elixos/build/omp-todo-fixture-record/view-empty/workspace"
+  },
+  "session": {
+    "committed": null,
+    "phases": [],
+    "writes": 0
+  },
+  "session_dir": {},
+  "setup_calls": [],
+  "tool": "todo",
+  "workspace": {}
+}

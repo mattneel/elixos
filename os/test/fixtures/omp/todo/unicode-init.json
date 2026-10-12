@@ -1,0 +1,172 @@
+{
+  "arguments": {
+    "items": [
+      "日本語のタスク",
+      "emoji 🚀🔥",
+      "ключ",
+      "नमस्ते",
+      "café́"
+    ],
+    "op": "init"
+  },
+  "committed_todo_phases": [
+    {
+      "name": "Tasks",
+      "tasks": [
+        {
+          "content": "日本語のタスク",
+          "status": "in_progress"
+        },
+        {
+          "content": "emoji 🚀🔥",
+          "status": "pending"
+        },
+        {
+          "content": "ключ",
+          "status": "pending"
+        },
+        {
+          "content": "नमस्ते",
+          "status": "pending"
+        },
+        {
+          "content": "café́",
+          "status": "pending"
+        }
+      ]
+    }
+  ],
+  "coverage": [
+    "nominal",
+    "unicode"
+  ],
+  "dropped_undefined": [
+    "output.isError"
+  ],
+  "effects": {
+    "session_dir": {},
+    "workspace": {}
+  },
+  "initial_session": {
+    "phases": []
+  },
+  "output": {
+    "content": [
+      {
+        "text": "Remaining items (5):\n  - 日本語のタスク [in_progress] (Tasks)\n  - emoji 🚀🔥 [pending] (Tasks)\n  - ключ [pending] (Tasks)\n  - नमस्ते [pending] (Tasks)\n  - café́ [pending] (Tasks)\nOverall: 0/5 done, 5 open.\nActive phase 1/1 \"Tasks\" (0/5).\n  Tasks:\n    - [ ] 日本語のタスク (in progress)\n    - [ ] emoji 🚀🔥\n    - [ ] ключ\n    - [ ] नमस्ते\n    - [ ] café́",
+        "type": "text"
+      }
+    ],
+    "details": {
+      "op": "init",
+      "phases": [
+        {
+          "name": "Tasks",
+          "tasks": [
+            {
+              "content": "日本語のタスク",
+              "status": "in_progress"
+            },
+            {
+              "content": "emoji 🚀🔥",
+              "status": "pending"
+            },
+            {
+              "content": "ключ",
+              "status": "pending"
+            },
+            {
+              "content": "नमस्ते",
+              "status": "pending"
+            },
+            {
+              "content": "café́",
+              "status": "pending"
+            }
+          ]
+        }
+      ],
+      "storage": "memory"
+    }
+  },
+  "params": {
+    "items": [
+      "日本語のタスク",
+      "emoji 🚀🔥",
+      "ключ",
+      "नमस्ते",
+      "café́"
+    ],
+    "op": "init"
+  },
+  "reference": {
+    "integrity": "sha512-xvHDKLcAsGvDwLQG6PHZEYiELQPKJ4NiSc/yeurja8IZkC7yALjR+2pbEiCT4cSdyIfEmHFDhDUze8hSxYpiZA==",
+    "package": "@oh-my-pi/pi-coding-agent",
+    "version": "18.10.1"
+  },
+  "roots": {
+    "session_dir": "/home/autark/src/elixos/build/omp-todo-fixture-record/unicode-init/session",
+    "workspace": "/home/autark/src/elixos/build/omp-todo-fixture-record/unicode-init/workspace"
+  },
+  "session": {
+    "committed": [
+      {
+        "name": "Tasks",
+        "tasks": [
+          {
+            "content": "日本語のタスク",
+            "status": "in_progress"
+          },
+          {
+            "content": "emoji 🚀🔥",
+            "status": "pending"
+          },
+          {
+            "content": "ключ",
+            "status": "pending"
+          },
+          {
+            "content": "नमस्ते",
+            "status": "pending"
+          },
+          {
+            "content": "café́",
+            "status": "pending"
+          }
+        ]
+      }
+    ],
+    "phases": [
+      {
+        "name": "Tasks",
+        "tasks": [
+          {
+            "content": "日本語のタスク",
+            "status": "in_progress"
+          },
+          {
+            "content": "emoji 🚀🔥",
+            "status": "pending"
+          },
+          {
+            "content": "ключ",
+            "status": "pending"
+          },
+          {
+            "content": "नमस्ते",
+            "status": "pending"
+          },
+          {
+            "content": "café́",
+            "status": "pending"
+          }
+        ]
+      }
+    ],
+    "writes": 1
+  },
+  "session_dir": {},
+  "setup_calls": [],
+  "tool": "todo",
+  "workspace": {}
+}

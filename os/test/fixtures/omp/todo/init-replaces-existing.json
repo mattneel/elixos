@@ -1,0 +1,263 @@
+{
+  "arguments": {
+    "list": [
+      {
+        "items": [
+          "only"
+        ],
+        "phase": "Fresh"
+      }
+    ],
+    "op": "init"
+  },
+  "committed_todo_phases": [
+    {
+      "name": "Fresh",
+      "tasks": [
+        {
+          "content": "only",
+          "status": "in_progress"
+        }
+      ]
+    }
+  ],
+  "coverage": [
+    "nominal"
+  ],
+  "dropped_undefined": [
+    "output.isError"
+  ],
+  "effects": {
+    "session_dir": {},
+    "workspace": {}
+  },
+  "initial_session": {
+    "phases": []
+  },
+  "output": {
+    "content": [
+      {
+        "text": "Remaining items (1):\n  - only [in_progress] (Fresh)\nOverall: 0/1 done, 1 open.\nActive phase 1/1 \"Fresh\" (0/1).\n  Fresh:\n    - [ ] only (in progress)",
+        "type": "text"
+      }
+    ],
+    "details": {
+      "op": "init",
+      "phases": [
+        {
+          "name": "Fresh",
+          "tasks": [
+            {
+              "content": "only",
+              "status": "in_progress"
+            }
+          ]
+        }
+      ],
+      "storage": "memory"
+    }
+  },
+  "params": {
+    "list": [
+      {
+        "items": [
+          "only"
+        ],
+        "phase": "Fresh"
+      }
+    ],
+    "op": "init"
+  },
+  "reference": {
+    "integrity": "sha512-xvHDKLcAsGvDwLQG6PHZEYiELQPKJ4NiSc/yeurja8IZkC7yALjR+2pbEiCT4cSdyIfEmHFDhDUze8hSxYpiZA==",
+    "package": "@oh-my-pi/pi-coding-agent",
+    "version": "18.10.1"
+  },
+  "roots": {
+    "session_dir": "/home/autark/src/elixos/build/omp-todo-fixture-record/init-replaces-existing/session",
+    "workspace": "/home/autark/src/elixos/build/omp-todo-fixture-record/init-replaces-existing/workspace"
+  },
+  "session": {
+    "committed": [
+      {
+        "name": "Fresh",
+        "tasks": [
+          {
+            "content": "only",
+            "status": "in_progress"
+          }
+        ]
+      }
+    ],
+    "phases": [
+      {
+        "name": "Fresh",
+        "tasks": [
+          {
+            "content": "only",
+            "status": "in_progress"
+          }
+        ]
+      }
+    ],
+    "writes": 2
+  },
+  "session_dir": {},
+  "setup_calls": [
+    {
+      "arguments": {
+        "list": [
+          {
+            "items": [
+              "first",
+              "second"
+            ],
+            "phase": "Phase A"
+          },
+          {
+            "items": [
+              "third"
+            ],
+            "phase": "Phase B"
+          }
+        ],
+        "op": "init"
+      },
+      "committed_todo_phases": [
+        {
+          "name": "Phase A",
+          "tasks": [
+            {
+              "content": "first",
+              "status": "in_progress"
+            },
+            {
+              "content": "second",
+              "status": "pending"
+            }
+          ]
+        },
+        {
+          "name": "Phase B",
+          "tasks": [
+            {
+              "content": "third",
+              "status": "pending"
+            }
+          ]
+        }
+      ],
+      "dropped_undefined": [
+        "output.isError"
+      ],
+      "output": {
+        "content": [
+          {
+            "text": "Remaining items (3):\n  - first [in_progress] (Phase A)\n  - second [pending] (Phase A)\n  - third [pending] (Phase B)\nOverall: 0/3 done, 3 open.\nActive phase 1/2 \"Phase A\" (0/2).\n  Phase A:\n    - [ ] first (in progress)\n    - [ ] second\n  Phase B:\n    - [ ] third",
+            "type": "text"
+          }
+        ],
+        "details": {
+          "op": "init",
+          "phases": [
+            {
+              "name": "Phase A",
+              "tasks": [
+                {
+                  "content": "first",
+                  "status": "in_progress"
+                },
+                {
+                  "content": "second",
+                  "status": "pending"
+                }
+              ]
+            },
+            {
+              "name": "Phase B",
+              "tasks": [
+                {
+                  "content": "third",
+                  "status": "pending"
+                }
+              ]
+            }
+          ],
+          "storage": "memory"
+        }
+      },
+      "params": {
+        "list": [
+          {
+            "items": [
+              "first",
+              "second"
+            ],
+            "phase": "Phase A"
+          },
+          {
+            "items": [
+              "third"
+            ],
+            "phase": "Phase B"
+          }
+        ],
+        "op": "init"
+      },
+      "session": {
+        "committed": [
+          {
+            "name": "Phase A",
+            "tasks": [
+              {
+                "content": "first",
+                "status": "in_progress"
+              },
+              {
+                "content": "second",
+                "status": "pending"
+              }
+            ]
+          },
+          {
+            "name": "Phase B",
+            "tasks": [
+              {
+                "content": "third",
+                "status": "pending"
+              }
+            ]
+          }
+        ],
+        "phases": [
+          {
+            "name": "Phase A",
+            "tasks": [
+              {
+                "content": "first",
+                "status": "in_progress"
+              },
+              {
+                "content": "second",
+                "status": "pending"
+              }
+            ]
+          },
+          {
+            "name": "Phase B",
+            "tasks": [
+              {
+                "content": "third",
+                "status": "pending"
+              }
+            ]
+          }
+        ],
+        "writes": 1
+      },
+      "tool": "todo"
+    }
+  ],
+  "tool": "todo",
+  "workspace": {}
+}

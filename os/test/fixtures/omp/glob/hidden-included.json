@@ -1,0 +1,46 @@
+{
+  "coverage": [
+    "nominal"
+  ],
+  "effects": {
+    "session_dir": {},
+    "workspace": {
+      ".config/app.json": "{}\n",
+      "src/main.ts": "export {};\n"
+    }
+  },
+  "output": {
+    "content": [
+      {
+        "text": "# .config/\napp.json",
+        "type": "text"
+      }
+    ],
+    "details": {
+      "cwd": "/home/autark/src/elixos/build/omp-fixture-record/glob/hidden-included/workspace",
+      "fileCount": 1,
+      "files": [
+        ".config/app.json"
+      ],
+      "scopePath": ".",
+      "truncated": false
+    }
+  },
+  "params": {
+    "path": "**/*.json"
+  },
+  "reference": {
+    "integrity": "sha512-xvHDKLcAsGvDwLQG6PHZEYiELQPKJ4NiSc/yeurja8IZkC7yALjR+2pbEiCT4cSdyIfEmHFDhDUze8hSxYpiZA==",
+    "package": "@oh-my-pi/pi-coding-agent",
+    "version": "18.10.1"
+  },
+  "roots": {
+    "session_dir": "/home/autark/src/elixos/build/omp-fixture-record/glob/hidden-included/session",
+    "workspace": "/home/autark/src/elixos/build/omp-fixture-record/glob/hidden-included/workspace"
+  },
+  "session_dir": {},
+  "workspace": {
+    ".config/app.json": "{}\n",
+    "src/main.ts": "export {};\n"
+  }
+}

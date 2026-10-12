@@ -1,0 +1,54 @@
+{
+  "coverage": [
+    "nominal",
+    "unicode"
+  ],
+  "effects": {
+    "session_dir": {},
+    "workspace": {
+      "i18n/ja.txt": "日本語テスト\nカタカナ\n"
+    }
+  },
+  "output": {
+    "content": [
+      {
+        "text": "# i18n/\n## ja.txt#90FE\n*1:日本語テスト\n 2:カタカナ",
+        "type": "text"
+      }
+    ],
+    "details": {
+      "cwd": "/home/autark/src/elixos/build/omp-fixture-record/grep/unicode-pattern/workspace",
+      "displayContent": "# i18n/\n## ja.txt#90FE\n*1│日本語テスト\n 2│カタカナ",
+      "fileCount": 1,
+      "fileMatches": [
+        {
+          "count": 1,
+          "path": "i18n/ja.txt"
+        }
+      ],
+      "files": [
+        "i18n/ja.txt"
+      ],
+      "matchCount": 1,
+      "scopePath": ".",
+      "searchPath": "/home/autark/src/elixos/build/omp-fixture-record/grep/unicode-pattern/workspace",
+      "truncated": false
+    }
+  },
+  "params": {
+    "pattern": "日本語"
+  },
+  "reference": {
+    "integrity": "sha512-xvHDKLcAsGvDwLQG6PHZEYiELQPKJ4NiSc/yeurja8IZkC7yALjR+2pbEiCT4cSdyIfEmHFDhDUze8hSxYpiZA==",
+    "package": "@oh-my-pi/pi-coding-agent",
+    "version": "18.10.1"
+  },
+  "roots": {
+    "session_dir": "/home/autark/src/elixos/build/omp-fixture-record/grep/unicode-pattern/session",
+    "workspace": "/home/autark/src/elixos/build/omp-fixture-record/grep/unicode-pattern/workspace"
+  },
+  "session_dir": {},
+  "workspace": {
+    "i18n/ja.txt": "日本語テスト\nカタカナ\n"
+  }
+}

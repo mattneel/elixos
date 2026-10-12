@@ -1,0 +1,56 @@
+{
+  "coverage": [
+    "nominal",
+    "numeric_boundaries"
+  ],
+  "effects": {
+    "session_dir": {},
+    "workspace": {
+      "lib/a.js": "const alpha = 1;\n",
+      "lib/b.js": "const alpha = 2;\n"
+    }
+  },
+  "numeric_boundary": {
+    "limit": 2,
+    "path": [
+      "skip"
+    ],
+    "relation": "at"
+  },
+  "output": {
+    "content": [
+      {
+        "text": "No more results (2 files total; skip=2 is past the end)",
+        "type": "text"
+      }
+    ],
+    "details": {
+      "cwd": "/home/autark/src/elixos/build/omp-fixture-record/grep/skip-page-boundary/workspace",
+      "fileCount": 0,
+      "files": [],
+      "matchCount": 0,
+      "scopePath": ".",
+      "searchPath": "/home/autark/src/elixos/build/omp-fixture-record/grep/skip-page-boundary/workspace",
+      "truncated": false
+    },
+    "useless": true
+  },
+  "params": {
+    "pattern": "alpha",
+    "skip": 2
+  },
+  "reference": {
+    "integrity": "sha512-xvHDKLcAsGvDwLQG6PHZEYiELQPKJ4NiSc/yeurja8IZkC7yALjR+2pbEiCT4cSdyIfEmHFDhDUze8hSxYpiZA==",
+    "package": "@oh-my-pi/pi-coding-agent",
+    "version": "18.10.1"
+  },
+  "roots": {
+    "session_dir": "/home/autark/src/elixos/build/omp-fixture-record/grep/skip-page-boundary/session",
+    "workspace": "/home/autark/src/elixos/build/omp-fixture-record/grep/skip-page-boundary/workspace"
+  },
+  "session_dir": {},
+  "workspace": {
+    "lib/a.js": "const alpha = 1;\n",
+    "lib/b.js": "const alpha = 2;\n"
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "coverage": [
+    "nominal",
+    "unicode"
+  ],
+  "effects": {
+    "session_dir": {},
+    "workspace": {
+      "notes/日本語.txt": "héllo wörld\n日本語テスト\nemoji: 🚀\n"
+    }
+  },
+  "output": {
+    "content": [
+      {
+        "text": "[notes/日本語.txt#8045]\n1:héllo wörld\n2:日本語テスト\n3:emoji: 🚀",
+        "type": "text"
+      }
+    ],
+    "details": {
+      "displayContent": {
+        "lineNumbers": [
+          1,
+          2,
+          3
+        ],
+        "startLine": 1,
+        "text": "héllo wörld\n日本語テスト\nemoji: 🚀"
+      },
+      "fileSize": 45,
+      "meta": {
+        "source": {
+          "type": "path",
+          "value": "/home/autark/src/elixos/build/omp-fixture-record/read/unicode-content/workspace/notes/日本語.txt"
+        }
+      },
+      "totalLines": 3
+    }
+  },
+  "params": {
+    "path": "notes/日本語.txt"
+  },
+  "reference": {
+    "integrity": "sha512-xvHDKLcAsGvDwLQG6PHZEYiELQPKJ4NiSc/yeurja8IZkC7yALjR+2pbEiCT4cSdyIfEmHFDhDUze8hSxYpiZA==",
+    "package": "@oh-my-pi/pi-coding-agent",
+    "version": "18.10.1"
+  },
+  "roots": {
+    "session_dir": "/home/autark/src/elixos/build/omp-fixture-record/read/unicode-content/session",
+    "workspace": "/home/autark/src/elixos/build/omp-fixture-record/read/unicode-content/workspace"
+  },
+  "session_dir": {},
+  "workspace": {
+    "notes/日本語.txt": "héllo wörld\n日本語テスト\nemoji: 🚀\n"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "coverage": [
+    "nominal"
+  ],
+  "effects": {
+    "session_dir": {},
+    "workspace": {
+      "src/app.txt": "first line\nsecond line\n"
+    }
+  },
+  "output": {
+    "content": [
+      {
+        "text": "[src/app.txt#F9EC]\nSuccessfully wrote 23 bytes to src/app.txt",
+        "type": "text"
+      }
+    ],
+    "details": {
+      "resolvedPath": "/home/autark/src/elixos/build/omp-fixture-record/write/new-file/workspace/src/app.txt"
+    }
+  },
+  "params": {
+    "content": "first line\nsecond line\n",
+    "path": "src/app.txt"
+  },
+  "reference": {
+    "integrity": "sha512-xvHDKLcAsGvDwLQG6PHZEYiELQPKJ4NiSc/yeurja8IZkC7yALjR+2pbEiCT4cSdyIfEmHFDhDUze8hSxYpiZA==",
+    "package": "@oh-my-pi/pi-coding-agent",
+    "version": "18.10.1"
+  },
+  "roots": {
+    "session_dir": "/home/autark/src/elixos/build/omp-fixture-record/write/new-file/session",
+    "workspace": "/home/autark/src/elixos/build/omp-fixture-record/write/new-file/workspace"
+  },
+  "session_dir": {},
+  "workspace": {}
+}

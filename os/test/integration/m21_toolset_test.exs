@@ -34,7 +34,7 @@ defmodule Elixos.Integration.M21ToolsetTest do
     {out, vm} = QEMU.iex(vm, "s.workspace == w and s.session_dir == w")
     assert out =~ ~r/^true$/m
 
-    # OMP 18.8.7 src/tools/read.ts:778-780 defines readSchema's path input.
+    # OMP 18.10.1 src/tools/read.ts defines readSchema's path input (ADR-071).
     {_, vm} = QEMU.iex(vm, ~s|params = %{"path" => "hello.txt"}|)
     {out, vm} = QEMU.iex(vm, ~s|result = T.call("read", params, session: s)|)
     assert out =~ ~r/^\{:ok,/m

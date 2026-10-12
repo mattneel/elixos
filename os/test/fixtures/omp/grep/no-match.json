@@ -1,0 +1,45 @@
+{
+  "coverage": [
+    "nominal"
+  ],
+  "effects": {
+    "session_dir": {},
+    "workspace": {
+      "lib/a.js": "const alpha = 1;\n"
+    }
+  },
+  "output": {
+    "content": [
+      {
+        "text": "No matches found",
+        "type": "text"
+      }
+    ],
+    "details": {
+      "cwd": "/home/autark/src/elixos/build/omp-fixture-record/grep/no-match/workspace",
+      "fileCount": 0,
+      "files": [],
+      "matchCount": 0,
+      "scopePath": ".",
+      "searchPath": "/home/autark/src/elixos/build/omp-fixture-record/grep/no-match/workspace",
+      "truncated": false
+    },
+    "useless": true
+  },
+  "params": {
+    "pattern": "zzz-absent"
+  },
+  "reference": {
+    "integrity": "sha512-xvHDKLcAsGvDwLQG6PHZEYiELQPKJ4NiSc/yeurja8IZkC7yALjR+2pbEiCT4cSdyIfEmHFDhDUze8hSxYpiZA==",
+    "package": "@oh-my-pi/pi-coding-agent",
+    "version": "18.10.1"
+  },
+  "roots": {
+    "session_dir": "/home/autark/src/elixos/build/omp-fixture-record/grep/no-match/session",
+    "workspace": "/home/autark/src/elixos/build/omp-fixture-record/grep/no-match/workspace"
+  },
+  "session_dir": {},
+  "workspace": {
+    "lib/a.js": "const alpha = 1;\n"
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "coverage": [
+    "nominal"
+  ],
+  "effects": {
+    "session_dir": {},
+    "workspace": {
+      ".secret.txt": "s\n",
+      "visible.txt": "v\n"
+    }
+  },
+  "output": {
+    "content": [
+      {
+        "text": "visible.txt",
+        "type": "text"
+      }
+    ],
+    "details": {
+      "cwd": "/home/autark/src/elixos/build/omp-fixture-record/glob/hidden-excluded/workspace",
+      "fileCount": 1,
+      "files": [
+        "visible.txt"
+      ],
+      "scopePath": ".",
+      "truncated": false
+    }
+  },
+  "params": {
+    "hidden": false,
+    "path": "*.txt"
+  },
+  "reference": {
+    "integrity": "sha512-xvHDKLcAsGvDwLQG6PHZEYiELQPKJ4NiSc/yeurja8IZkC7yALjR+2pbEiCT4cSdyIfEmHFDhDUze8hSxYpiZA==",
+    "package": "@oh-my-pi/pi-coding-agent",
+    "version": "18.10.1"
+  },
+  "roots": {
+    "session_dir": "/home/autark/src/elixos/build/omp-fixture-record/glob/hidden-excluded/session",
+    "workspace": "/home/autark/src/elixos/build/omp-fixture-record/glob/hidden-excluded/workspace"
+  },
+  "session_dir": {},
+  "workspace": {
+    ".secret.txt": "s\n",
+    "visible.txt": "v\n"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "coverage": [
+    "nominal"
+  ],
+  "effects": {
+    "session_dir": {},
+    "workspace": {
+      "docs/guide.md": "# Guide\n",
+      "src/main.ts": "export const x = 1;\n"
+    }
+  },
+  "output": {
+    "content": [
+      {
+        "text": "# src/\nmain.ts",
+        "type": "text"
+      }
+    ],
+    "details": {
+      "cwd": "/home/autark/src/elixos/build/omp-fixture-record/glob/single-match/workspace",
+      "fileCount": 1,
+      "files": [
+        "src/main.ts"
+      ],
+      "scopePath": ".",
+      "truncated": false
+    }
+  },
+  "params": {
+    "path": "**/*.ts"
+  },
+  "reference": {
+    "integrity": "sha512-xvHDKLcAsGvDwLQG6PHZEYiELQPKJ4NiSc/yeurja8IZkC7yALjR+2pbEiCT4cSdyIfEmHFDhDUze8hSxYpiZA==",
+    "package": "@oh-my-pi/pi-coding-agent",
+    "version": "18.10.1"
+  },
+  "roots": {
+    "session_dir": "/home/autark/src/elixos/build/omp-fixture-record/glob/single-match/session",
+    "workspace": "/home/autark/src/elixos/build/omp-fixture-record/glob/single-match/workspace"
+  },
+  "session_dir": {},
+  "workspace": {
+    "docs/guide.md": "# Guide\n",
+    "src/main.ts": "export const x = 1;\n"
+  }
+}

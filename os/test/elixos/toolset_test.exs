@@ -5,9 +5,9 @@ defmodule Elixos.ToolsetTest do
   (ADR-047).
 
   Reference note: the inventory and think request/result shape come from OMP
-  18.8.7 source. The dispatch, session, error and limit acceptance tests have
-  not been checked against a reference implementation; per-tool fixtures must
-  be recorded during M21 before claiming differential parity.
+  18.10.1 source (ADR-071). Dispatch, session, error and limit acceptance are
+  Elixos isolation contracts; per-tool fixtures are recorded from actual
+  upstream calls before claiming differential parity.
   """
   use ExUnit.Case, async: false
 
@@ -144,7 +144,7 @@ defmodule Elixos.ToolsetTest do
     assert %Session{workspace: ^workspace, session_dir: session_dir} = session
     assert session_dir == Elixos.Session.cwd()
     assert Toolset.implementation("read") == :quickbeam
-    # OMP 18.8.7 src/tools/read.ts, readSchema: the input is %{ "path" => string }.
+    # OMP 18.10.1 src/tools/read.ts, readSchema: the input is %{ "path" => string }.
     assert {:ok, output} = Toolset.call("read", %{"path" => "hello.txt"}, session: session)
     assert inspect(output) =~ "m21-read-provenance"
 

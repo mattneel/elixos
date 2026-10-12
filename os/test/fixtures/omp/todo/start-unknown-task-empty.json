@@ -1,0 +1,54 @@
+{
+  "arguments": {
+    "op": "start",
+    "task": "missing"
+  },
+  "committed_todo_phases": null,
+  "coverage": [
+    "malformed"
+  ],
+  "dropped_undefined": [],
+  "effects": {
+    "session_dir": {},
+    "workspace": {}
+  },
+  "initial_session": {
+    "phases": []
+  },
+  "output": {
+    "content": [
+      {
+        "text": "Errors: Task \"missing\" not found (todo list is empty — was it replaced or not yet created?)",
+        "type": "text"
+      }
+    ],
+    "details": {
+      "op": "start",
+      "phases": [],
+      "storage": "memory"
+    },
+    "isError": true
+  },
+  "params": {
+    "op": "start",
+    "task": "missing"
+  },
+  "reference": {
+    "integrity": "sha512-xvHDKLcAsGvDwLQG6PHZEYiELQPKJ4NiSc/yeurja8IZkC7yALjR+2pbEiCT4cSdyIfEmHFDhDUze8hSxYpiZA==",
+    "package": "@oh-my-pi/pi-coding-agent",
+    "version": "18.10.1"
+  },
+  "roots": {
+    "session_dir": "/home/autark/src/elixos/build/omp-todo-fixture-record/start-unknown-task-empty/session",
+    "workspace": "/home/autark/src/elixos/build/omp-todo-fixture-record/start-unknown-task-empty/workspace"
+  },
+  "session": {
+    "committed": null,
+    "phases": [],
+    "writes": 0
+  },
+  "session_dir": {},
+  "setup_calls": [],
+  "tool": "todo",
+  "workspace": {}
+}

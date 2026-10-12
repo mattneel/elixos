@@ -1,0 +1,43 @@
+{
+  "coverage": [
+    "nominal"
+  ],
+  "effects": {
+    "session_dir": {},
+    "workspace": {
+      "alpha/one.txt": "one\n"
+    }
+  },
+  "output": {
+    "content": [
+      {
+        "text": "No files found matching pattern",
+        "type": "text"
+      }
+    ],
+    "details": {
+      "cwd": "/home/autark/src/elixos/build/omp-fixture-record/glob/no-match/workspace",
+      "fileCount": 0,
+      "files": [],
+      "scopePath": ".",
+      "truncated": false
+    },
+    "useless": true
+  },
+  "params": {
+    "path": "**/*.rs"
+  },
+  "reference": {
+    "integrity": "sha512-xvHDKLcAsGvDwLQG6PHZEYiELQPKJ4NiSc/yeurja8IZkC7yALjR+2pbEiCT4cSdyIfEmHFDhDUze8hSxYpiZA==",
+    "package": "@oh-my-pi/pi-coding-agent",
+    "version": "18.10.1"
+  },
+  "roots": {
+    "session_dir": "/home/autark/src/elixos/build/omp-fixture-record/glob/no-match/session",
+    "workspace": "/home/autark/src/elixos/build/omp-fixture-record/glob/no-match/workspace"
+  },
+  "session_dir": {},
+  "workspace": {
+    "alpha/one.txt": "one\n"
+  }
+}

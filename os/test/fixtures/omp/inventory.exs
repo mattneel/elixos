@@ -1,21 +1,23 @@
-# The OMP toolset inventory (M21, ADR-047): every tool the pinned OMP SDK's
-# factories construct, recorded 2026-10-10 from the 18.8.7 reference -
+# The complete first-party OMP tool surface (M21, ADR-047/ADR-071), pinned to
+# 18.10.1 / 90701813e5fba6919067848989378b4ee6239c13. Source evidence and the
+# context-specific registry map are in docs/omp-inventory.json:
 #
-#   src/tools/index.ts   BUILTIN_TOOLS (30) and HIDDEN_TOOLS (3)
-#   src/sdk.ts           the settings-gated custom tools (generate_image, tts)
+#   tools/index.ts       BUILTIN_TOOLS (30) and HIDDEN_TOOLS (3)
+#   sdk.ts               image/TTS settings, autoresearch and vibe tools (11)
+#   special sessions     advisor, commit, compression and security tools (12)
 #
-# MCP and extension tools are a user's configuration, not the toolset. Moving
-# the pin is a note in docs/DECISIONS.md and re-recorded fixtures.
+# Dynamic MCP/extension inventories remain user configuration, not new built-ins.
 #
 # Each tool is {name, origin, construction}:
-#   origin        :builtin | :hidden | :settings
+#   origin        :builtin | :hidden | :settings | :runtime
 #   construction  :always     the factory always returns the tool
 #                 :create_if  it returns null without its dependency or setting
 #                 :settings   installed only while its setting is on
+#                 :session    supplied only in its declared runtime/session mode
 #
-# No per-tool JSON fixtures exist yet. M21 must record them from this exact
-# pin, including dependency/settings-gated availability rather than treating
-# inventory membership as proof that a factory is available.
+# JSON fixtures are recorded from this exact pin, never from Elixos. A missing
+# non-waiting tool still fails coverage; membership does not imply a factory's
+# dependency/settings/context gates are satisfied.
 # A fixture records `reference` (package/version/integrity), `coverage`, distinct
 # absolute recorded `roots`, `workspace` and `session_dir` initial file maps,
 # `params`, exactly one of `output` or `error` (kind/message), and `effects`
@@ -32,10 +34,10 @@
 %{
   reference: %{
     package: "@oh-my-pi/pi-coding-agent",
-    version: "18.8.7",
-    source: "https://github.com/can1357/oh-my-pi (packages/coding-agent)",
+    version: "18.10.1",
+    source: "https://github.com/can1357/oh-my-pi/tree/90701813e5fba6919067848989378b4ee6239c13",
     integrity:
-      "sha512-CRjlRS/CmWKXD67iXScvPssI0PzFIuWOdkSh8/lYk3OEb1gcRy09iBuP6xaoD1/BZnFkug9sXC7CiG8xxfgjqQ=="
+      "sha512-xvHDKLcAsGvDwLQG6PHZEYiELQPKJ4NiSc/yeurja8IZkC7yALjR+2pbEiCT4cSdyIfEmHFDhDUze8hSxYpiZA=="
   },
   tools: [
     {"read", :builtin, :always},
@@ -72,7 +74,28 @@
     {"yield", :hidden, :always},
     {"goal", :hidden, :always},
     {"generate_image", :settings, :settings},
-    {"tts", :settings, :settings}
+    {"tts", :settings, :settings},
+    {"init_experiment", :runtime, :session},
+    {"run_experiment", :runtime, :session},
+    {"log_experiment", :runtime, :session},
+    {"update_notes", :runtime, :session},
+    {"vibe_spawn", :runtime, :session},
+    {"vibe_send", :runtime, :session},
+    {"vibe_wait", :runtime, :session},
+    {"vibe_kill", :runtime, :session},
+    {"vibe_list", :runtime, :session},
+    {"advise", :runtime, :session},
+    {"git_overview", :runtime, :session},
+    {"git_file_diff", :runtime, :session},
+    {"git_hunk", :runtime, :session},
+    {"recent_commits", :runtime, :session},
+    {"analyze_files", :runtime, :session},
+    {"propose_changelog", :runtime, :session},
+    {"propose_commit", :runtime, :session},
+    {"split_commit", :runtime, :session},
+    {"rewrite", :runtime, :session},
+    {"approve", :runtime, :session},
+    {"security_publish", :runtime, :session}
   ],
   # Tools that need a later milestone, and which one. Subagents are Jido agents
   # (M22), so `task` waits for the on-box agent; the rest go ahead in M21.

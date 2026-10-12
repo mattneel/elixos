@@ -1,0 +1,25 @@
+{
+  "coverage": [
+    "malformed"
+  ],
+  "effects": {
+    "session_dir": {},
+    "workspace": {}
+  },
+  "error": {
+    "kind": "ValidationError",
+    "message": "Validation failed for tool \"read\":\n  - path: path must be Local path, internal URI, or URL; selectors inline. (was missing)\n\nReceived arguments:\n{}"
+  },
+  "params": {},
+  "reference": {
+    "integrity": "sha512-xvHDKLcAsGvDwLQG6PHZEYiELQPKJ4NiSc/yeurja8IZkC7yALjR+2pbEiCT4cSdyIfEmHFDhDUze8hSxYpiZA==",
+    "package": "@oh-my-pi/pi-coding-agent",
+    "version": "18.10.1"
+  },
+  "roots": {
+    "session_dir": "/home/autark/src/elixos/build/omp-fixture-record/read/invalid-params/session",
+    "workspace": "/home/autark/src/elixos/build/omp-fixture-record/read/invalid-params/workspace"
+  },
+  "session_dir": {},
+  "workspace": {}
+}

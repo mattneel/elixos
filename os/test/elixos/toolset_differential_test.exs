@@ -5,9 +5,9 @@ defmodule Elixos.ToolsetDifferentialTest do
   plus complete final filesystem effects (ADR-047). Effects execute once;
   no second implementation is invoked to manufacture an expected result.
 
-  Reference note: OMP 18.8.7 is the reference, not another Elixos implementation.
-  No per-tool fixtures exist yet. Recording them during M21 is required before
-  these scenarios can be reference-validated; a missing tool fails loudly.
+  Reference note: OMP 18.10.1 is the reference, not another Elixos implementation
+  (ADR-071). Recorded cases come from actual upstream calls; every missing tool
+  still fails loudly. Input mtimes are restored without output normalization (ADR-073).
   Each fixture records the pin, coverage categories, initial file maps, params,
   exactly one outcome, and final effects. `roots` records distinct absolute
   workspace/session roots: only those literal prefixes are rebound for replay,
@@ -80,7 +80,21 @@ defmodule Elixos.ToolsetDifferentialTest do
         fixture = bind_roots!(fixture, workspace, session_dir)
         restore_files!(workspace, Map.fetch!(fixture, "workspace"))
         restore_files!(session_dir, Map.fetch!(fixture, "session_dir"))
-        session = Session.new(workspace: workspace, session_dir: session_dir)
+        times = Map.get(fixture, "file_times", %{})
+        restore_times!(workspace, fixture["workspace"], Map.get(times, "workspace", %{}))
+        restore_times!(session_dir, fixture["session_dir"], Map.get(times, "session_dir", %{}))
+
+        session_file =
+          if relative = Map.get(fixture, "session_file"),
+            do: fixture_path!(session_dir, relative)
+
+        session =
+          Session.new(
+            workspace: workspace,
+            session_dir: session_dir,
+            session_file: session_file
+          )
+
         cwd = File.cwd!()
         environment = System.get_env()
         # Stateful SDK tools (for example checkpoint/rewind) may record real
@@ -102,6 +116,12 @@ defmodule Elixos.ToolsetDifferentialTest do
 
         actual = Toolset.call(ctx.tool, Map.fetch!(fixture, "params"), session: session)
         assert_result!(actual, fixture)
+
+        if ctx.tool == "todo" do
+          assert {:ok, view} = Toolset.call("todo", %{"op" => "view"}, session: session)
+          assert view["details"]["phases"] === fixture["session"]["phases"]
+        end
+
         effects = Map.fetch!(fixture, "effects")
         assert snapshot_files!(workspace) == decode_files!(Map.fetch!(effects, "workspace"))
         assert snapshot_files!(session_dir) == decode_files!(Map.fetch!(effects, "session_dir"))
@@ -119,7 +139,9 @@ defmodule Elixos.ToolsetDifferentialTest do
 
     defp assert_fixture!(tool, fixture) do
       assert Map.fetch!(fixture, "reference") == @pin
-      assert is_map(Map.fetch!(fixture, "params"))
+      # File parsing already proves JSON. Malformed raw arguments are not
+      # necessarily objects and must reach the original validator unchanged.
+      params = Map.fetch!(fixture, "params")
       assert_outcome!(fixture)
       roots = Map.fetch!(fixture, "roots")
       workspace = Map.fetch!(roots, "workspace")
@@ -141,10 +163,16 @@ defmodule Elixos.ToolsetDifferentialTest do
       assert is_list(coverage) and coverage != []
       assert Enum.uniq(coverage) == coverage
       assert Enum.all?(coverage, &(&1 in @coverage))
-      inputs = [fixture["params"], fixture["workspace"], fixture["session_dir"]]
+      inputs = [params, fixture["workspace"], fixture["session_dir"]]
 
-      if "nominal" in coverage, do: assert(Map.has_key?(fixture, "output"))
-      if "malformed" in coverage, do: assert(Map.has_key?(fixture, "error"))
+      if "nominal" in coverage do
+        assert Map.has_key?(fixture, "output")
+        refute fixture["output"]["isError"] == true
+      end
+
+      if "malformed" in coverage do
+        assert Map.has_key?(fixture, "error") or fixture["output"]["isError"] == true
+      end
 
       if "unicode" in coverage do
         assert Enum.any?(input_strings(inputs), fn value ->
@@ -193,7 +221,7 @@ defmodule Elixos.ToolsetDifferentialTest do
 
       for setup <- setup_calls do
         assert Map.fetch!(setup, "tool") in @ready_tools
-        assert is_map(Map.fetch!(setup, "params"))
+        assert Map.has_key?(setup, "params")
         assert_outcome!(setup)
       end
     end
@@ -244,6 +272,14 @@ defmodule Elixos.ToolsetDifferentialTest do
         destination = fixture_path!(root, relative)
         File.mkdir_p!(Path.dirname(destination))
         File.write!(destination, bytes)
+      end
+    end
+
+    defp restore_times!(root, files, times) do
+      for {relative, seconds} <- times do
+        assert Map.has_key?(files, relative), "mtime must refer to an initial file"
+        assert is_integer(seconds), "mtime must be whole POSIX seconds"
+        File.touch!(fixture_path!(root, relative), seconds)
       end
     end
 
