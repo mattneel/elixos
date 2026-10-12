@@ -1,5 +1,11 @@
 # Elixos
 
+[![License: MIT](https://img.shields.io/github/license/mattneel/elixos)](LICENSE)
+[![Elixir 1.20.4](https://img.shields.io/badge/Elixir-1.20.4-4B275F?logo=elixir&logoColor=white)](https://elixir-lang.org)
+[![OTP 29.1.1](https://img.shields.io/badge/OTP-29.1.1-A90533?logo=erlang&logoColor=white)](https://www.erlang.org)
+[![Linux 7.2.9](https://img.shields.io/badge/Linux-7.2.9-FCC624?logo=linux&logoColor=black)](kernel/VERSION)
+[![Zig 0.18.0-dev.131](https://img.shields.io/badge/Zig-0.18.0--dev.131-F7A41D?logo=zig&logoColor=black)](.zig-version)
+
 [![A module defined in IEx survives a power cycle](demos/readme-live-image.gif)](demos/m06-live-image.mp4)
 
 [Watch the recording](demos/m06-live-image.mp4) · [All demos](demos/README.md)
@@ -29,8 +35,8 @@ ARM64 renderer packaging and the full milestone gate are still in progress.
 **Resumed:** the coding-agent toolset, on-box coding agent, safe self-modification
 and native hot paths (M21–M24). The [revision-pinned OMP-to-Jido inventory](docs/OMP_INVENTORY.md)
 is recorded; the M21 port is active without a `clanklet` prerequisite ([ADR-071](docs/DECISIONS.md)).
-Think and Todo run through named Jido Actions in an isolated peer; the remaining
-tools and full milestone gate are still in progress.
+The native Elixir/Jido port is in progress. Upstream TypeScript is the reference,
+not the intended tool runtime; the full milestone gate is not yet green.
 See the [roadmap and acceptance criteria](docs/ROADMAP.md).
 
 **Planned graphics variants:** AMD and NVIDIA images using the human's
@@ -69,3 +75,8 @@ for the development loop.
 - [ROADMAP](docs/ROADMAP.md): milestones and their acceptance tests
 - [TESTING](docs/TESTING.md): how the test layers, gating and QEMU harness work
 - [OMP inventory](docs/OMP_INVENTORY.md): upstream tools, prompts, skills and the Jido port map
+
+## License
+
+Elixos source is licensed under the [MIT License](LICENSE).
+Third-party components retain their own licenses and notices.
