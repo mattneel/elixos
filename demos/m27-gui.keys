@@ -1,0 +1,14 @@
+# Real framebuffer and QMP keyboard, then console handover.
+M27 GUI {:ok,
+M27 PENDING [:confirm]
+M27 ANSWER confirm {:ok, true}
+M27 PENDING [:text]
+M27 ANSWER text {:ok, "hello"}
+M27 PENDING [:choice]
+M27 ANSWER choice {:ok, "Green"}
+M27 PENDING [:multi]
+M27 ANSWER multi {:ok, ["Network", "Audio"]}
+M27 STOP :ok
+M27 CONSOLE 42
+M27 FBCON ["1"]
+elixos-shim: shutdown poweroff

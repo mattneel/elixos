@@ -39,12 +39,21 @@ command -v ffmpeg >/dev/null || { echo "render: ffmpeg is required (apt install 
 
 # agg refuses to overwrite; clearing the intermediates makes re-renders work.
 rm -f "$FRAMES" "$DEMO.mp4"
-"$AGG" --font-size 16 --idle-time-limit 2 --speed 1.5 --fps-cap 12 \
-  "$DEMO.cast" "$FRAMES"
 
 # H.264 wants even dimensions, and yuv420p so every player can decode it.
-ffmpeg -loglevel error -y -i "$FRAMES" \
-  -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -pix_fmt yuv420p -crf 24 \
-  -movflags +faststart "$DEMO.mp4"
+if [ "$NAME" = m27-gui ]; then
+  [ -s "$BUILD/$NAME.frames/frame-000000.ppm" ] || {
+    echo "render: missing actual QMP framebuffer captures; record M27 first" >&2
+    exit 1
+  }
+  python3 "$ROOT/demos/compose-gui.py" "$AGG" "$DEMO.cast" \
+    "$BUILD/$NAME.frames" "$FRAMES" "$DEMO.mp4"
+else
+  "$AGG" --font-size 16 --idle-time-limit 2 --speed 1.5 --fps-cap 12 \
+    "$DEMO.cast" "$FRAMES"
+  ffmpeg -loglevel error -y -i "$FRAMES" \
+    -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -pix_fmt yuv420p -crf 24 \
+    -movflags +faststart "$DEMO.mp4"
+fi
 
 ls -l "$DEMO.mp4" | awk '{printf "render: %s (%.0f kB)\n", $NF, $5/1024}'

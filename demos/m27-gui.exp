@@ -1,0 +1,96 @@
+#!/usr/bin/expect -f
+# M27: the packaged framebuffer and real evdev keyboard, not GUI.input/1.
+set timeout 300
+set qmp "/tmp/exdemo-[pid].sock"
+set frames "$env(ELIXOS_DEMO_FRAMES)"
+set helper ""
+set vm ""
+proc cleanup {} {
+    global helper vm qmp
+    if {$helper ne ""} {
+        catch {exec kill -KILL [exp_pid -i $helper]}
+        catch {close -i $helper}
+        catch {wait -i $helper}
+    }
+    if {$vm ne ""} {
+        catch {exec kill -KILL [exp_pid -i $vm]}
+        catch {close -i $vm}
+        catch {wait -i $vm}
+    }
+    catch {file delete $qmp}
+}
+expect_after {
+    timeout { puts stderr "DEMO ABORTED: $expect_out(buffer)"; cleanup; exit 1 }
+}
+trap {cleanup; exit 1} {SIGINT SIGTERM}
+spawn -noecho qemu-system-x86_64 \
+    -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+    -display none -monitor none -serial stdio -no-reboot \
+    -vga none -device virtio-gpu-pci -device virtio-keyboard-pci \
+    -qmp "unix:$qmp,server=on,wait=off" \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+set vm $spawn_id
+expect "iex(1)> "
+proc command {expression} {
+    global spawn_id vm
+    set spawn_id $vm
+    send -- "$expression\r"
+    # Wait for the echoed line first, then its completed next prompt.
+    expect -exact $expression
+    expect -re {iex\([0-9]+\)> }
+}
+command {IEx.configure(colors: [enabled: false])}
+spawn -noecho elixir demos/gui-capture.exs $qmp $frames
+set helper $spawn_id
+expect "CAPTURE READY"
+set spawn_id $vm
+command {IO.puts("M27 GUI " <> inspect(Elixos.GUI.status()))}
+proc key {qcode} {
+    global spawn_id helper vm
+    set spawn_id $helper
+    send -- "KEY $qcode\r"
+    expect -exact "KEY SENT $qcode"
+    sleep 0.2
+    set spawn_id $vm
+}
+proc question {kind opts expected keys} {
+    global spawn_id vm
+    command "spawn(fn -> File.write!(\"/priv/m27-$kind.answer\", inspect(Elixos.Ask.ask(:$kind, $opts))) end)"
+    sleep 2
+    command {IO.puts("M27 PENDING " <> inspect(Enum.map(Elixos.Ask.pending(), & &1.kind)))}
+    sleep 2
+    foreach qcode $keys { key $qcode }
+    # Wait on the real asking process's result, never on a synthetic GUI answer.
+    set spawn_id $vm
+    set expr "Enum.reduce_while(1..120, nil, fn _, _ -> if File.exists?(\"/priv/m27-$kind.answer\"), do: {:halt, File.read!(\"/priv/m27-$kind.answer\")}, else: (Process.sleep(250); {:cont, nil}) end) |> then(fn answer -> IO.puts(\"M27 ANSWER $kind \" <> to_string(answer)) end)"
+    send -- "$expr\r"
+    expect -exact "\nM27 ANSWER $kind $expected"
+    expect -re {iex\([0-9]+\)> }
+    sleep 2
+}
+question confirm {prompt: "Boot the cyberdeck?"} {{:ok, true}} {y}
+question text {prompt: "Name this machine"} {{:ok, "hello"}} {h e l l o ret}
+question choice {prompt: "Choose a color", options: ["Blue", "Green"]} {{:ok, "Green"}} {down ret}
+question multi {prompt: "Enable services", options: ["Network", "Audio"]} {{:ok, ["Network", "Audio"]}} {spc down spc ret}
+command {IO.puts("M27 STOP " <> inspect(Elixos.GUI.stop()))}
+sleep 2
+command {IO.puts("M27 CONSOLE " <> inspect(40 + 2))}
+command {IO.puts("M27 FBCON " <> inspect(Path.wildcard("/sys/class/vtconsole/vtcon*/name") |> Enum.filter(fn p -> String.contains?(File.read!(p), "frame buffer") end) |> Enum.map(fn p -> File.read!(Path.join(Path.dirname(p), "bind")) |> String.trim() end)))}
+sleep 2
+set spawn_id $helper
+send -- "STOP\r"
+expect -re {CAPTURE STOPPED [0-9]+}
+expect eof
+catch {wait -i $helper}
+set helper ""
+set spawn_id $vm
+send {Elixos.poweroff()}
+send "\r"
+expect "elixos-shim: shutdown poweroff"
+expect eof
+catch {wait -i $vm}
+set vm ""
+cleanup

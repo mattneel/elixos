@@ -61,6 +61,14 @@ done
 cp --sparse=always "$pristine" "$DEMO.disk"
 export ELIXOS_DEMO_DISK="$DEMO.disk"
 
+# M27 keeps actual QEMU graphics frames, separate from the serial cast.
+if [ "$NAME" = m27-gui ]; then
+  export ELIXOS_DEMO_FRAMES="$BUILD/$NAME.frames"
+  rm -rf "$ELIXOS_DEMO_FRAMES"
+  mkdir -p "$ELIXOS_DEMO_FRAMES"
+fi
+trap 'rm -f "$DEMO.disk"' EXIT
+
 echo "record: $NAME -> $NAME.cast"
 "$ASCII" rec --headless --window-size 120x36 -i 2 --overwrite \
   -c "expect $DEMO.exp" "$DEMO.cast"

@@ -126,6 +126,17 @@ if [ ! -s "$DEMO.mp4" ]; then
   problems=$((problems + 1))
 fi
 
+if [ "$NAME" = m27-gui ]; then
+  if [ ! -s "$DEMO-console.mp4" ]; then
+    echo "check: M27 is missing its separate serial-console video" >&2
+    problems=$((problems + 1))
+  fi
+  if ! python3 "$ROOT/demos/check-graphics.py" "$BUILD/$NAME.frames" \
+    "$DEMO-framebuffer.mp4" "$DEMO.mp4"; then
+    problems=$((problems + 1))
+  fi
+fi
+
 if [ "$problems" -eq 0 ]; then
   echo "check: $NAME ok ($(wc -c < "$TEXT" | tr -d ' ') bytes of console)"
 else
