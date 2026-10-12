@@ -704,26 +704,24 @@ session's workspace and directory; and killing the peer mid-call returns an
 error to the caller while the prompt keeps answering and the shim never
 notices (no missed heartbeat, no relaunch).
 
+**Port progress.** The real descriptor catalog covers 56 tool IDs and 86
+schema variants. Think and Todo pass their complete recorded corpus through
+Jido and the peer; native glob/shell effect engines have separate real-reference
+smoke proof. Filesystem tools, other session/runtime surfaces, image acceptance
+and the full M21 gate remain in progress. [Port notes](notes/omp-tool-port.md)
+record the runtime boundaries and exercised checks.
+
 **Notes.**
-- *The reference.* The resumed arc targets upstream 18.10.1 at commit
-  `90701813e5fba6919067848989378b4ee6239c13` (ADR-071). The original 18.8.7
-  inventory in `os/test/fixtures/omp/inventory.exs` is historical until the
-  new inventory and actual upstream outcomes are recorded. A reference move
-  is never an excuse to synthesize expected results from the port.
-- *The original inventory* is what the 18.8.7 SDK's factories construct -
-  `BUILTIN_TOOLS` and
-  `HIDDEN_TOOLS` in `src/tools/index.ts`, plus the settings-gated custom tools
-  `src/sdk.ts` installs: `read`, `security_scan`, `bash`, `edit`, `ast_grep`,
-  `ast_edit`, `ask`, `debug`, `ida`, `eval`, `github`, `glob`, `grep`, `find`,
-  `lsp`, `checkpoint`, `rewind`, `context_notes`, `new_context`, `task`,
-  `wait`, `todo`, `web_search`, `write`, `memory_edit`, `retain`, `recall`,
-  `reflect`, `learn`, `manage_skill`; hidden `think`, `yield`, `goal`;
-  settings-gated `generate_image` and `tts`. 35 tools, recorded with the pin
-  in `os/test/fixtures/omp/inventory.exs`. MCP and extension tools are a
-  user's configuration, not the toolset. A factory that returns `null` without
-  its dependency (`createIf`: `ida` without IDA, `lsp` without a language
-  server, `github` without `gh`) keeps that behaviour - absent, as OMP would
-  be on the same machine.
+- *The reference.* Upstream 18.10.1 at commit
+  `90701813e5fba6919067848989378b4ee6239c13` replaces the historical 18.8.7
+  pin under ADR-071. `os/test/fixtures/omp/inventory.exs` records the current
+  pin. Outcomes come from actual upstream calls, never from the port.
+- *The inventory.* [OMP_INVENTORY.md](OMP_INVENTORY.md) and
+  `omp-inventory.json` enumerate the complete 56-ID surface: primary,
+  hidden, settings-gated and context-specific helper tools. The compiled
+  catalog captures all 86 recorded schema variants from their real constructors.
+  Membership is not enablement: dependency/settings/session gates remain
+  distinct. Dynamic MCP and extension inventories are user configuration.
 - *The tool host.* QuickBEAM (Hex `quickbeam` 0.11.3, pinned with its checksum
   like every dependency) runs in a peer node started with `:peer` and
   supervised by the main VM; QuickJS never loads into the main VM. It runs
@@ -740,12 +738,11 @@ notices (no missed heartbeat, no relaunch).
   have done - spawning processes, file access, globbing, the network - each
   scoped to the calling session's workspace and its M9 session directory. A
   tool sees what its session may see, and nothing VM-global moves.
-- *Native dependencies.* A tool that needs an external binary gets it as an
-  Alpine package in the image (`bash` for the bash tool, `ripgrep`, `git`,
-  `ast-grep`, language servers), pinned in the lockfile like the rest. A tool
-  that needs an OMP native addon (`@oh-my-pi/pi-natives`) is tried in QuickBEAM
-  first; where QuickBEAM cannot load it, that piece is reimplemented in Elixir
-  or Zig and the differential suite decides whether it matches.
+- *Native dependencies.* External binaries belong to pinned Alpine packages.
+  For portable OMP effects, reuse the unchanged Rust engines through the
+  shell-free `toolhost` executable (ADR-077), not the Bun/N-API transport.
+  Other effects use scoped Elixir/Zig handlers as in ADR-047. Target packaging,
+  provider transport and exact differential acceptance remain required.
 - *The suite.* Fixtures are recorded from the pinned OMP - Unicode, malformed
   input, numeric boundaries, large payloads - and compared on outputs and on
   failure semantics. Shadow comparisons, when a second implementation runs

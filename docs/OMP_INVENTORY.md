@@ -249,6 +249,27 @@ not passing test claims. Tool availability under external credentials,
 servers, browser/desktop devices and target-native runtimes, and full
 behavioral equivalence, remain for the port's conformance gate.
 
+## Port progress, not milestone delivery
+
+- `os/priv/toolset/catalog.json` captures actual schemas/descriptions for all
+  56 IDs and 86 inventory variants; `Elixos.Toolset.Catalog` embeds it in the
+  generation. Provisioned constructor-only dependencies are recorded explicitly,
+  not claimed as usable external services.
+- Named Think and Todo Jido Actions use the original validator and tool code in
+  the supervised peer. Their 47 reference cases pass exact result/error replay;
+  Todo covers every operation, state/error atomicity and malformed raw values.
+- Peer quotas, root/symlink isolation and main-VM native exclusion have focused
+  checks. Jido discovery cannot load the engine NIFs; unscoped Beam callbacks are
+  denied (ADR-075).
+- The portable native glob/shell engines match 12 actual reference outcomes in
+  independent roots. Their model-facing dispatch, provider transport and image
+  packaging are not thereby delivered.
+
+The complete M21 gate remains in progress. [Implementation notes](notes/omp-tool-port.md)
+retain the observed runtime pitfalls; ADR-073/076 document the separately
+committed replay-driver corrections.
+
+
 ## Graphics scope
 
 The human's `live_gpui` is **GPUI + LiveView via Rustler**, currently

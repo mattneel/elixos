@@ -13,6 +13,8 @@ testing guide and roadmap describe the current system.
 - [Console interrupts](console-interrupt.md): OTP's cooked-console behavior.
 - [Zig master APIs](zig-master-apis.md): pinned-compiler API changes.
 - [Jido](jido.md): agent integration and persistence.
+- [OMP tool port](omp-tool-port.md): exact-reference replay, peer-only native
+  loading, capability boundaries and source-preserving effect engines.
 - [SSH](m12-ssh.md): M12 integration notes.
 - [UEFI boot](uefi-boot.md): the EFI-stub hardware path.
 
