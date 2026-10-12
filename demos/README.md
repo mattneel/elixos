@@ -25,6 +25,7 @@ means a failing test first, then the fix).
 | `m19-oban.mp4` | M19 | a worker defined at the prompt runs a job now, and a job scheduled for later survives a power cycle and runs on the next boot |
 | `m20-ask.mp4` | M20 | an agent asks the human through the Jido action, the console shows the notice line, the prompt answers, and the answer returns into the agent's state |
 | `m25-browser.mp4` | M25 | the headless browser ships in the read-only image, comes up with the system, and answers the four verbs - navigate, evaluate, screenshot - over jido_browser and a CDP connection from Hex |
+| `m26-system-deps.mp4` | M26 | installing a package installs its closure first, and the build that follows resolves the dependency where it is installed - the dependency's code is the installed copy, on a box with no network |
 
 ## Play, record, check
 

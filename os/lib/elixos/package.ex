@@ -18,8 +18,10 @@ defmodule Elixos.Package do
   The name is resolved among the repositories `/priv/hex/repos.exs` lists —
   which is the entire trust decision, so an install never trusts a repository
   implicitly — the tarball is fetched, verified and unpacked into
-  `/priv/apps/<name>-<version>/`, and that directory goes through the same path
-  as an explicit one. A name offered by two repositories is an error naming
+  `/priv/apps/<name>/`, and that directory goes through the same path
+  as an explicit one. A project built afterwards resolves such a package as a
+  dependency where it is installed, not in a repository (M26,
+  `Elixos.Package.SCM`). A name offered by two repositories is an error naming
   both. `:elixos` is never fetched: it is the running OS.
 
   The apt verbs are functions here, not commands (ADR-019): `add_repo/3`,
@@ -187,7 +189,14 @@ defmodule Elixos.Package do
     # A failure makes the eval fail, which ends the child non-zero on its own;
     # a success has to say so, or the release's boot leaves the child running
     # as a daemon and System.cmd waits forever.
-    code = ~s|'Elixir.Mix.CLI':main([<<"compile">>, <<"--no-deps-check">>]), erlang:halt(0)|
+    #
+    # An installed package is a dependency (M26): prepended before any SCM Mix
+    # starts with, Elixos.Package.SCM answers for dependencies this box already
+    # has, so a project resolves them where they are installed instead of a
+    # repository it cannot reach.
+    code =
+      ~s|'Elixir.Mix':start(), 'Elixir.Mix.SCM':prepend('Elixir.Elixos.Package.SCM'), | <>
+        ~s|'Elixir.Mix.CLI':main([<<"compile">>, <<"--no-deps-check">>]), erlang:halt(0)|
 
     # The release's boot script resolves $RELEASE_LIB against the boot_var the
     # shim passes, so a child ERTS has to pass it too.
@@ -278,9 +287,29 @@ defmodule Elixos.Package do
     :ok
   end
 
-  # Where an installed app lives on the disk: its whole build dir (ebin and
-  # priv) under /priv/apps (PROTOCOL.md §7).
-  defp installed_dir(app), do: Path.join([os_priv(), "apps", Atom.to_string(app)])
+  @doc """
+  The directory an installed package lives in: `$priv/apps/<name>`.
+
+  Its whole build dir - ebin and priv - is there (PROTOCOL.md §7). Public
+  because a build resolves installed packages to it (M26,
+  `Elixos.Package.SCM`).
+  """
+  def installed_dir(app), do: Path.join([os_priv(), "apps", Atom.to_string(app)])
+
+  @doc """
+  The version an installed package declares in its `.app`, or `nil` when it is
+  not installed.
+  """
+  def installed_version(app) do
+    app_file = Path.join([installed_dir(app), "ebin", "#{app}.app"])
+
+    with {:ok, [{:application, ^app, props}]} <- :file.consult(String.to_charlist(app_file)),
+         true <- Keyword.has_key?(props, :vsn) do
+      props[:vsn] |> to_string()
+    else
+      _other -> nil
+    end
+  end
 
   defp installed_ebin(app), do: Path.join(installed_dir(app), "ebin")
 

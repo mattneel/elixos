@@ -457,17 +457,17 @@
         "architecture": "x86_64",
         "signature": {
           "range": "bytes=0-688",
-          "checksum": "sha1-70i4dLnHMEgA/wQXi+e3l8PV79U="
+          "checksum": "sha1-aodLUNEk/ug0VPj/42GX9Ho6d/U="
         },
         "control": {
-          "range": "bytes=689-2589",
-          "checksum": "sha1-2m5yLCfE0D2nyu0szMRYkfrS+l4="
+          "range": "bytes=689-2591",
+          "checksum": "sha1-AIWZWbJFYWTXFByFipFR70eh7kY="
         },
         "data": {
-          "range": "bytes=2590-5530818",
-          "checksum": "sha256-HjXhQHPSQX7swpHo6h2AtB2ACQosy/tqo1q0j7T0+as="
+          "range": "bytes=2592-5531302",
+          "checksum": "sha256-FxfBoFaBOyVF3w4CdHpjqCE94F+CAx+BoCwWKNghDMs="
         },
-        "checksum": "Q12m5yLCfE0D2nyu0szMRYkfrS+l4="
+        "checksum": "Q1AIWZWbJFYWTXFByFipFR70eh7kY="
       },
       {
         "name": "elixos-kernel",

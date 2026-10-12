@@ -1923,3 +1923,52 @@ further role in the test.
 for a second opener, which it does not have. This is a change to a test shipped
 in the roadmap, so it is called out here and lands in its own commit
 (AGENTS.md).
+
+---
+
+## ADR-068: An installed package answers as a Mix SCM
+
+**Status:** accepted (M26)
+
+**Context.** M15 makes an install bring its closure - `install(:hello_app)`
+installs `hello_dep` first - and `-pa`s every installed ebin onto the running
+VM, which makes the code *loadable*. Mix, building `hello_app` in the child
+ERTS, resolves the `{:hello_dep, "~> 0.1"}` its `mix.exs` declares the ordinary
+way, and on this box that ends like this (the child's own output, M26's first
+red run):
+
+    Mix requires the Hex package manager to fetch dependencies
+    Shall I install Hex? (if running non-interactively, use "mix local.hex --force") [Yn]
+    ** (Mix) httpc request failed with: {:failed_connect, [{:to_address, {~c"builds.hex.pm", 443}}, {:inet6, [:inet6], :nxdomain}]}
+    Could not install Hex because Mix could not download metadata at https://builds.hex.pm/installs/hex.csv.
+
+The box has no network, and hanging a declared dependency on a repository
+would also be a second copy of a package that is installed (M10 keeps one
+version per package).
+
+**Decision.** The child ERTS that runs the build starts Mix itself and
+*prepends* `Elixos.Package.SCM` to the SCM list before `Mix.CLI.main/1`:
+
+    'Elixir.Mix':start(), 'Elixir.Mix.SCM':prepend('Elixir.Elixos.Package.SCM'), ...
+
+`Mix.SCM.available/0` is read lazily, so nothing else has to know. The SCM's
+`accepts_options/2` answers a dependency whose name is installed with its
+destination set to `/priv/apps/<name>`; `checked_out?/1` is then true, because
+it *is* on the disk, so no SCM ever fetches. It declines - returning `nil`, so
+the ordinary SCMs decide - when the dependency names its own source (`:path`,
+`:git`, ...), when nothing by that name is installed, and when the version
+installed does not satisfy the requirement in the `mix.exs`: one version per
+package, and never a silently wrong one. A declined dependency resolves the
+ordinary way, where a repository is the only place it could come from.
+
+**Alternatives.** Rewriting the project's `deps` before the build edits the
+sources it was given, and would have to be repeated for every Mix entry point.
+Symlinking `deps/<name>` at the installed directory lies about a source tree
+Mix then reads (`mix.exs`, `priv`, lock files) and makes the loaded path the
+symlink rather than the package.
+
+**Consequences.** `--no-deps-check` stays: the OS itself is a dependency the
+running VM already has and no repository provides. The build child must be
+able to load `Elixos.Package.SCM`, which it can - it boots the factory release
+and the module ships in `Elixos.Package`'s own app - and `Elixos.Package` now
+publishes `installed_dir/1` and `installed_version/1` for it to answer with.

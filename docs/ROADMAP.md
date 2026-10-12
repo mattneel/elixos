@@ -1013,7 +1013,21 @@ when this starts, and the test is the contract.
 **Done when.** `make ci` is green with `MILESTONE=26`, the QEMU test passes,
 and the ADR records the mechanism.
 
-- [ ] Demo recorded: `demos/m26-system-deps.mp4` (`make demo M=26`).
+**Done (2026-10-11).** `make ci` green at `MILESTONE=26`: 298 host tests, 52
+QEMU tests, and both images assembling twice to agreeing digests each (x86_64
+rootfs `c6dc99d0…`, aarch64 `1b2df389…`). The child ERTS that runs a build
+prepends `Elixos.Package.SCM` before Mix loads anything (ADR-068): a declared
+dependency that this box installed is answered where it is - `checked_out?/1`
+is true, so no SCM reaches for a repository - and one whose requirement the
+installed version does not satisfy falls through to the ordinary SCMs, never to
+a silent wrong copy. `install(:hello_app)` therefore installs its closure first
+(`hello_dep`, M15) and then builds against `/priv/apps/hello_dep` on a box with
+no network: the module the acceptance finds loaded is that copy, under
+`/priv/apps/hello_dep/ebin/`. Mix's first red run said it in its own words -
+`Could not install Hex because Mix could not download metadata at
+https://builds.hex.pm/installs/hex.csv`.
+
+- [x] Demo recorded: `demos/m26-system-deps.mp4` (`make demo M=26`).
 
 ---
 

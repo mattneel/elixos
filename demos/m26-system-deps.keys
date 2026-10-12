@@ -1,0 +1,13 @@
+# M26: an installed package is a Mix dependency. hello_app's closure installs
+# hello_dep first (M15), the build that follows resolves it where it is -
+# /priv/apps/hello_dep - on a box with no network, and the module that ends up
+# loaded is that one copy (M10: one version per package).
+# Keys match at the start of a line, in order (demos/check.sh).
+%{}
+{:ok, :hello_app}
+[:hello_app, :hello_dep]
+[dest: "/priv/apps/hello_dep", requirement: "~> 0.1"]
+"0.1.0"
+{:hello_app, :from_hello_dep}
+"/priv/apps/hello_dep/ebin/
+elixos-shim: shutdown poweroff

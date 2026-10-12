@@ -1,0 +1,111 @@
+#!/usr/bin/expect -f
+# M26: an installed package is a Mix dependency. hello_app declares hello_dep,
+# and hello_dep is installed - so the build that follows the install resolves it
+# where it is, /priv/apps/hello_dep, instead of reaching for a repository. The
+# box has no network (-nic none), the install brings its closure first (M15), the
+# build runs in a child ERTS (M11), and the module that ends up loaded is that
+# one copy (M10: one version per package).
+set timeout 300
+expect_after {
+    timeout {
+        puts stderr "\nDEMO ABORTED waiting for a pattern. Last output:\n$expect_out(buffer)"
+        exit 1
+    }
+}
+
+proc boot {} {
+    global env spawn_id
+    spawn -noecho qemu-system-x86_64 \
+        -machine q35 -accel kvm -accel tcg -cpu max -m 1024 -smp 2 \
+        -nographic -no-reboot \
+        -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+        -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+        -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+        -device virtio-rng-pci -nic none
+    expect "iex(1)> "
+    send {IEx.configure(colors: [enabled: false])}
+    send "\r"
+    expect -re {iex\([0-9]+\)> }
+    sleep 1
+}
+
+# Put the repository on the demo disk before boot, the way an offline mirror
+# would arrive: the disk mounts at /priv, so it lands at /priv/hex-repo.
+# hello_app and its dependency hello_dep are the two packages this demo is
+# about (m14-packages.exp stages hello_pkg the same way).
+set disk $env(ELIXOS_DEMO_DISK)
+set repo "[pwd]/os/test/fixtures/hex_repo/public"
+foreach dir {hex-repo hex-repo/packages hex-repo/tarballs} {
+    catch {exec -ignorestderr debugfs -w -R "mkdir $dir" $disk}
+}
+foreach file {names versions public_key \
+                  packages/hello_app packages/hello_dep \
+                  tarballs/hello_app-0.1.0.tar tarballs/hello_dep-0.1.0.tar} {
+    exec -ignorestderr debugfs -w -R "write $repo/$file hex-repo/$file" $disk
+}
+
+boot
+
+# Nothing is installed yet.
+send {Elixos.Package.installed()}
+send "\r"
+expect -re {[\r\n]+%\{\}[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# The consent step: the fixture repository, added with its key. Nothing is
+# installed from a repository whose key was not added first (ADR-019).
+send {Elixos.Package.add_repo(:fixture, "/priv/hex-repo", key: File.read!("/priv/hex-repo/public_key"))}
+send "\r"
+expect -re {[\r\n]+:ok[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# By name: hello_app's closure installs hello_dep first (M15), and then
+# hello_app is built - in a child ERTS, on a box with no network.
+send {Elixos.Package.install(:hello_app)}
+send "\r"
+expect -re {[\r\n]+\{:ok, :hello_app\}[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# Both are installed, one version each.
+send {Elixos.Package.installed() |> Map.keys() |> Enum.sort()}
+send "\r"
+expect -re {[\r\n]+\[:hello_app, :hello_dep\][\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# The build's resolution, shown directly: the SCM answers a declared
+# dependency with the installed package.
+send {Elixos.Package.SCM.accepts_options(:hello_dep, requirement: "~> 0.1")}
+send "\r"
+expect -re {/priv/apps/hello_dep}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# The version it answered with.
+send {Elixos.Package.installed_version(:hello_dep)}
+send "\r"
+expect -re {[\r\n]+"0\.1\.0"[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# The dependency's code, from the copy this box installed.
+send {HelloApp.greet()}
+send "\r"
+expect -re {[\r\n]+\{:hello_app, :from_hello_dep\}[\r\n]+}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# And the loaded module is under the installed tree, not a fetch.
+send {:code.which(HelloDep) |> List.to_string()}
+send "\r"
+expect -re {/priv/apps/hello_dep/ebin/}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+send {Elixos.poweroff()}
+send "\r"
+expect "elixos-shim: shutdown poweroff"
+expect eof
