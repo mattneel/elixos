@@ -1,7 +1,7 @@
 # Emerge on this box (M27)
 
-Measured while adding the GUI's renderer, so the next session does not
-re-derive it.
+Measured while adding the GUI's renderer dependency. M27 is in progress:
+`Elixos.GUI` is still stubbed, and no framebuffer sink or input helper exists.
 
 ## The artifact
 
@@ -15,27 +15,33 @@ re-derive it.
   (`--raster.so`, 17,214,224 bytes against 23,272,792), CPU raster with
   embedded FreeType; of the earlier three, only `libstdc++` remains. The gnu
   libc is still linked in, which is fine on the host and not in the image.
-- The *target* (gnu against musl) is chosen by `EmergeSkia.BuildConfig`:
-  `@default_compiled_backends` answers `[:drm]` when `MIX_TARGET` is neither
-  empty nor `host`, or `NERVES_SDK_SYSROOT`/`TARGET_ARCH`/`TARGET_OS` is set, or
-  `CC` looks like a cross compiler; a plain host build gets `[:wayland]`. The
-  factory build runs Mix with `MIX_TARGET=elixos` (`Elixos.Package.build/1`, and
-  the melange recipe), so the image's build is on the Nerves path; the artifact
-  name in that build's log is what settles which libc it fetched, and it is the
-  name to pin.
+- **Backend selection is not target selection.**
+  `EmergeSkia.BuildConfig.@default_compiled_backends` answers `[:drm]` when
+  `MIX_TARGET` is neither empty nor `host`, or the Nerves/cross environment
+  is present; `compiled_backends: []` overrides that with the raster profile.
+  This does not select musl. `RustlerPrecompiled` derives architecture/ABI
+  from `:erlang.system_info(:system_architecture)` and `TARGET_ARCH`,
+  `TARGET_VENDOR`, `TARGET_OS`, `TARGET_ABI` overrides.
+- `melange/factory.yaml` sets `MIX_ENV=prod`, but does **not** set
+  `MIX_TARGET=elixos`; `Elixos.Package.build/1` sets that only for on-box
+  project builds. Do not infer the factory's libc target from `MIX_TARGET`.
+- Emerge 0.4.2's precompiled target list includes x86_64 musl, but only
+  aarch64 GNU, not aarch64 musl. M27 must verify the selected artifact and
+  its library dependencies, pin its checksum and build/package for each
+  target. Adding this NIF also ends the assumption that the factory tree
+  can be reused across architectures unchanged (ADR-066).
 
 ## The API shape
 
-- Trees render synchronously, with no window: the entry points live in
-  `EmergeSkia` (`tree_renderer.ex`, `native.ex`, `headless_prime_session.ex`).
-  The renderer takes the tree as **serialized bytes** plus raster options and an
-  asset config - not an Elixir struct - which is why the dialog builds its tree
-  through Emerge's engine and then asks for pixels.
-- For the panel: `backend: :headless, rendering_api: :raster` with
-  `headless: [mode: :binary, target: pid]` sends `{:emerge_skia_frame,
-  %VideoInterop.Frame{}}` to a local pid; our sink writes each frame to
-  `/dev/fb0` itself (no Mesa, no GPU).
-- 0.4.2 has **no input injection** - events only flow out (`set_input_target/2`,
-  `set_input_mask/2`, `Emerge.handle_input/2`) and a headless raster renderer has
-  no input device at all. M27's dialog therefore takes its input from our own
-  evdev helper, and the selection logic (which row, which key answers) is Elixir.
+- `EmergeSkia.Native.render_tree_to_pixels_nif/2` and
+  `render_tree_to_png_nif/2` take **serialized EMRG bytes** plus raster
+  options, not an Elixir tree struct, and render synchronously with no window.
+  `EmergeSkia.TreeRenderer` handles the higher-level tree path.
+- The planned panel path is `backend: :headless, rendering_api: :raster`
+  with `headless: [mode: :binary, target: pid]`: frames arrive as
+  `{:emerge_skia_frame, %VideoInterop.Frame{}}`. M27's framebuffer sink still
+  needs to be implemented; no code currently writes those frames to `/dev/fb0`.
+- 0.4.2 has **no input injection** into that headless renderer; events flow
+  out through its input APIs. M27 plans an evdev helper feeding
+  `Elixos.GUI.input/1`, with selection and answer validation in Elixir.
+  The helper and dialog logic are not implemented yet.

@@ -1,8 +1,8 @@
 defmodule Elixos.REPL do
   @moduledoc """
-  REPLs are the login shells (ADR-012). There is no sh: logging in, on the
-  console or over SSH, drops you into erl, IEx or gsh, all attached to the
-  same running VM.
+  REPLs are the login shells (ADR-012, amended by ADR-041). Logging in, on the
+  console or over SSH, attaches erl, IEx or an available language REPL to the
+  same VM. BusyBox sh exists for tooling, never as the login shell.
 
   The contract every REPL meets is the one OTP already uses for
   `:shell.start_interactive/1` and the `ssh` daemon's `:shell` option: an MFA

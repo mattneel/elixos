@@ -4,7 +4,14 @@ Each milestone has a goal, the acceptance tests that define it (already in the
 repo), notes on how to get there, and a done checklist. Work them in order;
 `MILESTONE` holds the current one. The loop is in AGENTS.md.
 
-Fast tests: `make test`. QEMU tests: `make test-qemu` (M3 onward).
+Fast tests: `make test`. Focused iteration: `make check M=27`.
+Full QEMU suite: `make test-qemu` (M3 onward); milestone gate: `make ci`.
+The ARM64 smoke test is separate: `make test-qemu-aarch64`.
+
+**Current state:** M1–M20, M25 and M26 are delivered. M21–M24 are deferred
+by ADR-063. `MILESTONE=27` enables the unfinished GUI contract; Emerge's
+dependency and raster configuration are in the repo, but `Elixos.GUI` is
+still stubbed.
 
 ---
 
@@ -16,7 +23,8 @@ Fast tests: `make test`. QEMU tests: `make test-qemu` (M3 onward).
 `os/test/meta_test.exs` enforces the test conventions.
 
 **Already verified while building the scaffold.**
-- `make kernel` builds 7.2.9 and all 45 fragment options survive.
+- At scaffold time, `make kernel` built 7.2.9 and all 45 fragment options
+  survived. M16 replaced that target with the melange kernel packages.
 - A throwaway probe `/init` booted under QEMU (TCG) to PID 1 in about two
   seconds, mounted the virtio ext4 disk and wrote to it; the QEMU and disk test
   helpers drove that boot end to end.
@@ -963,9 +971,10 @@ clicks, typing, screenshots, extraction, JS evaluation; no element refs, saved
 state, tabs or console capture): the milestone is the adapter, its pin and its
 service, not the full surface. Binaries are pinned and verified when the image
 is built (M14's verification, ADR-009's rule: nothing is fetched on the box),
-never by jido_browser's own downloader. `jido_browser` becomes an OS
-dependency (ADR); `Elixos.Browser` starts the adapter only in normal mode,
-stops it on poweroff, and never lets it block the prompt.
+never by jido_browser's own downloader. The implemented stack uses `cdp_ex`
+and the adapter-compatible `Elixos.Browser.CDP` interface, not a
+`jido_browser` dependency (ADR-065). `Elixos.Browser` starts the adapter only
+in normal mode, stops it on poweroff and never lets it block the prompt.
 
 **Done when.** `make ci` is green with `MILESTONE=25`, both test files pass,
 and the ADR records the loader decision - or M25 is explicitly abandoned in the
@@ -999,16 +1008,14 @@ installs by name on a box with no network, its dependency's code is the
 *installed* copy (the loaded `HelloDep` lives under `/priv/apps/hello_dep/`),
 and `HelloApp.greet()` answers with the value that dependency provides.
 
-**Notes. The gap (M15's review).** Installing a package `-pa`s its ebin onto
-the code path (`os/lib/elixos/package.ex`), which makes the modules
-*loadable* but leaves Mix's dependency loading unaware of them: building
-`hello_app` then asks Mix's SCM for `hello_dep`, which this factory has no
-Hex SCM for - on a pristine box that is a failure, and anywhere else it could
-be a second copy of a package that is already installed. `hello_pkg` installs
-today only because it has no dependencies. The fix makes the installed tree
-part of Mix's resolution - an SCM/path that points a dependency at its
-installed directory, or a deps rewrite before the build; which one is an ADR
-when this starts, and the test is the contract.
+**Notes. The gap found in M15's review, fixed in M26.** Adding an installed
+ebin to the code path made modules loadable but did not teach Mix where a
+declared dependency lived. Building `hello_app` therefore asked for Hex's SCM;
+the factory had no Hex SCM, so the network-less acceptance failed.
+ADR-068 chose `Elixos.Package.SCM` over rewriting project sources: the build
+child prepends it before Mix loads dependencies, and it points an installed
+package's destination at `/priv/apps/<name>`. Explicit sources, absent
+packages and incompatible versions fall through to the ordinary SCMs.
 
 **Done when.** `make ci` is green with `MILESTONE=26`, the QEMU test passes,
 and the ADR records the mechanism.
@@ -1038,6 +1045,11 @@ queue's questions to the panel, the person answers with the keyboard, and IEx
 stays alive behind it - a GUI that is never in the boot-critical path, whose
 first app is the queue M20 already has.
 
+**In progress.** Emerge 0.4.2 and `compiled_backends: []` are configured.
+`Elixos.GUI`'s entry points still raise `TODO(M27)`; off-screen dialogs, the
+framebuffer sink, input helper, console handover and QEMU GPU/QMP support
+remain unimplemented. No GUI acceptance or demo has passed yet.
+
 **Acceptance.** `test/elixos/emerge_render_test.exs` (each Ask dialog renders
 with no display and its pixels are checked) and
 `test/integration/m27_gui_test.exs`: a pending question appears on the
@@ -1048,16 +1060,18 @@ the console works again after the GUI exits (rescue stays text-only).
 - *Frames.* `backend: :headless, rendering_api: :raster, headless: [mode:
   :binary, target: pid, ...]` sends `{:emerge_skia_frame,
   %VideoInterop.Frame{}}` to a local PID; the sink writes each frame to
-  `/dev/fb0` itself (no Mesa, no GPU). The precompiled
-  `x86_64-unknown-linux-musl` artifact is the *minimal raster* one, selected
-  at compile time with `config :emerge, compiled_backends: []` (CPU raster,
-  embedded FreeType, no Wayland/GPU libraries). It is downloaded, pinned and
-  checksum-verified when the image is built, from the release that publishes
-  the checksum manifest (ADR-009: the box itself never downloads), and packed
-  into the read-only system image (M18).
-- *Rendering off-screen.* `render_tree_to_pixels_nif/2` and
-  `render_tree_to_png_nif/2` render a tree synchronously with no window: the
-  host test uses the pixel buffer.
+  `/dev/fb0` itself (no Mesa, no GPU). At compile time,
+  `config :emerge, compiled_backends: []` selects the *raster backend profile*,
+  not the libc target. The host fetch selected `x86_64-unknown-linux-gnu--raster`;
+  RustlerPrecompiled selects the target from ERTS and `TARGET_*` overrides.
+  M27 must pin and verify the musl artifact at image-build time (ADR-009),
+  then package it for the target. Emerge 0.4.2 lists x86_64 musl but no
+  aarch64 musl precompiled target; ARM64 needs a source build. A native NIF
+  also invalidates blanket x86_64 factory reuse for aarch64 (ADR-066).
+- *Rendering off-screen.* `EmergeSkia.Native.render_tree_to_pixels_nif/2` and
+  `render_tree_to_png_nif/2` accept a serialized EMRG tree and raster options
+  and render synchronously with no window. The planned host test uses the
+  pixel buffer; the GUI wrapper is not implemented yet.
 - *Input is ours, not Emerge's.* 0.4.2 has **no API to inject input into the
   renderer**; events only flow out (`set_input_target/2`, `set_input_mask/2`,
   `Emerge.handle_input/2`), and a headless raster renderer has no input device

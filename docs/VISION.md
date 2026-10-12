@@ -1,9 +1,10 @@
 # Elixos: the vision
 
 **Elixos is the Elixir operating system.** An unmodified mainline Linux kernel
-boots straight into IEx, and the BEAM is the entire userland. It works the way
+boots straight into IEx, and the BEAM owns the userland. It works the way
 you would expect an Elixir OS to work: you live inside one running system and
-shape it from the prompt.
+shape it from the prompt. Native services and build tools serve that system,
+not a separate shell-driven userland.
 
 Think of it as the ultimate cyberdeck OS: a single-user machine you carry,
 boot in seconds, and program while it runs.
@@ -12,7 +13,8 @@ boot in seconds, and program while it runs.
 
 - **Power on, get a prompt.** Firmware runs the kernel, the kernel runs a
   tiny PID 1 shim, the shim runs the BEAM, and you land at `iex(1)>`.
-  There is no login screen, no shell script, no `/bin/sh`.
+  There is no login screen or shell-script boot path. BusyBox sh is available
+  for tooling, never as the login shell (ADR-041).
 - **REPLs are the shells.** Where other systems offer bash and sh, Elixos
   offers IEx, erl, LFE, Clojerl and gsh (Gleam) - the ones whose packages are
   installed. They are not separate worlds: a GenServer
@@ -47,24 +49,27 @@ boot in seconds, and program while it runs.
 
 ## Principles
 
-1. **Kernel and BEAM, nothing else.** The only foreign code at runtime is the
-   unmodified mainline kernel and a few hundred lines of Zig in PID 1. Anything
-   that can be Elixir is Elixir.
+1. **The BEAM owns the userland.** OTP manages the live system. The unmodified
+   kernel and Zig PID 1 provide its base; native helpers, PostgreSQL, the browser
+   and NIFs provide capabilities that Elixir calls or supervises.
+   Anything that can be Elixir is Elixir.
 2. **Never patch the kernel.** We configure it; that is all (ADR-001).
 3. **PID 1 is boring and tiny.** It mounts, supervises, records and recovers.
-   It never parses anything richer than `key=value` and never dies (ADR-002).
+   It parses bounded boot state, command-line parameters and a fixed control
+   protocol, and never dies (ADR-002).
 4. **The image is code plus data, not a heap dump.** The BEAM cannot
    `save-lisp-and-die`, so the image is rebuilt from content-addressed module
    blobs, a journal and generation manifests at every boot (ADR-005).
-5. **One VM is shared by everything.** Its working directory, environment and
-   code path are global state; nothing may change them for everyone (ADR-016).
+5. **One VM is shared by everything.** Its working directory and environment
+   are global state; programs must not change them for everyone (ADR-016).
+   The module namespace is shared too: installs resolve one version per package.
 6. **Test-driven, milestone by milestone.** The whole vision already exists
    as tests in this repo; building Elixos means turning them green in order.
 
 ## Non-goals (for now)
 
 - Multi-user. Elixos is single-user (ADR-013); a REPL is not a security boundary.
-- Architectures other than x86_64 (ADR-014). aarch64 is a later decision.
+- Architectures other than x86_64 and aarch64 (ADR-041).
 - POSIX compatibility or running arbitrary Linux binaries.
 - Being Nerves. Nerves is excellent appliance firmware: Buildroot, read-only
   root, A/B updates, you work on the host. Elixos is the opposite: a machine
@@ -76,6 +81,7 @@ boot in seconds, and program while it runs.
 ## Where this runs
 
 Development happens on WSL2 with QEMU, driven by a coding agent working
-through docs/ROADMAP.md. The target is a cyberdeck-style x86_64 machine booting
-through UEFI straight into the kernel's EFI stub, with the console on its own
-screen in a big Terminus font.
+through docs/ROADMAP.md. Targets are x86_64 cyberdecks and aarch64 machines.
+The x86_64 hardware path boots through UEFI straight into the kernel's EFI
+stub, with the console on its own screen in a big Terminus font; aarch64 has
+a separate QEMU boot/save/restore smoke test.

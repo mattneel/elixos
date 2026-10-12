@@ -8,14 +8,15 @@ defmodule Elixos.Application do
 
     1. `Elixos.Shim.Control` on the inherited control fd (heartbeats start).
     2. `Elixos.Privileges` on the inherited helper reply fd (M17).
-    3. The generation's modules and boot spec (`Elixos.Image.restore/2`, M6).
-    4. Non-critical, asynchronous PostgreSQL startup in normal mode (M18).
-    5. The login REPL on the console via `:shell.start_interactive/1` (M4, M9).
-    6. `Elixos.Boot.AutoCommit` in normal mode (M5).
+    3. The asynchronous PostgreSQL and Oban managers (M18, M19), before restore.
+    4. The generation's modules and boot spec (`Elixos.Image.restore/2`, M6).
+    5. The recorder, agents, Ask queue, browser manager and SSH.
+    6. The login REPL via `:shell.start_interactive/1` (M4, M9), then auto-commit.
+    7. `Elixos.Oban.activate/0`, once the complete supervision tree is up.
 
   Control, privileges, restore, login and auto-commit failures must exit the VM
-  with a non-zero status so the shim counts the attempt and falls back (ADR-007).
-  PostgreSQL startup failure is logged without taking the prompt down.
+  non-zero so the shim counts the attempt and falls back (ADR-007). Database,
+  scheduler, browser and SSH startup failures remain non-critical.
   """
   use Application
 

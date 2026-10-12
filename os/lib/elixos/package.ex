@@ -18,10 +18,10 @@ defmodule Elixos.Package do
   The name is resolved among the repositories `/priv/hex/repos.exs` lists —
   which is the entire trust decision, so an install never trusts a repository
   implicitly — the tarball is fetched, verified and unpacked into
-  `/priv/apps/<name>/`, and that directory goes through the same path
-  as an explicit one. A project built afterwards resolves such a package as a
-  dependency where it is installed, not in a repository (M26,
-  `Elixos.Package.SCM`). A name offered by two repositories is an error naming
+  `/priv/apps/<name>-<version>/`, and that directory goes through the same path
+  as an explicit one. The compiled runtime tree is installed separately at
+  `/priv/apps/<name>/`. A later build resolves an installed dependency there
+  through `Elixos.Package.SCM` (M26). A name offered by two repositories is an error naming
   both. `:elixos` is never fetched: it is the running OS.
 
   The apt verbs are functions here, not commands (ADR-019): `add_repo/3`,

@@ -5,6 +5,9 @@ watched instead of described. They are scripted, reproducible, and checked
 before they count; a demo never shapes the code (a demo that exposes a bug
 means a failing test first, then the fix).
 
+Recorded demos cover M3–M20 where visible, plus M25 and M26. M21–M24 are
+deferred (ADR-063); M27's GUI demo is not recorded yet.
+
 | demo | milestone | shows |
 |------|-----------|-------|
 | `m03-first-boot.mp4` | M3 | PID 1 mounts, plans the factory, persists the attempt and powers off; the second power-on counts another attempt |
@@ -24,7 +27,7 @@ means a failing test first, then the fix).
 | `m18-postgres.mp4` | M18 | PostgreSQL 17 answers from the prompt as uid 70, both extensions load from the read-only `/system` image, and a row survives the power cycle with a clean shutdown |
 | `m19-oban.mp4` | M19 | a worker defined at the prompt runs a job now, and a job scheduled for later survives a power cycle and runs on the next boot |
 | `m20-ask.mp4` | M20 | an agent asks the human through the Jido action, the console shows the notice line, the prompt answers, and the answer returns into the agent's state |
-| `m25-browser.mp4` | M25 | the headless browser ships in the read-only image, comes up with the system, and answers the four verbs - navigate, evaluate, screenshot - over jido_browser and a CDP connection from Hex |
+| `m25-browser.mp4` | M25 | the headless browser ships in the read-only image and returns page text, JavaScript results and a PNG over `cdp_ex` through the adapter-compatible `Elixos.Browser.CDP` interface |
 | `m26-system-deps.mp4` | M26 | installing a package installs its closure first, and the build that follows resolves the dependency where it is installed - the dependency's code is the installed copy, on a box with no network |
 
 ## Play, record, check
@@ -34,14 +37,15 @@ means a failing test first, then the fix).
     make demo M=3                              # re-record, render and check one demo
     make demos                                 # every visible milestone up to MILESTONE
 
-Each demo is three files: `mNN-<slug>.exp` (the script), `mNN-<slug>.keys` (what
-it must show), and the recording. `mNN-<slug>.cast` is the source of truth and
-is committed too; `mNN-<slug>.mp4` is what people watch.
+Each demo has four files: `mNN-<slug>.exp` (the script),
+`mNN-<slug>.keys` (what it must show), `mNN-<slug>.cast` (the committed source
+recording) and `mNN-<slug>.mp4` (the video people watch).
 
 ## The tools
 
-`make check-tools` reports all three. Ubuntu's `asciinema` is 2.x, whose flags
-differ, so the 3.x static binaries go in `build/tools`:
+`make check-tools` reports the recording and rendering prerequisites.
+Ubuntu's `asciinema` is 2.x, whose flags differ, so the 3.x static binaries
+go in `build/tools`:
 
     curl -sfL -o build/tools/asciinema https://github.com/asciinema/asciinema/releases/download/v3.2.1/asciinema-x86_64-unknown-linux-gnu
     curl -sfL -o build/tools/agg       https://github.com/asciinema/agg/releases/download/v1.9.0/agg-x86_64-unknown-linux-gnu

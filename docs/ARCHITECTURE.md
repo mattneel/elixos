@@ -8,7 +8,7 @@ behind each choice live in docs/DECISIONS.md.
 ```
 UEFI firmware (hardware)            QEMU -kernel/-initrd (development)
         │                                     │
-        └──► mainline bzImage via EFI stub ◄──┘    unmodified, configured (ADR-001)
+        └──► bzImage (x86_64) / Image (aarch64) ◄──┘   mainline, unmodified (ADR-001)
                      │
                      ▼
           initramfs: /init = Zig shim (PID 1)      never exits (ADR-002)
@@ -17,7 +17,7 @@ UEFI firmware (hardware)            QEMU -kernel/-initrd (development)
                      │  control + reply pipes; drop uid/groups/capabilities; exec erlexec
                      ▼
           ERTS (dynamic musl, ADR-041), uid/gid 1000, running generation G
-                     │  Elixos.Application: Control → Privileges → restore G → AutoCommit
+                     │  Elixos.Application: Control → Privileges → managers → restore G
                      ▼
           login REPL on /dev/console: IEx, erl or gsh (ADR-012)
 ```
@@ -31,6 +31,21 @@ hardware UEFI runs the kernel image itself through its EFI stub (ADR-014).
 root filesystem from the pinned set, and `scripts/mkinitramfs.sh` writes it as
 a gzipped newc cpio - ownership, modes and device numbers come from the layer
 tar, so nothing here needs root):
+
+`kernel/elixos.config` is the common fragment; `kernel/config.x86_64` and
+`kernel/config.aarch64` hold architecture-specific options. The merge is
+checked by `scripts/check-kernel-config.sh`. On the x86_64 build host,
+`melange/kernel-cross.yaml` and `melange/otp-cross.yaml` cross-build the
+aarch64 kernel and ERTS natively (ADR-060). Elixir bytecode can be reused;
+the factory reuse path is safe only while its dependencies are pure BEAM.
+M27's Emerge NIF makes target-specific factory packaging necessary.
+
+`scripts/build-image.sh` keys APK reuse on each recipe's inputs and the
+published APK checksum, and keys image assembly separately. An OS source
+edit affects the factory, not the kernel or OTP recipes. `FORCE=1` bypasses
+those caches. `make image` builds the host architecture; `make images`
+builds both. Each rebuilt rootfs and service image is assembled twice for
+digest agreement and carries an SBOM.
 
 ```
 /init                          the shim (elixos-shim)
@@ -54,11 +69,13 @@ anything done at runtime, so rescue mode always has something to boot.
 the user creates lives there.
 
 **/system** is a separate, read-only gzip SquashFS containing PostgreSQL 17,
-its client, extensions and Alpine library closure (M18, ADR-052). PID 1
-mounts `/priv/system/system.squashfs` only in normal mode. ICU and timezone
-data are exported through read-only bind mounts at their compiled-in
-`/usr/share/icu` and `/usr/share/zoneinfo` paths; the factory declares only
-empty mount points. Rescue needs neither the service image nor its binaries.
+its client, pgvector, TimescaleDB and their Alpine library closure (M18,
+ADR-052), plus Lightpanda and its private glibc under `/system/browser`
+(M25, ADR-064). PID 1 mounts `/priv/system/system.squashfs` only in normal
+mode. ICU and timezone data are exported through read-only bind mounts at
+their compiled-in `/usr/share/icu` and `/usr/share/zoneinfo` paths; the
+factory declares only empty mount points. Rescue needs neither the service
+image nor its binaries.
 
 ## §3 The shim (PID 1, Zig)
 
@@ -194,26 +211,28 @@ The factory's code directories are marked sticky (`:code.stick_dir/1`), the
 BEAM's answer to SBCL's package locks: a REPL slip cannot redefine `Enum` and
 take the image down.
 
-### §4.7 Process state (OPEN)
+### §4.7 Process state
 
-Proposed default: process state is not persisted. Supervisors rebuild it at
-boot from code and from data the app keeps in `/priv` (files, DETS, Mnesia).
-See DECISIONS.md, open questions.
+Boot reconstructs processes from supervisors, code and data in `/priv`, not
+from a saved BEAM heap. Agents opt into snapshots: their saved state is
+restored as initial state on the next start (ADR-032, §10). Arbitrary
+process-state persistence remains future work (DECISIONS.md Q2).
 
 ## §5 The BEAM side of boot
 
-`Elixos.Application` opens `Elixos.Shim.Control` on the inherited fd
-(heartbeats start), then `Elixos.Privileges` on the separate reply fd, before
-restoring the generation and running its boot spec. `Elixos.Postgres` and
-`Elixos.Oban` construct their asynchronous managers next (M18, M19): the
-restore's boot spec includes each installed app's `Elixos.Oban.configure_app!/2`
-MFAs, so the scheduler's declarations are collected while modules and services
-restore. The recorder and agent supervisors follow, then SSH and the console
-login REPL. `Elixos.Oban.activate/0` runs once the tree - restore included -
-is up, and only then may a queue run a job; `Elixos.Boot.AutoCommit` runs only
-in normal mode. A boot-critical restore failure exits the VM non-zero so the
-shim counts the attempt (ADR-007); database, scheduler and SSH startup
-failures remain non-critical.
+`Elixos.Application` starts the installed-service supervisor, then
+`Elixos.Shim.Control` on the inherited fd (heartbeats start) and
+`Elixos.Privileges` on the separate reply fd. The asynchronous PostgreSQL and
+Oban managers are created **before** generation restore (M18, M19), so
+restored apps can register their `Elixos.Oban.configure_app!/2` declarations
+without starting queues prematurely.
+
+Restore is followed by the recorder, agent supervisor and agent manager,
+Ask's question queue, the browser manager, SSH, console login and auto-commit.
+`Elixos.Oban.activate/0` runs only after the whole tree, restore included, is
+up. Auto-commit runs only in normal mode. A boot-critical restore failure
+exits the VM non-zero so the shim counts the attempt (ADR-007); database,
+scheduler, browser and SSH startup failures remain non-critical.
 
 ## §6 REPLs are the shells (ADR-012)
 
@@ -270,6 +289,13 @@ to carry the answer back into its state.
   builds (`Mix.Project.in_project/4` cd's), and on Elixos that would move it
   for every program (ADR-016). `Elixos.Package.install/1` therefore execs a
   second ERTS (erlexec directly, no shell) to compile, then loads the result.
+- **Installed packages are Mix dependencies (M26, ADR-068).** The build child
+  starts Mix and prepends `Elixos.Package.SCM` before dependency loading.
+  It resolves an installed dependency to `/priv/apps/<name>` after checking
+  its `.app` version against the requirement. Explicit path/git sources,
+  missing packages and incompatible installed versions fall through to the
+  normal SCMs. Installed ebins are also on the child's code path; the project
+  sources are not rewritten.
 
 ## §7a Packages by name (ADR-019, M14)
 
@@ -282,11 +308,13 @@ trusted out of the box. Adding a repository with its key is the consent step; an
 install never trusts one implicitly, and on a single-user machine there is
 nothing else to consent to (no sudo).
 
-`Elixos.Package.install/1` by name finds the package among the trusted repos
-(a name in two repos is an error naming both), fetches and unpacks the tarball
-into `/priv/apps/`, and hands the directory to the M11 path below. The apt
-verbs are functions: `add_repo/3`, `remove_repo/1`, `repos/0`, `search/1`,
-`info/1`, `upgrade/0,1`, `remove/1`.
+`Elixos.Package.install/1` by name resolves the dependency closure among the
+trusted repos (a name in two repos is an error naming both), checks the
+system-wide plan and installs dependencies before dependents. Verified
+tarballs are unpacked into `/priv/apps/<name>-<version>/` for building;
+the installed runtime tree is `/priv/apps/<name>/`, with `ebin/` and `priv/`.
+The apt verbs are functions: `add_repo/3`, `remove_repo/1`, `repos/0`,
+`search/1`, `info/1`, `upgrade/0,1`, `remove/1`.
 
 **Programs are packages, commands are functions.** A package exposes an Elixir
 API and no CLI; when it must run a native tool it execs it directly with `cd:`
@@ -299,13 +327,19 @@ that.
 
 - ERTS links dynamically against musl so NIFs can `dlopen`; statically
   linked musl cannot. musl's loader is its libc, so this costs almost nothing,
-  and precompiled musl NIFs from packages load as-is.
-- `zig cc` is the system C/C++ compiler and cross compiler, shipped in a
-  toolchain package fetched into `/priv` on first use, never in the factory.
+  and a matching musl NIF can load when its required shared libraries are present.
+- `zig cc` is the system C/C++ compiler and cross compiler. The signed
+  `elixos-toolchain` APK is unpacked by `scripts/mkdisk.sh` into
+  `/priv/toolchain` when the pristine disk is created, not fetched on first
+  use. `Zig.init/1`, `Zig.build/2` and `Zig.cc/2` expose it to sessions.
   `ZIG_GLOBAL_CACHE_DIR=/priv/cache/zig` keeps libc builds across boots.
-- `elixir_make` shells out to `make`, and make runs recipes with `/bin/sh`, so
-  the toolchain package carries make and a BusyBox sh. They exist only for
-  builds; nobody ever gets an sh prompt.
+- Rust and Cargo are included under `/priv/toolchain/rust` with their Alpine
+  library closure (M25, ADR-066). `Rust.init/1`, `Rust.cargo/2` and
+  `Rust.rustc/2` exec them directly; Cargo uses `/priv/toolchain/cc` as linker.
+  Native commands use the session's directory without changing the VM's cwd.
+- BusyBox sh is supplied by the Alpine base for tooling (ADR-041), not as a
+  login shell or shim launch path. The acceptance NIF fixture invokes `cc`
+  directly rather than relying on shell-based `elixir_make` recipes.
 - Hex needs CA certificates; ship a bundle where `:public_key.cacerts_get/0`
   finds it.
 - gsh needs the `gleam` binary, which would also live in a package; LFE and
@@ -345,3 +379,25 @@ an agent without a model works, and a model without an API key works.
   Only kernel or factory upgrades would need a second boot entry; not yet planned.
 - Wi-Fi needs a WPA supplicant (`wpa_supplicant` or `iwd` as a package, or
   nl80211 from Elixir); not yet scheduled.
+
+## §11 Browser service (ADR-064, ADR-065, M25)
+
+`Elixos.Browser` starts asynchronously in normal mode. A pinned manifest
+under `/system/browser` chooses the executable, arguments and private glibc
+loader; the binary is built into the image, never downloaded by the guest.
+The process is a Port, and `cdp_ex` speaks CDP through the
+`Elixos.Browser.CDP` session/page interface. `jido_browser` itself is not an
+OS dependency: ADR-065 records why it and `light_cdp` were rejected.
+
+`navigate/1` returns the page's text, `eval/1` evaluates JavaScript,
+`screenshot/0` returns PNG bytes, and `stop/0` closes the adapter.
+The browser does not run in rescue and cannot block console startup.
+
+## §12 GUI status (M27, in progress)
+
+Emerge 0.4.2 is a dependency and the OS config selects its raster-only
+backend profile. `Elixos.GUI` is still a `TODO(M27)` contract: dialog
+rendering, `/dev/fb0` output, evdev input and console handover are not
+implemented. The architecture above does not yet start a GUI.
+The roadmap and `docs/notes/emerge.md` distinguish the planned integration
+from the verified host artifact selection.

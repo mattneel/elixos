@@ -1,18 +1,18 @@
 defmodule Elixos.GUI do
   @moduledoc """
-  The GUI on the machine's own screen (M27, docs/ROADMAP.md).
+  Planned GUI contract for M27 (docs/ROADMAP.md).
 
-  Emerge renders headless raster frames (`backend: :headless, rendering_api:
-  :raster`, binary mode) into `Elixos.GUI`'s frame sink; the sink writes them
-  to `/dev/fb0`. Input is Elixos's own: a small static helper grabs the evdev
-  devices while the GUI owns the screen and streams events to `input/1`, and
-  the dialog logic (which option, which key answers) is Elixir. `input/1` is
-  also the test seam - Emerge 0.4.2 has no way to inject input into a
-  renderer.
+  The entry points below remain `TODO(M27)` stubs. Emerge is a dependency and
+  its raster-only backend profile is configured, but the framebuffer sink,
+  evdev helper, dialog logic and console handover are not implemented yet.
 
-  The GUI is never boot-critical: a failure here leaves IEx on the console
-  working, and rescue stays text-only. The renderer's NIF runs inside the VM,
-  so a Skia crash takes the VM down with it; an ADR records that.
+  The planned renderer uses `backend: :headless, rendering_api: :raster` in
+  binary mode; its frames will be written to `/dev/fb0`. Input will come from
+  an evdev helper through `input/1`, also the test seam: Emerge 0.4.2 has no
+  input injection API for that renderer.
+
+  The GUI must remain non-boot-critical and absent in rescue. A renderer NIF
+  crash can take its VM down; the implementation's ADR must record that risk.
   """
 
   @doc "Starts the GUI (renderer + frame sink + input), unless it is running."

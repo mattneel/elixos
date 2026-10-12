@@ -1,14 +1,10 @@
-# The Elixos factory (M16, ADR-041): generation 0's release - the ERTS
-# included - which the shim execs, so the guest gets its BEAM the moment PID 1
-# starts it.
+# The Elixos factory (M16, ADR-041): generation 0's release, which points at
+# the machine's OTP/ERTS package rather than carrying a second ERTS.
 #
-# Built with our own OTP and Elixir packages. ELIXOS_ERTS points `mix release`
-# at the OTP install so the release carries the *target* ERTS - the same dance
-# the hand-rolled factory did, with no cross toolchain under it (ADR-008 is
-# superseded). The pieces the old pipeline added by hand are added here too:
-# no release bin/ scripts (ADR-012), the mix application for on-box builds
-# (M11), the ERTS headers for NIFs, and erl as a symlink to erlexec for
-# escripts.
+# ELIXOS_INCLUDE_ERTS=0 selects that layout; the recipe builds with MIX_ENV=prod,
+# not MIX_TARGET=elixos. It adds Mix for on-box builds, links the OTP applications
+# and ships the official Hex trust preset. The shim execs erlexec directly,
+# never the release's bin/ scripts (ADR-012).
 package:
   name: elixos-factory
   version: "0.1.0"
@@ -43,12 +39,11 @@ environment:
 
 pipeline:
   - runs: |
-      # The release is our bytecode, our dependencies' bytecode and symlinks
-      # into the machine's own OTP install (include_erts: false, ADR-041), so
-      # it is architecture-neutral: scripts/build-image.sh builds it once, in
-      # the native x86_64 environment, and the aarch64 package installs that
-      # tree (ADR-060). Without it the build below still works. A dependency
-      # that carries a NIF would end this (ADR-066) - there is none today.
+      # Reuse is safe only for pure-BEAM dependencies: bytecode and symlinks into
+      # the target's own OTP install are architecture-neutral (ADR-060/066).
+      # M27 added Emerge's NIF; target-aware factory packaging is still required
+      # before the GUI can ship. This reuse path does not convert native code.
+      # Without a prebuilt tree the build below runs in the package environment.
       if [ -d /home/build/prebuilt/factory ]; then
         cp -a /home/build/prebuilt/factory/. "${{targets.destdir}}/"
       # The symlink layout the native build had (links into the machine's

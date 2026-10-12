@@ -2,25 +2,29 @@
 
 You are building **Elixos**, the Elixir operating system: an unmodified
 mainline Linux kernel boots a tiny Zig PID 1 shim, which runs the BEAM, which
-drops the single user at `iex(1)>`. The BEAM is the whole userland. The vision
+drops the single user at `iex(1)>`. The BEAM owns the userland. The vision
 is in docs/VISION.md; read it once. This file is your operating manual.
 
 ## The loop
 
 The roadmap already exists as tests, gated by the `MILESTONE` file
-(docs/TESTING.md). Work strictly in order:
+(docs/TESTING.md). Work in order except for explicit ADR-backed deferrals
+(M21–M24 are deferred by ADR-063). `MILESTONE` is the active gate, not a claim
+that every milestone up to it is complete.
 
 0. If this is not a git repository yet, `git init` and commit everything as
    the baseline.
-1. `cat MILESTONE` gives N. Read docs/ROADMAP.md, section M(N+1).
+1. `cat MILESTONE` gives N. Read docs/ROADMAP.md, section MN. If N is
+   unfinished, resume it; otherwise read the next non-deferred milestone.
 2. `make test` (plus `make test-qemu` from M3 on) must be green. If it is not,
    fix that first.
-3. Write N+1 into `MILESTONE`. The new milestone's acceptance tests now run
-   and fail. Commit: `M<N+1>: start`.
+3. Write the selected milestone into `MILESTONE`. Its acceptance tests now
+   run and fail. Commit: `M<N>: start`.
 4. Turn them green test-first: for each piece you need, write a small unit
-   test (red), make it pass (green), refactor. Run `make test` constantly.
-5. When `make ci` is green, tick the milestone's checklist in ROADMAP.md and
-   commit: `M<N+1>: done`. Then go back to 1.
+   test (red), make it pass (green), refactor. Run `make test` constantly;
+   use `make check M=N` for the focused host + QEMU gate during iteration.
+5. Run the full `make ci` once at the milestone boundary. When it is green,
+   tick the checklist in ROADMAP.md and commit: `M<N>: done`. Go back to 1.
 
 ## Hard rules
 
@@ -28,15 +32,17 @@ The roadmap already exists as tests, gated by the `MILESTONE` file
   `shim/src/*.zig` test blocks, or `spec/`) to get green: no deleting,
   skipping, loosening regexes or raising timeouts to hide a hang. If you are
   convinced a test is wrong, add an ADR to docs/DECISIONS.md saying why, change
-  the test in its own commit, and call it out in your summary. These tests
-  were all validated against reference implementations (docs/TESTING.md), so
-  suspect your code first.
-- **Never patch the kernel** (ADR-001). Change `kernel/elixos.config` only;
-  `scripts/check-kernel-config.sh` must pass.
+  the test in its own commit, and call it out in your summary. The original
+  scaffold's pure tests were reference-checked; later additions record their
+  reference limitations in moduledocs (docs/TESTING.md). Suspect your code first.
+- **Never patch the kernel** (ADR-001). Change only its config fragments:
+  `kernel/elixos.config` plus `kernel/config.<arch>`.
+  `scripts/check-kernel-config.sh` must pass for the merged fragments.
 - **PID 1 never exits** and never panics the kernel (ADR-002). `main` is
   `noreturn`.
-- **No shell in the system** (ADR-012). Nothing in the factory image may need
-  `/bin/sh`; exec binaries directly (`erlexec`, never a release's `bin/` scripts).
+- **IEx is the login shell; sh is tooling-only** (ADR-012, amended by ADR-041).
+  BusyBox sh is permitted for builds. The shim execs binaries directly
+  (`erlexec`, never a release's `bin/` scripts).
 - **Never change the VM's cwd or environment** (ADR-016). Every program on
   Elixos shares one VM. Builds run in a child ERTS.
 - **The shim's console lines and the control protocol are API**
@@ -51,8 +57,8 @@ The roadmap already exists as tests, gated by the `MILESTONE` file
   with `cd:` set to the session's directory.
 - x86_64 and aarch64 (ADR-041). Single user (ADR-013). No runtime deps in `os/`
   without an ADR.
-- Decisions marked OPEN in docs/DECISIONS.md belong to the human. Follow the
-  proposed default and keep going; mention it in your summary.
+- Unresolved questions and proposed ADRs in docs/DECISIONS.md belong to the
+  human. Follow the proposed default and keep going; mention it in your summary.
 
 ## Zig (tracking master)
 
@@ -94,9 +100,13 @@ The roadmap already exists as tests, gated by the `MILESTONE` file
 |---|---|
 | `make check-tools` | what is missing on this machine |
 | `make test` | shim + Elixir unit tests for the current milestone |
-| `make test-qemu` | builds the image, boots it in QEMU, runs `os/test/integration` |
-| `make ci` | both |
-| `make image` | kernel, shim (with test hooks), initramfs, disk |
+| `make check M=27` | host tests through M27 + its QEMU file(s), after building the host image |
+| `make test-qemu` | builds the host image and runs the non-aarch64 integration suite |
+| `make test-qemu-aarch64` | builds both images and runs the separate ARM64 smoke test |
+| `make ci` | host tests, the QEMU suite and both image builds; ARM64 smoke is separate |
+| `make image` | the host architecture's packaged kernel, shim, initramfs, service image and disk |
+| `make images` | x86_64 and aarch64 images |
+| `make demo M=26` | record, render and check one milestone's demo |
 | `make qemu ARGS="..."` | boot interactively; Ctrl-A X quits |
 | `cd os && mix test path/to/test.exs:LINE` | one test (set `ELIXOS_MILESTONE` to override) |
 
@@ -111,7 +121,9 @@ without it QEMU falls back to TCG - slower but fine. Raise
 MILESTONE            current milestone (an integer)
 AGENTS.md            this file
 docs/                VISION, ARCHITECTURE, PROTOCOL (API), DECISIONS (ADRs), ROADMAP, TESTING
-kernel/              VERSION (pinned kernel.org release + sha256), elixos.config (fragment)
+kernel/              VERSION (kernel.org pin + sha256), elixos.config + config.<arch>
+melange/             recipes for our APKs, including native aarch64 kernel/OTP cross-builds
+apko/                rootfs + service-image configs, per-architecture lockfiles and public keys
 build.zig            the shim's build; shim/src/*.zig is PID 1
 spec/                golden vectors shared by both test suites
 os/                  the Mix project: the Elixos userland (lib/) and every ExUnit test (test/)
@@ -119,8 +131,8 @@ hex/                 the official Hex repository (packages, signing key) and its
 demos/               scripted asciinema recordings, one per visible milestone
 .github/workflows/   CI: the Hex repository's build and Pages deployment
 os/test/integration/ QEMU acceptance tests, one file per milestone
-scripts/             kernel, initramfs, disk, QEMU, factory (M4), UEFI image (M13),
-                     and `make audit`, the tripwire for the shipped tests
+scripts/             image (melange + apko), initramfs, disk, QEMU, UEFI image,
+                     tool installs, kernel config guard and the acceptance audit
 build/               outputs (gitignored)
 ```
 

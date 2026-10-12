@@ -1,4 +1,11 @@
-# Self-hosting (M11): what exists, what is missing
+# Self-hosting (M11): historical implementation notes
+
+> **Historical.** This survey records the start and middle of M11, not current
+> blockers. M11 is delivered; M16 replaced the factory build with
+> `melange/factory.yaml` and the toolchain package, and M26 added installed
+> dependency resolution through `Elixos.Package.SCM`.
+> See [ARCHITECTURE](../ARCHITECTURE.md) for the current system and
+> [melange/apko notes](melange-apko.md) for the current build path.
 
 From a read-only survey of the repo while starting M11. The acceptance test is
 os/test/integration/m11_self_hosting_test.exs: install two fixture apps from

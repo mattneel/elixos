@@ -26,7 +26,7 @@ test: test-shim test-os ## Fast tests: shim unit tests + Elixir unit tests (no Q
 test-shim: ## Zig unit tests for the PID 1 shim
 	zig build test -Dmilestone=$(MILESTONE) --summary all
 
-deps: ## Fetch the Elixir dependencies (M15: the OS has one, ADR-036)
+deps: ## Fetch the locked Elixir dependency set for the OS
 	cd os && mix deps.get
 
 test-os: deps ## ExUnit tests for the Elixir userland (no QEMU)
@@ -61,7 +61,7 @@ image: ## This machine's image, incrementally (M16: melange + apko, ADR-041)
 	scripts/build-image.sh
 	scripts/mkdisk.sh
 
-images: image ## Both architectures (aarch64 is cross-built, but emulated OTP is slow)
+images: image ## Both architectures; aarch64 kernel and OTP are cross-built natively
 	scripts/build-image.sh aarch64
 	scripts/mkdisk.sh aarch64
 

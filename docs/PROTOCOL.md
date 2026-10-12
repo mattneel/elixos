@@ -72,8 +72,9 @@ run every line, and valid lines must round-trip through encode.
 
 ## §3 The launch contract (shim → ERTS)
 
-The shim forks and execs `erlexec` from the generation's ERTS directly. No
-shell script runs, ever (ADR-012); set what the release's `bin/` scripts would
+The shim forks and execs `erlexec` from the generation's ERTS directly.
+No shell script runs in this launch path (ADR-012, amended by ADR-041 to
+permit BusyBox sh for tooling). Set what the release's `bin/` scripts would
 have set (like Nerves' erlinit does): `ROOTDIR`, `BINDIR`, `EMU`, `PROGNAME`,
 plus `HOME=/priv/home`, `TERM=linux`, `LANG=C.UTF-8`,
 `PATH=/priv/toolchain:/bin:/usr/bin` when the persistent disk is mounted
@@ -102,10 +103,11 @@ plus `HOME=/priv/home`, `TERM=linux`, `LANG=C.UTF-8`,
 - The emulator runs `-mode interactive`: Elixos loads code at run time (the
   live image restores modules, and the box builds Mix projects), and the
   embedded code server refuses to load anything from the code path.
-- The emulator is launched with `+Bc`. The console is a tty that is not the
-  shell's controlling terminal, so without it Ctrl+C does nothing at all and a
-  runaway expression can only be stopped with Ctrl+G then `i`; with `+Bc`,
-  Ctrl+C interrupts the running expression and returns to the prompt.
+- The emulator is launched with `+Bc`. The console is cooked: type Ctrl+C
+  **then Enter** to deliver the interrupt byte to OTP's console driver.
+  Anything following that byte in the same input chunk is discarded; wait
+  for the interrupted prompt before typing the next expression (ADR-024).
+  Ctrl-G job control likewise needs Enter on this console.
 - The BEAM must send its first `HB` within `elixos.boot_grace` seconds and then
   at least every `elixos.hb_timeout` seconds; it sends one per second.
 - When the BEAM exits, the shim logs `beam exited status=<n>` or
@@ -179,8 +181,9 @@ malformed by the rule of the side that owns them. `elixos.commit_after=2` is
 therefore silent; `elixos.commit_after=abc` and `elixos.nonsense=1` are
 counted and logged.
 
-Test hooks, honored only by shims built with `-Dtest-hooks=true` (QEMU test
-images; never real hardware):
+Test hooks are honored only by shims built with `-Dtest-hooks=true` (ADR-018).
+The current melange image recipe enables them; its initramfs is also embedded
+by the UEFI builder. A hook-free deployment-image target remains unfinished.
 
 | parameter                             | effect                                              |
 |---------------------------------------|-----------------------------------------------------|
@@ -257,6 +260,7 @@ prompt       the question, verbatim
 options      [String.t()], the choices a choice or multi offers (else [])
 allow_other  boolean, whether free text is accepted beside those options
 default      term, a suggestion a front-end may pre-fill (optional)
+timeout      pos_integer milliseconds or nil; expiry resolves {:error, :timeout}
 asker        pid, the process blocked on the answer
 asked_at     DateTime.t()
 ```
@@ -281,6 +285,8 @@ ext4, label `ELIXOS`, mounted on `/priv`:
 /priv/home/             the user's home; .ssh/authorized_keys (M12)
 /priv/ssh/              SSH host keys (M12)
 /priv/cache/zig/        ZIG_GLOBAL_CACHE_DIR for on-box builds (M11)
+/priv/cache/cargo/      CARGO_HOME for on-box Rust builds (M25, ADR-066)
+/priv/toolchain/        unpacked elixos-toolchain APK: Zig, cc/c++, Rust and Cargo
 /priv/apps/             installed apps (M11)
 /priv/agents/           agent memory, `<id>.term` (M15, ADR-032)
 /priv/llm.exs           LLM provider settings (a keyword list, M15)
