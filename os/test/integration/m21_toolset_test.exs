@@ -11,7 +11,6 @@ defmodule Elixos.Integration.M21ToolsetTest do
 
   @moduletag :qemu
   @moduletag milestone: 21
-  @moduletag :deferred
   @moduletag timeout: 900_000
   @moduletag :tmp_dir
 

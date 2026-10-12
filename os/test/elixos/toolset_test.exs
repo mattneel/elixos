@@ -12,7 +12,6 @@ defmodule Elixos.ToolsetTest do
   use ExUnit.Case, async: false
 
   @moduletag milestone: 21
-  @moduletag :deferred
   @moduletag :tmp_dir
 
   alias Elixos.Toolset

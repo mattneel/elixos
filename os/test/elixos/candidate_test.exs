@@ -9,7 +9,6 @@ defmodule Elixos.CandidateTest do
   use ExUnit.Case, async: false
 
   @moduletag milestone: 23
-  @moduletag :deferred
   @moduletag :tmp_dir
   @moduletag timeout: 1_200_000
 

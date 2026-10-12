@@ -4,14 +4,15 @@ Each milestone has a goal, the acceptance tests that define it (already in the
 repo), notes on how to get there, and a done checklist. Work them in order;
 `MILESTONE` holds the current one. The loop is in AGENTS.md.
 
-Fast tests: `make test`. Focused iteration: `make check M=27`.
+Fast tests: `make test`. Focused agent-arc iteration: `make check M=21`.
 Full QEMU suite: `make test-qemu` (M3 onward); milestone gate: `make ci`.
 The ARM64 smoke test is separate: `make test-qemu-aarch64`.
 
 **Current state:** M1–M20, M25 and M26 are delivered. M21–M24 have resumed
 against a fresh upstream OMP inventory (ADR-071), without a `clanklet`
-prerequisite. `MILESTONE=27` still selects the in-progress GUI gate: its host
-and x86_64 QEMU suites have passed; ARM64 packaging remains in progress.
+prerequisite. `MILESTONE=21` selects that resumed arc. The in-progress M27
+GUI's host and x86_64 QEMU suites passed before this gate selection;
+ARM64 packaging remains in progress.
 
 ---
 

@@ -18,17 +18,17 @@ tests; building Elixos means turning them green, one milestone at a time.
 non-aarch64 QEMU suite and both architecture image builds; it does **not**
 run the ARM64 smoke test or the manual hardware checklist.
 
-For iteration on the current work, `make check M=27` builds the host image,
-runs the Zig and ExUnit host suites through M27, then only
-`test/integration/m27_*.exs`. Use the full `make ci` at the milestone boundary,
-not after every edit. `make check M=26` can verify the completed baseline while
-M27's ARM64 packaging and full gate are still in progress.
+For the resumed agent arc, `make test` runs the active host gate without
+building an image; `make check M=21` also builds the host image and runs only
+`test/integration/m21_*.exs`. Use the full `make ci` at the milestone boundary,
+not after every edit. `make check M=27` selects GUI development and includes
+the resumed M21–M24 gates; it is not a way to skip those prerequisites.
 
 ## Milestones
 
 `MILESTONE` selects the active gate, including a milestone whose implementation
-is still in progress. It is not a count of completed milestones. M27 is active;
-M1–M20, M25 and M26 are delivered. M21–M24 have resumed under ADR-071.
+is still in progress. M21 is active for the resumed agent arc (ADR-071).
+M1–M20, M25 and M26 are delivered; M27's GUI remains in development.
 
 - **Zig:** every test begins `try milestone.require(N);`, which returns
   `error.SkipZigTest` until `MILESTONE >= N`. The Makefile passes
@@ -39,10 +39,9 @@ M1–M20, M25 and M26 are delivered. M21–M24 have resumed under ADR-071.
 - **Overrides:** `ELIXOS_MILESTONE=N` selects the ExUnit gate for a direct
   `mix test` command; `make check M=N` passes the selection to both host
   test layers and its integration run.
-- **Resuming the agent arc:** the old `:deferred` tags still exclude M21–M24
-  while the new upstream inventory is recorded. The M21 start commit removes
-  those tags and selects M21, as ADR-063/ADR-071 require; raising `MILESTONE`
-  alone does not remove a tag.
+- **Agent arc:** the M21 start commit removed M21–M24's former `:deferred`
+  tags under ADR-063/ADR-071. Their original acceptance now follows normal
+  milestone gating: M21 runs, while M22–M24 wait for their milestone selection.
 - **Architecture:** `:aarch64` integration tests are excluded unless
   `ELIXOS_QEMU_AARCH64=1`.
 

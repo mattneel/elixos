@@ -12,7 +12,6 @@ defmodule Elixos.Integration.M22CoderTest do
 
   @moduletag :qemu
   @moduletag milestone: 22
-  @moduletag :deferred
   @moduletag timeout: 900_000
   @moduletag :tmp_dir
 

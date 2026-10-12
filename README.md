@@ -28,7 +28,7 @@ ARM64 renderer packaging and the full milestone gate are still in progress.
 
 **Resumed:** the coding-agent toolset, on-box coding agent, safe self-modification
 and native hot paths (M21–M24). The [revision-pinned OMP-to-Jido inventory](docs/OMP_INVENTORY.md)
-is recorded; the port is next, without a `clanklet` prerequisite ([ADR-071](docs/DECISIONS.md)).
+is recorded; the M21 port is active without a `clanklet` prerequisite ([ADR-071](docs/DECISIONS.md)).
 See the [roadmap and acceptance criteria](docs/ROADMAP.md).
 
 **Planned graphics variants:** AMD and NVIDIA images using the human's
