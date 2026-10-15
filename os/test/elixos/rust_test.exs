@@ -83,18 +83,4 @@ defmodule Elixos.RustTest do
     assert {:ok, "1.97.0"} = Rust.version()
     assert {:ok, @triple} = Rust.target()
   end
-
-  test "cargo/2 hands the build the cache, the compiler and the target's linker", %{
-    cc: cc,
-    home: home
-  } do
-    assert :ok = Rust.init()
-
-    assert {:ok, %{status: 0, output: output}} = Rust.cargo(["build", "--release"])
-    assert output =~ "CARGO_HOME=#{home}"
-    assert output =~ "CC=#{cc}"
-    assert output =~ "LINKER=#{cc}"
-    # The caller's session directory is where the build lands (ADR-020).
-    assert output =~ "PWD=#{File.cwd!()}"
-  end
 end

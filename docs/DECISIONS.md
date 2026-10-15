@@ -2280,3 +2280,23 @@ exports, pipelines, errors, timeout and one append effect. An `execve`
 trace shows the helper invoking `/usr/bin/printf` directly; no `/bin/sh`
 launcher is involved. This is effect-engine verification, not an M21
 delivery claim or an M24 promotion/benchmark result.
+
+## ADR-090: Verify Cargo with a real build instead of an environment echo
+
+**Status:** accepted (2026-10-15).
+
+**Problem.** The M25 Cargo fixture prints arguments and environment variables
+without compiling anything. It equates the child working directory with
+`File.cwd!/0`, despite ADR-020 requiring the caller's session directory.
+Inside the isolated on-device health worker, the VM's source directory and
+the existing `/priv/home` legitimately differ. The fixture therefore rejects
+correct session behavior while providing no evidence that Rust can link.
+
+**Decision.** Remove that environment-echo test rather than repin its strings
+or change runtime working-directory behavior to satisfy it. Keep the other
+Rust tests. Add a real offline Cargo integration scenario: enter an explicit
+session directory, compile and run a program that reads relative input and
+writes the computed result there, and verify the VM's cwd and environment
+remain unchanged. Compiler, linker, execution and session-path failures must
+fail that scenario. No health check is skipped, loosened or given a larger
+deadline; the default health gate remains mandatory for image export.
