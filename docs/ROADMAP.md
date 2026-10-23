@@ -948,6 +948,8 @@ here, and the ADR is written.
   build, ADR-097). The whole riscv64 image builds in about 12 minutes with
   every compiler running natively on the build host.
 
+- [x] `make ci` green with `MILESTONE=28` (Zig 89, host 379, QEMU 57; x86_64,
+  riscv64 and aarch64 images reproducible) and the riscv64 smoke set passes.
 - [x] ADR-097: riscv64 as the third architecture.
 - [x] Emerge on riscv64 musl: built from source by the host cross build
   (`riscv64gc-unknown-linux-musl`, RISC-V `libemerge_skia.so` with its private
