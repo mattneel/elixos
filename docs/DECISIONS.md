@@ -3040,6 +3040,16 @@ it; the profile is chosen by the image, never by the session.
 The budget is measured on the board in M33 and recorded in
 docs/notes/k230.md.
 
+**Implemented (M33).** The image chooses the profile with
+`elixos.profile=deck|full` on the kernel command line (BEAM-side, default
+`full`; anything but exactly `deck` is `full`), read by
+`Elixos.Boot.Cmdline.profile/0` and passed once by `Elixos.Application` to
+the services it concerns. On the deck, `Elixos.Postgres` boots idle and the
+first `query/1`, `Elixos.Oban.status/0` or `enqueue/3` starts it through the
+same bounded worker a full boot uses; Oban's manager waits for that start,
+then migrates and releases its queues; `Elixos.Approvals` starts without the
+coding runtime. The full profile is unchanged.
+
 ## ADR-112: The inter-core link is a polled shared-memory ring under plain IP
 
 **Status:** accepted (2026-10-23), M31.
@@ -3218,3 +3228,57 @@ test block registers the new modules with `refAllDecls`.
 
 **Consequences.** A failure costs only the panel. The board needs
 `elixos.deck=uio:deck-fb` on its command line.
+
+## ADR-118: PID 1 keeps the ring helper running on the board
+
+**Status:** accepted (2026-10-23), M33.
+
+**Context.** On the board the coprocessor link is `elixos-link` over the UIO
+ring, not a NIC (ADR-112). It needs root (TUN, the device) and must outlive
+BEAM restarts.
+
+**Decision.** `elixos.coproc_ring=uio:<name>|/dev/<path>` is shim-side and
+reuses the deck's resolver (ADR-117); `pci:` is refused, because QEMU's
+ivshmem devices all share one id. PID 1 forks a keeper before the BEAM that
+runs `elixos-link --side big` and restarts it with a 1-30 s backoff,
+independent of BEAM restarts and the panic re-exec. `elixos.coproc_link`
+names the TUN interface and its address, which the helper applies on every
+start; the shim waits up to 5 s for it before launching the BEAM. The keeper's
+lines are in PROTOCOL §6. riscv64 gains `CONFIG_TUN`.
+
+**Consequences.** A ring failure costs only the coprocessor, and the console
+shows its restarts.
+
+## ADR-119: Elixos proves it is present with a display lease
+
+**Status:** accepted (2026-10-23), M33.
+
+**Context.** While the big core's BEAM restarts, the panel must stay alive
+and say so. AtomVM cannot see a remote node leave (ADR-113).
+
+**Decision.** `Elixos.Deck.Lease` renews `coproc_display:lease/2` every 2 s
+with a 6 s lifetime and a text naming the generation and boot attempt. When
+the lease lapses the coprocessor shows `Elixos restarting, was <text>` over
+the last frame, composed at scan-out and never written into the framebuffer;
+a renewal clears it. The lease survives a coprocessor VM restart's handoff.
+
+**Consequences.** The panel names the last attempt Elixos reported, not the
+one in progress (the coprocessor cannot know it).
+
+## ADR-120: The board display backend polls the framebuffer
+
+**Status:** accepted (2026-10-23), M33.
+
+**Context.** PROTOCOL §12 has the coprocessor scan out what Elixos commits.
+
+**Decision.** `coproc_display_k230` polls the header every 20 ms and pushes
+the damage rectangle, or the whole frame after a restart, a missed commit or
+a bad rectangle; it stores `shown` only after the panel accepted the push.
+Region and panel access go through the firmware's platform functions on the
+board and through files in host tests. Backend sets can be chosen per
+subsystem (`ELIXOS_COPROC_DRIVERS=sim,display=k230`). Status text is drawn
+with `coproc_font`, generated from the deck's Spleen font.
+
+**Consequences.** The panel's own initialisation and scan-out are one
+platform function, ported from the vendor sources and checked on the host
+against them (docs/notes/k230-panel.md); only the board proves them.
