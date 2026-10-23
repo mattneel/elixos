@@ -1063,6 +1063,8 @@ the little core with `boot_baremetal`. `make k230-bringup` builds the SD card
 (firmware from source, riscv64 kernel with the K230 drivers, our DTB, the
 little core's hello image, a data partition).
 
+- [x] `make ci` green with `MILESTONE=30` (Zig 93, host 388, QEMU 61; x86_64,
+  riscv64 with the K230 drivers and DTB, and aarch64 images reproducible).
 - [x] ADR-101: the board device tree as configuration.
 - [x] ADR-102: the boot firmware choice (Canaan's Linux-SDK U-Boot and
   OpenSBI, pinned and built from source; proposed, the human confirms).
