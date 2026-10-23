@@ -2,6 +2,9 @@
 # Create an architecture's pristine persistent disk: ext4, label ELIXOS.
 # QEMU tests never boot this file directly; each test boots a sparse copy
 # (Elixos.Test.Disk.fresh!/1), so tests cannot leak state into each other.
+#
+# DISK_OUT=<path> writes elsewhere (the K230 SD card's data partition), and
+# DISK_TOOLCHAIN=0 leaves the guest toolchain out (the deck profile, ADR-111).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,6 +17,8 @@ case "$ARCH" in
   riscv64) DISK="$BUILD/riscv64/disk.img" ;;
   *) echo "disk: unsupported architecture $ARCH" >&2; exit 1 ;;
 esac
+DISK="${DISK_OUT:-$DISK}"
+TOOLCHAIN="${DISK_TOOLCHAIN:-1}"
 
 mkdir -p "$(dirname "$DISK")"
 
@@ -24,18 +29,23 @@ mkdir -p "$(dirname "$DISK")"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
-shopt -s nullglob
-packages=("$BUILD/apk/$ARCH/$ARCH"/elixos-toolchain-*.apk)
-if [ "${#packages[@]}" -eq 0 ]; then
-  echo "disk: no elixos-toolchain package under $BUILD/apk/$ARCH" >&2
-  echo "  build it first: scripts/build-image.sh $ARCH" >&2
-  exit 1
+if [ "$TOOLCHAIN" = 1 ]; then
+  shopt -s nullglob
+  packages=("$BUILD/apk/$ARCH/$ARCH"/elixos-toolchain-*.apk)
+  if [ "${#packages[@]}" -eq 0 ]; then
+    echo "disk: no elixos-toolchain package under $BUILD/apk/$ARCH" >&2
+    echo "  build it first: scripts/build-image.sh $ARCH" >&2
+    exit 1
+  fi
+  TOOLCHAIN_APK="${packages[0]}"
+  # melange's APKs are tar streams a plain `tar` reads (the checksum xattr is
+  # just a warning); only toolchain/ is wanted, not the package metadata.
+  tar -xzf "$TOOLCHAIN_APK" -C "$STAGE" --warning=no-unknown-keyword toolchain
+  [ -x "$STAGE/toolchain/zig" ] || { echo "disk: $TOOLCHAIN_APK carried no toolchain/zig" >&2; exit 1; }
+  TOOLCHAIN_NOTE="toolchain $(du -sh "$STAGE/toolchain" | cut -f1), $(basename "$TOOLCHAIN_APK")"
+else
+  TOOLCHAIN_NOTE="no toolchain"
 fi
-TOOLCHAIN_APK="${packages[0]}"
-# melange's APKs are tar streams a plain `tar` reads (the checksum xattr is
-# just a warning); only toolchain/ is wanted, not the package metadata.
-tar -xzf "$TOOLCHAIN_APK" -C "$STAGE" --warning=no-unknown-keyword toolchain
-[ -x "$STAGE/toolchain/zig" ] || { echo "disk: $TOOLCHAIN_APK carried no toolchain/zig" >&2; exit 1; }
 
 # The system service tree is a separate immutable filesystem, never a factory
 # overlay. PID 1 loop-mounts this image read-only at /system in normal mode.
@@ -58,4 +68,4 @@ debugfs -w -R 'set_inode_field /system mode 040755' "$DISK" >/dev/null 2>&1
 debugfs -w -R 'set_inode_field /system/system.squashfs uid 0' "$DISK" >/dev/null 2>&1
 debugfs -w -R 'set_inode_field /system/system.squashfs gid 0' "$DISK" >/dev/null 2>&1
 debugfs -w -R 'set_inode_field /system/system.squashfs mode 0100444' "$DISK" >/dev/null 2>&1
-echo "disk: $DISK ($SIZE, ext4, label ELIXOS, toolchain $(du -sh "$STAGE/toolchain" | cut -f1), $(basename "$TOOLCHAIN_APK"))"
+echo "disk: $DISK ($SIZE, ext4, label ELIXOS, $TOOLCHAIN_NOTE)"

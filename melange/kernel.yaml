@@ -52,6 +52,10 @@ pipeline:
             exit 1
           fi
           install -Dm0644 /home/build/prebuilt/kernel/boot/Image "${{targets.destdir}}/boot/Image"
+          # Board device trees (ADR-101), when this architecture has any.
+          if [ -d /home/build/prebuilt/kernel/boot/dtbs ]; then
+            cp -r /home/build/prebuilt/kernel/boot/dtbs "${{targets.destdir}}/boot/dtbs"
+          fi
           echo "kernel: installed the cross-compiled ${{build.arch}} Image"
           exit 0
           ;;

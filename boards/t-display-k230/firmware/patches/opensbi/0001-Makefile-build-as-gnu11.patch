@@ -1,0 +1,17 @@
+GCC 15 and later default to -std=gnu23, where `bool` is a keyword, so
+OpenSBI 1.4's `typedef int bool;` (include/sbi/sbi_types.h) no longer
+compiles ("'bool' cannot be defined via 'typedef'", -Werror). Upstream
+OpenSBI master pins the language the same way (`CFLAGS += -std=gnu11` in
+its Makefile); this is that one line for v1.4. Build fix only, no
+code change.
+
+--- a/Makefile
++++ b/Makefile
+@@ -349,6 +349,7 @@
+ CFLAGS		+=	$(platform-cflags-y)
+ CFLAGS		+=	-fno-pie -no-pie
+ CFLAGS		+=	$(firmware-cflags-y)
++CFLAGS		+=	-std=gnu11
+ 
+ CPPFLAGS	+=	$(GENFLAGS)
+ CPPFLAGS	+=	$(platform-cppflags-y)

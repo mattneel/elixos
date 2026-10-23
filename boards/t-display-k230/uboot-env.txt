@@ -1,0 +1,5 @@
+bootdelay=2
+bootargs=console=ttyS0,115200 earlycon panic=-1 elixos.live=1
+bcoproc=ext4load mmc ${mmc_boot_dev_num}:1 0x7000000 /coproc.bin && boot_baremetal 0 0x7000000 0x${filesize}
+belixos=ext4load mmc ${mmc_boot_dev_num}:1 0x3000000 /fw_jump.uImage && ext4load mmc ${mmc_boot_dev_num}:1 0x200000 /Image && ext4load mmc ${mmc_boot_dev_num}:1 0x2200000 /t-display-k230.dtb && ext4load mmc ${mmc_boot_dev_num}:1 0xa100000 /initramfs.cpio.gz && bootm 0x3000000 0xa100000:0x${filesize} 0x2200000
+bootcmd=run bcoproc; run belixos

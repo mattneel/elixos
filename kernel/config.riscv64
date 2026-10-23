@@ -20,3 +20,21 @@ CONFIG_SERIAL_EARLYCON_RISCV_SBI=y
 # --- poweroff and reboot through virt's syscon (SBI SRST also works) ---
 CONFIG_POWER_RESET_SYSCON=y
 CONFIG_POWER_RESET_SYSCON_POWEROFF=y
+
+# --- the LilyGO T-Display K230 (M30, ADR-101) ---
+# The big core: Svpbmt (not T-Head MAE; the errata only match marchid 0),
+# RVV 1.0 and Zicbom for the dma-noncoherent SoC bus. From riscv's defconfig,
+# named here so the guard keeps them.
+CONFIG_ARCH_CANAAN=y
+CONFIG_RISCV_ISA_SVPBMT=y
+CONFIG_RISCV_ISA_V=y
+CONFIG_RISCV_ISA_ZICBOM=y
+# The SoC drivers the board device tree binds. The clock and pinctrl drivers
+# have no default: without the clock driver UART0 has no clock and there is
+# no console.
+CONFIG_COMMON_CLK_K230=y
+CONFIG_PINCTRL_K230=y
+CONFIG_RESET_K230=y
+CONFIG_SERIAL_8250_DW=y
+CONFIG_MMC_SDHCI_OF_DWCMSHC=y
+CONFIG_PHY_CANAAN_USB=y

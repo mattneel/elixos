@@ -85,7 +85,7 @@ stage() {
   rm -rf "$SRC"
   mkdir -p "$SRC/os"
   cp -r "$ROOT/build.zig" "$ROOT/build.zig.zon" "$ROOT/.zig-version" "$ROOT/.tool-versions" "$ROOT/MILESTONE" \
-        "$ROOT/shim" "$ROOT/spec" "$ROOT/kernel" "$ROOT/scripts" "$ROOT/hex" "$ROOT/toolchain" \
+        "$ROOT/shim" "$ROOT/spec" "$ROOT/kernel" "$ROOT/boards" "$ROOT/scripts" "$ROOT/hex" "$ROOT/toolchain" \
         "$SRC/"
   cp -r "$ROOT/os/mix.exs" "$ROOT/os/mix.lock" "$ROOT/os/lib" "$ROOT/os/src" "$ROOT/os/config" "$ROOT/os/priv" "$ROOT/os/test" "$SRC/os/"
   # Canonical native coding packages are human-pinned source inputs, never
@@ -505,7 +505,15 @@ assemble_arch() { # assemble_arch <arch>: root filesystem, initramfs, kernel
   }
   case "$arch" in
     x86_64) tar -xzf "$kernel_apk" -O boot/bzImage > "$work/bzImage" ;;
-    aarch64|riscv64) tar -xzf "$kernel_apk" -O boot/Image > "$work/Image" ;;
+    aarch64|riscv64)
+      tar -xzf "$kernel_apk" -O boot/Image > "$work/Image"
+      # Board device trees (ADR-101) travel in the kernel package.
+      rm -rf "$work/dtbs"
+      if tar -tzf "$kernel_apk" boot/dtbs >/dev/null 2>&1; then
+        mkdir -p "$work/dtbs"
+        tar -xzf "$kernel_apk" -C "$work/dtbs" --strip-components=2 --warning=no-unknown-keyword boot/dtbs
+      fi
+      ;;
   esac
 
   check_sbom "$arch" "$work/sbom-$arch.spdx.json"
@@ -535,7 +543,7 @@ build_arch() { # build_arch <arch>
   if foreign_arch "$arch"; then
     # Keyed on what the recipes read, not on whole directories: editing an
     # unrelated script must not rebuild a kernel.
-    cross_build "$arch" kernel "$ROOT/melange/kernel-cross.yaml" kernel scripts/check-kernel-config.sh
+    cross_build "$arch" kernel "$ROOT/melange/kernel-cross.yaml" kernel boards scripts/check-kernel-config.sh
     # The ERTS is the one package that is pure compiled C, so a cross build
     # needs a real cross toolchain - and OTP has a native cross mode for it
     # (ADR-060). This runs on the build machine, in this architecture's own

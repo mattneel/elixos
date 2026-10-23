@@ -1055,11 +1055,20 @@ riscv64 smoke set keeps the image honest in QEMU.
 `docs/notes/k230.md`, the ADRs are written, and the human has run the
 checklist.
 
-- [ ] ADR (to be written): the board device tree as configuration.
-- [ ] ADR (to be written): the boot firmware choice (mainline or pinned
-  Canaan U-Boot and OpenSBI, verified by checksum).
-- [ ] ADRs (to be written): Linux-or-coprocessor ownership, one per subsystem.
-- [ ] ADR (to be written): the deck image profile.
+**Results (2026-10-23, desk side).** The survey, support matrix, boot findings
+and open board questions are in `docs/notes/k230.md`. No blocker: the big
+core reads `mhartid` 0, so a one-CPU device tree boots it alone; Canaan's
+Linux-SDK firmware already runs U-Boot, OpenSBI and Linux there and releases
+the little core with `boot_baremetal`. `make k230-bringup` builds the SD card
+(firmware from source, riscv64 kernel with the K230 drivers, our DTB, the
+little core's hello image, a data partition).
+
+- [x] ADR-101: the board device tree as configuration.
+- [x] ADR-102: the boot firmware choice (Canaan's Linux-SDK U-Boot and
+  OpenSBI, pinned and built from source; proposed, the human confirms).
+- [x] ADRs 103-110: Linux-or-coprocessor ownership, one per subsystem.
+- [x] ADR-111: the deck image profile.
+- [ ] The human has run the hardware checklist.
 
 ---
 

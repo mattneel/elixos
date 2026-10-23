@@ -1,0 +1,6 @@
+# Merged over LilyGO's k230_canmv_t_display_defconfig by melange/k230-firmware.yaml.
+#
+# Elixos boots `bootm <fw_jump.uImage> <initrd_addr>:<size> <fdt>` with a raw
+# (not uImage-wrapped) initramfs.cpio.gz; U-Boot only accepts the addr:size
+# form when raw initrds are supported.
+CONFIG_SUPPORT_RAW_INITRD=y

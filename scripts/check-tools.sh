@@ -40,6 +40,7 @@ need debugfs e2fsprogs "tests read/write the disk image without root"
 need mformat mtools "ESP image (M13)"
 need ssh-keygen openssh-client "SSH test keys (M12)"
 need socat socat "relays the M29 coprocessor link from QEMU to the host AtomVM"
+need sfdisk fdisk "partitions the K230 bring-up SD card (M30)"
 
 echo "image build (M16: melange + apko, ADR-041):"
 need python3 python3 "the initramfs packer, the image checks and the demo checker"

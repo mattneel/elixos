@@ -116,3 +116,22 @@ pipeline:
       install -Dm0644 "arch/$karch/boot/Image" "${{targets.destdir}}/boot/Image"
       install -Dm0644 .config "${{targets.destdir}}/boot/config.$elixos_arch"
       install -Dm0644 .compiler "${{targets.destdir}}/boot/compiler"
+
+      # Board device trees (ADR-101): configuration kept in boards/<board>/,
+      # compiled the way Kbuild compiles an in-tree .dts (cpp with the dts
+      # flags, then the tree's own dtc) against this pinned tree's
+      # dt-bindings headers. A board names its architecture in boards/<board>/arch.
+      make_cross -s scripts_dtc
+      for board in /home/build/boards/*/; do
+        [ -f "$board/arch" ] || continue
+        [ "$(cat "$board/arch")" = "$elixos_arch" ] || continue
+        for dts in "$board"*.dts; do
+          name="$(basename "$dts" .dts)"
+          clang -E -nostdinc -I "$board" -I include -I "arch/$karch/boot/dts" \
+            -undef -D__DTS__ -x assembler-with-cpp -o "/tmp/$name.dts.pp" "$dts"
+          scripts/dtc/dtc -I dts -O dtb -b 0 -W no-unit_address_vs_reg \
+            -o "/tmp/$name.dtb" "/tmp/$name.dts.pp"
+          install -Dm0644 "/tmp/$name.dtb" "${{targets.destdir}}/boot/dtbs/$name.dtb"
+          echo "kernel-cross: compiled boards/$(basename "$board")/$name.dts"
+        done
+      done

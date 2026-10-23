@@ -1,0 +1,149 @@
+// SPDX-License-Identifier: GPL-2.0 OR MIT
+/*
+ * LilyGO T-Display K230: the Elixos board device tree (ADR-101).
+ *
+ * Configuration, not a kernel patch: compiled against the pinned mainline
+ * kernel's dt-bindings headers (kernel/VERSION) by melange/kernel-cross.yaml
+ * and shipped next to the riscv64 Image. Facts come from the M30 survey in
+ * docs/notes/k230.md (LilyGO V1.0 schematic, 2026-06-26).
+ *
+ * Linux gets the 1.6 GHz core only. That core reads mhartid 0, so it is
+ * cpu@0 (k230.dtsi); the 800 MHz little core (CPU0 in Canaan's naming) is
+ * not described at all and runs its own image from the reserved region
+ * below, released by U-Boot's boot_baremetal (ADR-102).
+ */
+
+#include "k230.dtsi"
+
+/ {
+	model = "LilyGO T-Display K230";
+	compatible = "lilygo,t-display-k230", "canaan,kendryte-k230";
+
+	aliases {
+		serial0 = &uart0;
+		mmc0 = &sdio1;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	/* Samsung K4F8E304HB-MGCJ LPDDR4, 1 GiB at physical 0. */
+	ddr: memory@0 {
+		device_type = "memory";
+		reg = <0x0 0x0 0x0 0x40000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/*
+		 * The little core's image, heap and stacks. Clear of every
+		 * address the Canaan U-Boot environment loads into (OpenSBI 0,
+		 * Image 0x200000, DTB 0x2200000, fw_jump 0x3000000, initramfs
+		 * 0xa100000). no-map: the two cores have separate L2 caches and
+		 * no known coherence, so Linux must never cache this range.
+		 */
+		coproc: coproc@7000000 {
+			reg = <0x0 0x07000000 0x0 0x01000000>;
+			no-map;
+		};
+	};
+
+	timerx_pulse_in: clock-50000000 {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <50000000>;
+	};
+};
+
+&sysclk {
+	clocks = <&osc24m>, <&timerx_pulse_in>;
+	clock-names = "osc24m", "timer-pulse-in";
+};
+
+/* Console: UART0 (IO38/IO39) on channel 0 of the CH342K behind USB-C J2. */
+&uart0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart0_pins>;
+	status = "okay";
+};
+
+/*
+ * The TF slot: 4-bit, 3.3 V only (bank IO50-61), no card-detect or
+ * write-protect wired (socket U15 pin 9 is unconnected).
+ */
+&sdio1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&mmc1_pins>;
+	bus-width = <4>;
+	max-frequency = <50000000>;
+	cap-sd-highspeed;
+	no-1-8-v;
+	broken-cd;
+	disable-wp;
+	status = "okay";
+};
+
+&pinctrl {
+	uart0_pins: uart0-pins {
+		uart0-txd-cfg {
+			pinmux = <K230_PINMUX(38, 1)>;
+			slew-rate = <0>;
+			drive-strength = <7>;
+			power-source = <K230_MSC_1V8>;
+			output-enable;
+			bias-disable;
+			input-schmitt-enable;
+		};
+
+		uart0-rxd-cfg {
+			pinmux = <K230_PINMUX(39, 1)>;
+			slew-rate = <0>;
+			drive-strength = <7>;
+			power-source = <K230_MSC_1V8>;
+			input-enable;
+			bias-disable;
+			input-schmitt-enable;
+		};
+	};
+
+	mmc1_pins: mmc1-pins {
+		mmc1-cmd-cfg {
+			pinmux = <K230_PINMUX(54, 2)>;
+			slew-rate = <0>;
+			drive-strength = <7>;
+			power-source = <K230_MSC_3V3>;
+			input-enable;
+			output-enable;
+			bias-pull-up;
+			input-schmitt-enable;
+		};
+
+		mmc1-clk-cfg {
+			pinmux = <K230_PINMUX(55, 2)>;
+			slew-rate = <0>;
+			drive-strength = <7>;
+			power-source = <K230_MSC_3V3>;
+			output-enable;
+			bias-disable;
+			input-schmitt-enable;
+		};
+
+		mmc1-data-cfg {
+			pinmux = <K230_PINMUX(56, 2)>, /* mmc1 data0 */
+				 <K230_PINMUX(57, 2)>, /* mmc1 data1 */
+				 <K230_PINMUX(58, 2)>, /* mmc1 data2 */
+				 <K230_PINMUX(59, 2)>; /* mmc1 data3 */
+			slew-rate = <0>;
+			drive-strength = <7>;
+			power-source = <K230_MSC_3V3>;
+			input-enable;
+			output-enable;
+			bias-pull-up;
+			input-schmitt-enable;
+		};
+	};
+};

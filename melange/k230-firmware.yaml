@@ -1,0 +1,256 @@
+# Boot firmware for the LilyGO T-Display K230 (M30): U-Boot SPL + U-Boot
+# proper from Canaan's k230_linux_sdk (LSDK) U-Boot 2022.10 overlay with
+# LilyGO's T-Display board config (LPDDR4-2667 training), and OpenSBI 1.4 with
+# the LSDK overlay (it clears the T-Head MXSTATUS.MAEE bit that Canaan's
+# U-Boot sets; mainline OpenSBI never does).
+#
+# Mainline U-Boot has no K230 SPL, DDR training, MMC or boot_baremetal, so the
+# vendor tree is the only one that boots the board from SD. Everything is
+# built from source on x86_64 with Alpine's bare-metal riscv-none-elf GCC (no
+# compiler under emulation, ADR-094); only the final links use Alpine's
+# riscv64-alpine-linux-musl ld, because both U-Boot and OpenSBI link
+# themselves as PIEs and the bare-metal ld cannot. Each download is pinned by
+# sha256; the GitHub archives are of exact commits. LSDK's own buildroot
+# never checks the U-Boot or OpenSBI hashes (BR_NO_CHECK_HASH_FOR), we do.
+#
+# Deviations from LSDK's post-image.sh, both forced by "from source":
+#   - U-Boot proper is compressed with standard `gzip -9n`, not the prebuilt
+#     x86 tools/k230_priv_gzip whose output LSDK marks with CM=9 for the
+#     K230 hardware unzip engine. With the standard CM=8 the SPL's gunzip()
+#     (arch/riscv/cpu/k230/unzip.c) takes the software inflate path.
+#   - The K230 header is written by boards/t-display-k230/firmware/k230-header.py
+#     (firmware_gen.py -n, without its crypto imports).
+#
+# Outputs, under /usr/share/elixos/k230-firmware/ in the APK (see
+# scripts/build-k230-firmware.sh for the SD offsets): spl.bin, uboot.bin,
+# env.bin, layout.env, fw_jump.uImage, licenses/, SOURCES.
+package:
+  name: elixos-k230-firmware
+  version: 2022.10_git20261020
+  epoch: 0
+  description: "LilyGO T-Display K230 boot firmware: Canaan U-Boot SPL/U-Boot 2022.10 and OpenSBI 1.4"
+  copyright:
+    - license: GPL-2.0-or-later AND BSD-2-Clause
+  dependencies:
+    runtime: []
+
+vars:
+  uboot-version: "2022.10"
+  uboot-sha256: 50b4482a505bc281ba8470c399a3c26e145e29b23500bc35c50debd7fa46bdf8
+  lsdk-commit: fc6cc2151d54cb307be47f81815023f7ffb0eae6
+  lsdk-sha256: 780336fd0b43d552ef91060c4ad5289df1dc295a70bd4f4d990f1463762d1988
+  lily-commit: 0ad78192bab04585ae51bb847695fdc74658f134
+  lily-sha256: 46cd3cef13abf77450af049deb8e1cfc16286fc3cc49db1fabd4cc7471af269a
+  opensbi-commit: a2b255b88918715173942f2c5e1f97ac9e90c877
+  opensbi-sha256: 9bbeae682c9aa5bb8c38df449f96c53fee89fe92bba4a66d6925c6f57d275bda
+  # LilyGO's commit date: the mkimage timestamps, so the images are reproducible.
+  source-date-epoch: "1792467643"
+
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+    packages:
+      - alpine-release=3.24.3-r0
+      - build-base
+      - busybox
+      - bash
+      - curl
+      - gcc-riscv-none-elf=16.1.0-r0
+      - binutils-riscv-none-elf=2.45.1-r0
+      # U-Boot and OpenSBI link themselves with `ld -pie`; the bare-metal
+      # riscv-none-elf ld has no PIE support, Alpine's riscv64-alpine-linux-musl
+      # binutils (same 2.45.1) do. They provide U-Boot's LD and OpenSBI's
+      # as/ld (gcc -B); every C file is compiled by riscv-none-elf-gcc.
+      - binutils-riscv64=2.45.1-r1
+      - bison
+      - flex
+      - bc
+      - openssl-dev
+      - gnutls-dev
+      - util-linux-dev
+      - linux-headers
+      - python3
+      - py3-setuptools
+      - py3-elftools
+      - py3-libfdt
+      - swig
+      - dtc
+      - perl
+      - gzip
+      - gawk
+      - sed
+      - grep
+      - coreutils
+      - findutils
+      - diffutils
+      - tar
+
+pipeline:
+  - runs: |
+      set -eu
+      work=/tmp/k230fw
+      in=/home/build
+      out="${{targets.destdir}}/usr/share/elixos/k230-firmware"
+      export SOURCE_DATE_EPOCH=${{vars.source-date-epoch}}
+      mkdir -p "$out/licenses"
+
+      # Downloads are kept in melange's cache directory (/var/cache/melange,
+      # build/k230-firmware-dl on the host) and verified on every use.
+      dl=/var/cache/melange
+      fetch() { # url file sha256
+        if ! echo "$3  $dl/$2" | sha256sum -c - 2>&1; then
+          curl -fsSL -o "$dl/$2.part" "$1"
+          mv "$dl/$2.part" "$dl/$2"
+          echo "$3  $dl/$2" | sha256sum -c -
+        fi
+      }
+      lsdk_top=k230_linux_sdk-${{vars.lsdk-commit}}
+      lily_top=T-Display-K230-${{vars.lily-commit}}
+      opensbi_top=opensbi-${{vars.opensbi-commit}}
+      uboot_url="https://ftp.denx.de/pub/u-boot/u-boot-${{vars.uboot-version}}.tar.bz2"
+      lsdk_url="https://github.com/kendryte/k230_linux_sdk/archive/${{vars.lsdk-commit}}.tar.gz"
+      lily_url="https://github.com/Xinyuan-LilyGO/T-Display-K230/archive/${{vars.lily-commit}}.tar.gz"
+      opensbi_url="https://github.com/riscv-software-src/opensbi/archive/${{vars.opensbi-commit}}.tar.gz"
+      fetch "$uboot_url" u-boot-${{vars.uboot-version}}.tar.bz2 ${{vars.uboot-sha256}}
+      fetch "$lsdk_url" $lsdk_top.tar.gz ${{vars.lsdk-sha256}}
+      fetch "$lily_url" $lily_top.tar.gz ${{vars.lily-sha256}}
+      fetch "$opensbi_url" $opensbi_top.tar.gz ${{vars.opensbi-sha256}}
+
+      # Only the firmware parts of the two SDK trees.
+      mkdir -p "$work/lsdk" "$work/lily" "$work/u-boot" "$work/opensbi"
+      tar -xzf "$dl/$lsdk_top.tar.gz" -C "$work/lsdk" --strip-components=1 \
+        "$lsdk_top/buildroot-overlay/boot" "$lsdk_top/buildroot-overlay/board/canaan/k230-soc/env"
+      tar -xzf "$dl/$lily_top.tar.gz" -C "$work/lily" --strip-components=1 \
+        "$lily_top/k230_bsp/overlay/buildroot-overlay/boot"
+      tar -xjf "$dl/u-boot-${{vars.uboot-version}}.tar.bz2" -C "$work/u-boot" --strip-components=1
+      tar -xzf "$dl/$opensbi_top.tar.gz" -C "$work/opensbi" --strip-components=1
+
+      # U-Boot: base release, then the LSDK overlay, then LilyGO's (the same
+      # rsync order as LSDK's uboot.mk and LilyGO's apply.sh), then ours.
+      cp -a "$work/lsdk/buildroot-overlay/boot/uboot/u-boot-2022.10-overlay/." "$work/u-boot/"
+      cp -a "$work/lily/k230_bsp/overlay/buildroot-overlay/boot/uboot/u-boot-2022.10-overlay/." "$work/u-boot/"
+      for patch in "$in"/patches/u-boot/*.patch; do
+        [ -e "$patch" ] || continue
+        echo "k230-firmware: u-boot: $(basename "$patch")"
+        patch -d "$work/u-boot" -p1 --forward < "$patch"
+      done
+      uboot_make="make -C $work/u-boot CROSS_COMPILE=riscv-none-elf- LD=riscv64-alpine-linux-musl-ld.bfd"
+      $uboot_make k230_canmv_t_display_defconfig
+      cat "$in/uboot.fragment" >> "$work/u-boot/.config"
+      $uboot_make olddefconfig
+      grep -qx 'CONFIG_SUPPORT_RAW_INITRD=y' "$work/u-boot/.config"
+      $uboot_make -j"$(nproc)"
+
+      # OpenSBI: v1.4, then the LSDK overlay (opensbi.mk), then ours.
+      cp -a "$work/lsdk/buildroot-overlay/boot/opensbi/opensbi-1.4-overlay/." "$work/opensbi/"
+      for patch in "$in"/patches/opensbi/*.patch; do
+        [ -e "$patch" ] || continue
+        echo "k230-firmware: opensbi: $(basename "$patch")"
+        patch -d "$work/opensbi" -p1 --forward < "$patch"
+      done
+      # FW_JUMP_FDT_ADDR is cleared so fw_jump hands Linux the FDT U-Boot's
+      # bootm passed in a1 (relocated below fdt_high, with chosen/initrd
+      # fixups) where it is, instead of copying it to 0x2200000, which would
+      # cap Image + bss at 32 MiB. Only fw_jump is built: fw_payload derives
+      # its FDT address from FW_JUMP_FDT_ADDR.
+      # OpenSBI links through $(CC) with `-pie --exclude-libs` (FW_PIC=y,
+      # as LSDK builds it); -B points gcc's linker and assembler lookup at
+      # the riscv64-alpine-linux-musl binutils, as LD does for U-Boot.
+      # PLATFORM_RISCV_ISA is what OpenSBI picks for a toolchain with Zicsr/
+      # Zifencei. Its probe (Makefile l.137, l.174) takes the XLEN from
+      # `$(CC) -dumpmachine`, which for "riscv-none-elf" has no digits, so
+      # the test -march is malformed, the probe answers "no", and fence.i
+      # would not assemble.
+      opensbi_cc="riscv-none-elf-gcc -B/usr/riscv64-alpine-linux-musl/bin/"
+      make -C "$work/opensbi" CROSS_COMPILE=riscv-none-elf- PLATFORM=generic \
+        CC="$opensbi_cc" PLATFORM_RISCV_ISA=rv64imafdc_zicsr_zifencei \
+        FW_DYNAMIC=n FW_PAYLOAD=n \
+        FW_TEXT_START=0 FW_JUMP_ADDR=0x200000 FW_JUMP_FDT_ADDR= -j"$(nproc)"
+      grep -qx 'CONFIG_PLATFORM_THEAD=y' "$work/opensbi/build/platform/generic/kconfig/.config"
+
+      # Package as LSDK's post-image.sh does (gen_uboot_bin, gen_env_bin,
+      # gen_boot_ext4).
+      tools="$work/u-boot/tools"
+      header="python3 $in/k230-header.py"
+      stage="$work/stage"
+      mkdir -p "$stage"
+      $header "$work/u-boot/spl/u-boot-spl.bin" "$out/spl.bin"
+      base=$(awk '$2 == "CONFIG_MEM_LINUX_SYS_BASE" { print $3 }' "$work/u-boot/board/canaan/common/sdk_autoconf.h")
+      gzip -9 -n -c "$work/u-boot/u-boot.bin" > "$stage/u-boot.bin.gz"
+      "$tools/mkimage" -A riscv -C gzip -O u-boot -T firmware -a "$base" -e "$base" -n uboot \
+        -d "$stage/u-boot.bin.gz" "$stage/ug_u-boot.bin"
+      $header "$stage/ug_u-boot.bin" "$out/uboot.bin"
+      "$tools/mkimage" -A riscv -O linux -T kernel -C none -a 0 -e 0 -n linux \
+        -d "$work/opensbi/build/platform/generic/firmware/fw_jump.bin" "$out/fw_jump.uImage"
+
+      # Environment: LSDK's default.env as LilyGO's gen_env_bin rewrites it
+      # for the T-Display (bootcmd=run blinux;), then every key of
+      # boards/t-display-k230/uboot-env.txt replaces or adds to it.
+      env_size=$(awk -F= '$1 == "CONFIG_ENV_SIZE" { print $2 }' "$work/u-boot/.config")
+      env_offset=$(awk -F= '$1 == "CONFIG_ENV_OFFSET" { print $2 }' "$work/u-boot/.config")
+      redund=
+      if grep -qx 'CONFIG_SYS_REDUNDAND_ENVIRONMENT=y' "$work/u-boot/.config"; then redund=-r; fi
+      sed 's/^bootcmd=.*$/bootcmd=run blinux;/' \
+        "$work/lsdk/buildroot-overlay/board/canaan/k230-soc/env/default.env" > "$stage/default.env"
+      awk 'function key(l) { return substr(l, 1, index(l, "=") - 1) }
+           NR == FNR { if (index($0, "=") > 1) { k = key($0); over[k] = $0; order[++n] = k }; next }
+           index($0, "=") > 1 && (key($0) in over) { print over[key($0)]; done[key($0)] = 1; next }
+           { print }
+           END { for (i = 1; i <= n; i++) if (!(order[i] in done)) print over[order[i]] }' \
+        "$in/uboot-env.txt" "$stage/default.env" > "$stage/elixos.env"
+      "$tools/mkenvimage" $redund -s "$env_size" -o "$out/env.bin" "$stage/elixos.env"
+      chmod 0644 "$out/env.bin"
+      printf 'ENV_OFFSET=%s\nENV_SIZE=%s\nENV_REDUNDANT=%s\n' "$env_offset" "$env_size" "${redund:+1}" \
+        > "$out/layout.env"
+
+      install -m0644 "$work/u-boot/Licenses/gpl-2.0.txt" "$out/licenses/u-boot-gpl-2.0.txt"
+      install -m0644 "$work/u-boot/Licenses/README" "$out/licenses/u-boot-README"
+      install -m0644 "$work/opensbi/COPYING.BSD" "$out/licenses/opensbi-COPYING.BSD"
+      {
+        echo "u-boot ${{vars.uboot-version}} $uboot_url sha256=${{vars.uboot-sha256}}"
+        echo "k230_linux_sdk ${{vars.lsdk-commit}} $lsdk_url sha256=${{vars.lsdk-sha256}}"
+        echo "T-Display-K230 ${{vars.lily-commit}} $lily_url sha256=${{vars.lily-sha256}}"
+        echo "opensbi v1.4 ${{vars.opensbi-commit}} $opensbi_url sha256=${{vars.opensbi-sha256}}"
+        echo "toolchain $(riscv-none-elf-gcc --version | awk 'NR == 1')"
+        echo "toolchain $(riscv-none-elf-ld --version | awk 'NR == 1')"
+        echo "toolchain (U-Boot ld, OpenSBI as/ld) $(riscv64-alpine-linux-musl-ld.bfd --version | awk 'NR == 1')"
+        for patch in "$in"/patches/*/*.patch; do
+          [ -e "$patch" ] || continue
+          echo "patch $(basename "$(dirname "$patch")")/$(basename "$patch") sha256=$(sha256sum "$patch" | cut -d' ' -f1)"
+        done
+        echo "fragment uboot.fragment sha256=$(sha256sum "$in/uboot.fragment" | cut -d' ' -f1)"
+        echo "env uboot-env.txt sha256=$(sha256sum "$in/uboot-env.txt" | cut -d' ' -f1)"
+      } > "$out/SOURCES"
+
+      # Self-checks: the headers, the U-Boot payload, the OpenSBI wrapper and
+      # the environment, printed so the build log is the evidence.
+      $header --check "$out/spl.bin"
+      $header --check "$out/uboot.bin"
+      tail -c +533 "$out/uboot.bin" > "$stage/check-ug.bin"
+      "$tools/mkimage" -l "$stage/check-ug.bin"
+      tail -c +65 "$stage/check-ug.bin" | gzip -dc > "$stage/check-u-boot.bin"
+      cmp "$stage/check-u-boot.bin" "$work/u-boot/u-boot.bin"
+      strings "$stage/check-u-boot.bin" | grep -x 'boot_baremetal'
+      "$tools/mkimage" -l "$out/fw_jump.uImage"
+      fw_jump="$work/opensbi/build/platform/generic/firmware/fw_jump"
+      riscv-none-elf-readelf -h "$fw_jump.elf"
+      riscv-none-elf-objdump -d --disassemble=thead_disable_maee "$fw_jump.elf"
+      strings "$fw_jump.bin" | grep -x 'canaan,kendryte-k230'
+      grep -E '^CONFIG_(SUPPORT_RAW_INITRD|DEFAULT_DEVICE_TREE|SYS_TEXT_BASE|SPL_TEXT_BASE|CANMV_V3_LPDDR4_2667|ENV_IS_IN_MMC|ENV_SIZE|ENV_OFFSET|SYS_REDUNDAND_ENVIRONMENT|SYS_MMC_ENV_DEV)=' \
+        "$work/u-boot/.config"
+      grep -E 'CONFIG_LINUX_RUN_CORE_ID|CONFIG_MEM_LINUX_SYS_(BASE|SIZE)' "$work/u-boot/board/canaan/common/sdk_autoconf.h"
+      cat "$out/layout.env"
+      python3 - "$out/env.bin" "${redund:+1}" <<'EOF'
+      import struct, sys, zlib
+      data = open(sys.argv[1], "rb").read()
+      skip = 5 if sys.argv[2] else 4
+      crc = struct.unpack_from("<I", data)[0]
+      body = data[skip:]
+      assert zlib.crc32(body) == crc, "env.bin: CRC mismatch"
+      pairs = body.split(b"\0\0", 1)[0].split(b"\0")
+      print(f"env.bin: {len(data)} bytes, CRC32 0x{crc:08x} OK, {len(pairs)} variables")
+      for p in pairs:
+          print("  " + p.decode())
+      EOF

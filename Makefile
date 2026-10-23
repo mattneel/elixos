@@ -12,7 +12,7 @@ BUILD ?= build
 export ELIXOS_BUILD := $(abspath $(BUILD))
 
 .PHONY: help check-tools test test-shim deps test-os test-qemu test-qemu-aarch64 test-qemu-riscv64 image-riscv64 check ci audit demo demos \
-        image images reproducible uefi-image disk qemu format clean distclean atomvm
+        image images reproducible uefi-image disk qemu format clean distclean atomvm k230-bringup
 
 help: ## List targets
 	@awk -F':.*## ' '/^[a-z0-9-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -75,6 +75,10 @@ image-riscv64: ## The riscv64 image (M28, ADR-097), cross-built on the build hos
 
 atomvm: ## AtomVM for the build host, the coprocessor stand-in the M29 tests run (cached)
 	scripts/build-atomvm.sh
+
+k230-bringup: ## The T-Display K230 bring-up SD card (M30): firmware, riscv64 kernel, DTB, little-core image
+	scripts/build-image.sh riscv64
+	scripts/build-k230.sh
 
 reproducible: ## Assemble the x86_64 rootfs twice from the lockfile; print the one digest
 	scripts/build-image.sh x86_64

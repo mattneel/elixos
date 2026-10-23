@@ -2817,3 +2817,225 @@ preferred fix for any gap, but this repository cannot depend on it landing.
 are dropped as upstream merges equivalents. AtomVM's own PACKBEAM_PATH option
 does not keep rebar3 offline (its checkout is named `packbeam`, not
 `atomvm_packbeam`), which the recipe works around and upstream should fix.
+
+## ADR-101: The board device tree is configuration
+
+**Status:** accepted (2026-10-23), M30.
+
+**Context.** Linux 7.2.9, our pin, has the K230's clock, reset, pinctrl,
+SDHCI and USB-PHY drivers and their `dt-bindings` headers, but no K230 device
+tree: `k230.dtsi` lands in v7.3-rc1, and no LilyGO board is upstream. The
+big core reads `mhartid` 0, so Linux must see it as `cpu@0`; the little core
+must not be described, and its memory must be kept from Linux.
+
+**Decision.**
+- Board device trees live in `boards/<board>/`, as configuration, never as a
+  kernel patch. For the T-Display K230: `k230.dtsi` is mainline v7.3's file
+  (GPL-2.0 OR MIT, sha256 recorded in its header) unchanged above an "Elixos
+  additions" marker; below it, nodes mainline has not merged (SDIO1, the USB
+  PHY) written to the 7.2.9 bindings. `k230-pinctrl.h` is mainline's macro
+  header. `t-display-k230.dts` is the board: 1 GiB at 0, one CPU, a 16 MiB
+  `no-map` region at `0x07000000` for the little core, UART0, the TF slot.
+- `melange/kernel-cross.yaml` compiles every `boards/*/*.dts` for its
+  architecture with the kernel's own `cpp` flags and `dtc`, against the pinned
+  tree's includes, and ships the DTBs in the kernel package next to `Image`.
+- K230 drivers without a default are named in `kernel/config.riscv64`
+  (`COMMON_CLK_K230`, `PINCTRL_K230`), as are the defconfig-inherited options
+  the board depends on, so the config guard checks them.
+- Moving the kernel pin to a release with mainline's K230 tree replaces our
+  copy of `k230.dtsi` with an `#include` of mainline's; the board file stays.
+
+**Consequences.** A wrong node is fixed in this repository and rebuilt with
+the kernel package; nothing touches kernel sources. The QEMU riscv64 image
+gains two builtin drivers that never probe there.
+
+## ADR-102: Canaan's Linux-SDK boot firmware, built from source
+
+**Status:** proposed (2026-10-23), M30. Default followed; the human
+confirms at the gate.
+
+**Context.** The K230 BootROM loads a "K230"-headed SPL from the SD card into
+SRAM on the little core. Mainline U-Boot's `k230_canmv` board (since
+v2025.04) has no SPL, no DDR training, no MMC and no way to start the little
+core; it relies on the vendor SPL. Mainline OpenSBI (generic platform, K230
+match since v1.5) does not clear MXSTATUS.MAEE, which Canaan's U-Boot sets,
+and with MAEE set Linux's Svpbmt page attributes mean "non-cacheable" and
+it does not boot. Canaan's `k230_linux_sdk` runs U-Boot, OpenSBI and Linux
+on the big core and starts any image on the little core with
+`boot_baremetal 0`.
+
+**Decision.**
+- The firmware is Canaan's `k230_linux_sdk` at `fc6cc215` (the commit
+  LilyGO pins): its U-Boot 2022.10 overlay on the denx tarball (sha256
+  `50b4482a…bdf8`) with LilyGO's T-Display board config at `0ad78192`, and
+  its OpenSBI 1.4 overlay (which clears MAEE). Every input is pinned by
+  sha256.
+- Built from source by `melange/k230-firmware.yaml` (`scripts/build-k230-firmware.sh`)
+  on the build host: every C file by Alpine's bare-metal `riscv-none-elf`
+  GCC 16.1, the PIE links by Alpine's native `binutils-riscv64` (the
+  bare-metal ld cannot link a PIE); ADR-094, no emulated compiler. The SPL
+  and U-Boot get the plaintext K230 header (`firmware_gen.py -n` format) from
+  `boards/t-display-k230/firmware/k230-header.py`; the signed and encrypted
+  modes are not used (their keys are demo keys). The mkimage timestamps are
+  pinned, so two builds are byte-identical.
+- Deviations from Canaan's packaging, each forced by building from source:
+  U-Boot proper is compressed with standard `gzip -9n`, not Canaan's prebuilt
+  `k230_priv_gzip`, so the SPL inflates it in software instead of with the
+  hardware unzip engine; OpenSBI 1.4 needs `-std=gnu11` under GCC 16
+  (`patches/opensbi/0001`, as OpenSBI master does); `fw_jump` is built with
+  `FW_JUMP_FDT_ADDR` empty, so Linux gets the device tree `bootm` relocated
+  and fixed up (initrd, chosen) where it lies; U-Boot gains
+  `CONFIG_SUPPORT_RAW_INITRD` for the gzip initramfs.
+- Our changes are the U-Boot environment
+  (`boards/t-display-k230/uboot-env.txt`, merged over Canaan's default) and
+  the build fixes above in `boards/t-display-k230/firmware/`. The environment
+  loads the little core's image and releases it, then boots OpenSBI
+  `fw_jump`, `Image`, our DTB and the initramfs.
+- Revisit when mainline U-Boot gains an SPL for the K230, or mainline
+  OpenSBI clears MAEE for it: then both move to mainline.
+
+**Consequences.** Two vendor forks are in the build, pinned and
+reproducible, and only in the K230 image. The alternative, mainline OpenSBI
+1.9 plus a one-function MAEE patch, stays open for the human to choose.
+
+## ADR-103: Linux owns the SD card
+
+**Status:** proposed (2026-10-23), M30. Default followed.
+
+**Context.** The TF slot (SDIO1) is the board's only storage and its boot
+medium. Mainline supports the controller (`sdhci-of-dwcmshc`,
+`canaan,k230-sdio`, v7.1); the DT node is ours (ADR-101).
+
+**Decision.** Linux owns SDIO1. The data partition is Elixos's `/priv`
+(`elixos.data=/dev/mmcblk0p2`); the boot partition holds the firmware's
+files. The little core never touches the card.
+
+**Consequences.** Saving generations, the journal and the coprocessor
+bundle (ADR-099) all go through Linux. Until the node is proven on the
+board, the bring-up image boots `elixos.live=1`.
+
+## ADR-104: Serial consoles: UART0 for Linux, UART3 for the coprocessor
+
+**Status:** proposed (2026-10-23), M30. Default followed.
+
+**Context.** The CH342K behind USB-C J2 exposes two UARTs to the host:
+UART0 (channel 0) and UART3 (channel 1). Both are mainline `8250_dw`.
+
+**Decision.** UART0 is the firmware's and Linux's console (`ttyS0`), the
+one the shim and IEx use. UART3 belongs to the little core, for AtomVM's own
+console and crash output; Linux leaves it disabled. During bring-up the hello
+image writes to UART0, which U-Boot has already configured.
+
+**Consequences.** Both consoles are reachable over the one cable. If Linux's
+unused-clock pass gates UART3's clock, the device tree claims it (M32).
+
+## ADR-105: Linux owns USB and the Ethernet behind it
+
+**Status:** proposed (2026-10-23), M30. Default followed.
+
+**Context.** USB0 (J3) is OTG; USB1 is forced host and wired only to an
+RTL8152B Ethernet chip. Mainline has the K230 USB PHY (v7.1), generic `dwc2`
+and `r8152`, but no K230 USB node or `dwc2` binding entry.
+
+**Decision.** Linux owns both controllers. USB1's Ethernet is the deck's
+wired network; USB0 is host or gadget as later milestones need. The nodes
+are added to `boards/t-display-k230/` once checked on the board; until then
+they stay out of the device tree.
+
+**Consequences.** No networking on the board until that node lands; M30's
+checklist needs none.
+
+## ADR-106: The coprocessor owns the panel, touch and HDMI
+
+**Status:** proposed (2026-10-23), M30. Default followed.
+
+**Context.** The AMOLED (RM69A10, 2-lane MIPI DSI), the GT9895 touch
+controller and the LT9611 HDMI bridge share the DSI lanes, I2C3 and the
+IO23/IO24 interrupt and reset nets: one unit. Mainline has no K230 display
+controller or DSI host driver and no RM69A10 panel driver, in 7.2.9 or
+master; Canaan's display stack is vendor RTOS code.
+
+**Decision.** The little core owns the whole unit: panel power (IO35),
+reset, DSI, touch, HDMI. Elixos draws through it over the inter-core link
+(the framebuffer protocol of M33), and touch arrives as messages.
+
+**Consequences.** The panel keeps showing the last frame, and the rescue
+status, while the BEAM restarts (M33). Linux has no framebuffer on the
+board; `simpledrm` stays unused there.
+
+## ADR-107: The coprocessor owns the LoRa radio
+
+**Status:** proposed (2026-10-23), M30. Default followed.
+
+**Context.** The SX1262 sits on SPI (IO14-17), with BUSY, DIO1, reset and
+an LDO enable on GPIOs. Mainline has DesignWare SPI but no SX126x driver; a
+userspace driver over `spidev` would also need GPIO, for which the K230 has
+no mainline binding.
+
+**Decision.** The little core owns the radio and its pins; a received packet
+is an Erlang message to Elixos, and sending is a call.
+
+**Consequences.** The radio keeps receiving while the BEAM restarts. The SPI
+controller and pin function are settled in M32/M33.
+
+## ADR-108: Wi-Fi waits
+
+**Status:** proposed (2026-10-23), M30. Default followed.
+
+**Context.** The RTL8189FTV on SDIO0 has only an out-of-tree Linux driver,
+and its SDIO pad voltage is unverified.
+
+**Decision.** Nobody owns Wi-Fi: it stays powered down (IO45 low by its
+pull-down) and out of the device tree until a mainline driver exists.
+Networking is the Ethernet of ADR-105.
+
+**Consequences.** The deck is wired-only for now.
+
+## ADR-109: The coprocessor owns the power key and power-off
+
+**Status:** proposed (2026-10-23), M30. Default followed.
+
+**Context.** The board has no PMIC. The K230's own PMU block takes the power
+key (INT0) and drives the main supply's enable (OUT0); mainline has no driver
+for it, and whether OpenSBI's system reset can power off is unknown.
+
+**Decision.** The little core owns the PMU: it reports the power key as a
+message, and `Elixos.poweroff/0` on the deck ends by asking it to drop OUT0
+after Linux has synced and stopped.
+
+**Consequences.** M33's "poweroff powers off" depends on the link and on
+the PMU register sequence, confirmed on the board.
+
+## ADR-110: Camera, audio and the accelerators are out of scope
+
+**Status:** proposed (2026-10-23), M30. Default followed.
+
+**Context.** The CSI cameras and ISP, the audio codec, the KPU, GPU and VPU,
+PWM, ADC and crypto blocks have no mainline drivers, and nothing in M31-M33
+needs them.
+
+**Decision.** Nobody owns them: they stay out of the device tree and
+unpowered where the board allows.
+
+**Consequences.** A later milestone that wants one decides its owner then.
+
+## ADR-111: The deck image profile
+
+**Status:** proposed (2026-10-23), M30; built in M33.
+
+**Context.** The board has 1 GiB of RAM. The little core takes 16 MiB and
+OpenSBI 2 MiB, leaving Linux about 1006 MiB for the kernel, the initramfs
+held in RAM, the BEAM and everything it starts. The riscv64 image already
+leaves out the browser and GUI renderer (ADR-097).
+
+**Decision.** The deck image is the riscv64 image plus the board files
+(firmware, DTB, coprocessor image), with heavy services off by default:
+PostgreSQL starts on first use instead of at boot, and Oban with it; the
+Oh-My-Jido coding runtime does not start at boot (approvals still index
+sessions the user starts). Builds run in a child ERTS as everywhere, but the
+toolchain disk is not part of the deck image. `make deck-image` (M33) builds
+it; the profile is chosen by the image, never by the session.
+
+**Consequences.** The first SQL query on the deck pays Postgres's startup.
+The budget is measured on the board in M33 and recorded in
+docs/notes/k230.md.
