@@ -456,18 +456,18 @@
         "version": "0.1.0-r0",
         "architecture": "x86_64",
         "signature": {
-          "range": "bytes=0-689",
-          "checksum": "sha1-F/JFk4ccaBv1883RYxjrphC2R3U="
+          "range": "bytes=0-686",
+          "checksum": "sha1-cZuGbrEx89QDs4zYDqyVTaLdgFI="
         },
         "control": {
-          "range": "bytes=690-2187",
-          "checksum": "sha1-N5iSvA544vMrJm/DfWU1gzkjUko="
+          "range": "bytes=687-2186",
+          "checksum": "sha1-SazecScDBuWYguGoscwXQKv8uGs="
         },
         "data": {
-          "range": "bytes=2188-14468609",
-          "checksum": "sha256-zE3cnZS04WQAvRxp+zBdnfw33ZK9s1Ma6NUU8mDliJo="
+          "range": "bytes=2187-14468759",
+          "checksum": "sha256-+d/HR6Jw9p7Pzp1tEkt30SFmE4R3cRDn27M3mcNI81Q="
         },
-        "checksum": "Q1N5iSvA544vMrJm/DfWU1gzkjUko="
+        "checksum": "Q1SazecScDBuWYguGoscwXQKv8uGs="
       },
       {
         "name": "elixos-kernel",
@@ -494,18 +494,18 @@
         "version": "0.0.0-r0",
         "architecture": "x86_64",
         "signature": {
-          "range": "bytes=0-685",
-          "checksum": "sha1-dXNyxTpAY4R1k7q+ZhqOjWZD0k0="
+          "range": "bytes=0-688",
+          "checksum": "sha1-EJR8BaYRsHUNHwmtXqJL2CQG3WI="
         },
         "control": {
-          "range": "bytes=686-2550",
-          "checksum": "sha1-51nlez0/e8SOs1TNtqMnK0y/EOI="
+          "range": "bytes=689-2553",
+          "checksum": "sha1-sxVlj0e7nIxJH1X97ZJ0IQic21Q="
         },
         "data": {
-          "range": "bytes=2551-5220150",
-          "checksum": "sha256-rSkMWHfEA1qLuunjqTg2CYevTyPBdtqkgWw99zUJ6PQ="
+          "range": "bytes=2554-5220154",
+          "checksum": "sha256-UD9orn5Nf9K5RGNAhhfbcpLfG3aDprsRqrDWuMyBbPI="
         },
-        "checksum": "Q151nlez0/e8SOs1TNtqMnK0y/EOI="
+        "checksum": "Q1sxVlj0e7nIxJH1X97ZJ0IQic21Q="
       }
     ]
   }

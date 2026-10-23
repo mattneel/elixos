@@ -1137,6 +1137,12 @@ cannot see a remote subscriber leave (ADR-113). A generation switch that
 keeps the bundle leaves them running; a bundle change restarts AtomVM and
 hands their state over (ADR-114). AtomVM patch 0003 makes a redialling peer
 reconnect at once.
+The little core runs AtomVM on bare metal (ADR-115, `make coproc-firmware`):
+in QEMU virt with file-backed RAM, `elixos-link` reaches it over the ring
+(ping 1.27 ms, erpc 1.24 ms, about 10 MiB/s each way).
+
+- [x] `make ci` green with `MILESTONE=32` (Zig 102, host 403, QEMU 62; images
+  reproducible).
 
 **Hardware checklist (human-run).**
 - [ ] The little core boots AtomVM.

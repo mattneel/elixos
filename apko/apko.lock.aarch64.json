@@ -456,18 +456,18 @@
         "version": "0.1.0-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-685",
-          "checksum": "sha1-Qa+oaw32rnPViPxMZPQAE+1sm8Y="
+          "range": "bytes=0-693",
+          "checksum": "sha1-JgNxFvpgGch8OZm6PTkZipercB0="
         },
         "control": {
-          "range": "bytes=686-2185",
-          "checksum": "sha1-LX7oerULJKAPZv0Dx3zWFxrZaZY="
+          "range": "bytes=694-2195",
+          "checksum": "sha1-HlMOoc+hwdsGBR2gve6HQhxTAaI="
         },
         "data": {
-          "range": "bytes=2186-14399927",
-          "checksum": "sha256-w5KvZ4ToDJP7VdLs624SCn324bj44yuHBjBExqhrETw="
+          "range": "bytes=2196-14470664",
+          "checksum": "sha256-OYwfO+yexS6QrOufeVkGQzNVeXVZXEBjnr0BIvhHm70="
         },
-        "checksum": "Q1LX7oerULJKAPZv0Dx3zWFxrZaZY="
+        "checksum": "Q1HlMOoc+hwdsGBR2gve6HQhxTAaI="
       },
       {
         "name": "elixos-kernel",
@@ -475,18 +475,18 @@
         "version": "7.2.9-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-686",
-          "checksum": "sha1-0zvuxnjBLrWEcW7xzUFVsXQxEFc="
+          "range": "bytes=0-682",
+          "checksum": "sha1-3FRsiW2QHBJYWSD+nFSdusC6pVY="
         },
         "control": {
-          "range": "bytes=687-2783",
-          "checksum": "sha1-Q6jOV+VOhgRRCbwbMJHPL/vh3ug="
+          "range": "bytes=683-2784",
+          "checksum": "sha1-3EuaiITRuHsI1fh3sg/krqfiLC4="
         },
         "data": {
-          "range": "bytes=2784-16265488",
-          "checksum": "sha256-7b7NvjkFD4YY6fFB4xrmC9hePKw9nwwy7HKy3EOTLJ4="
+          "range": "bytes=2785-16265488",
+          "checksum": "sha256-ThBMD2YXw4Jxj054X/wEhPG6rGOSv781XCCzXiY+bhU="
         },
-        "checksum": "Q1Q6jOV+VOhgRRCbwbMJHPL/vh3ug="
+        "checksum": "Q13EuaiITRuHsI1fh3sg/krqfiLC4="
       },
       {
         "name": "elixos-shim",
@@ -494,18 +494,18 @@
         "version": "0.0.0-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-687",
-          "checksum": "sha1-BTkA1eh2eZ329GGDbss4z6SjxVE="
+          "range": "bytes=0-688",
+          "checksum": "sha1-/0RfiO0ilX8POhV6bT9TL0tWFCc="
         },
         "control": {
-          "range": "bytes=688-2528",
-          "checksum": "sha1-rQJZfhl6rfsq/SIVTX2FQGlb92c="
+          "range": "bytes=689-2553",
+          "checksum": "sha1-ZV4HF/DjZGap8jsn3j0u+7aJCRQ="
         },
         "data": {
-          "range": "bytes=2529-4272939",
-          "checksum": "sha256-JXniFGW34BCQrP0xgtr4+suE0FhaHTif5mjTA4eijyQ="
+          "range": "bytes=2554-5322426",
+          "checksum": "sha256-kUgWxC8c3sJdjwOMRUCAKKyXR8LosAzxX4nx0As+j7w="
         },
-        "checksum": "Q1rQJZfhl6rfsq/SIVTX2FQGlb92c="
+        "checksum": "Q1ZV4HF/DjZGap8jsn3j0u+7aJCRQ="
       }
     ]
   }
