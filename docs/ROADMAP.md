@@ -12,7 +12,9 @@ The ARM64 and riscv64 smoke tests are separate: `make test-qemu-aarch64` and
 **Current state:** M1–M19 and M25–M29 are delivered. M20 (the Ask question queue) is
 retired by ADR-093: Oh-My-Jido approvals are the only human-in-the-loop
 mechanism. M21–M24 are withdrawn by ADR-083, not deferred for another port
-attempt. The K230 cyberdeck track continues with M30–M33.
+attempt. M30–M33 (the K230 cyberdeck track) are green in CI at MILESTONE=33
+with their host and QEMU acceptance tests; each waits for its human-run
+hardware checklist on the board.
 
 ---
 
@@ -1184,6 +1186,29 @@ simulated coprocessor input.
   tree, the coprocessor image, the deck profile).
   `docs/hardware/t-display-k230.md` covers flashing, the serial console pins,
   known limits per mainline release, and where to buy.
+
+**Results (2026-10-23, desk and QEMU side).**
+- *Display:* PROTOCOL §12, portrait 568×1232 RGB565 in a shared region;
+  Elixos draws with `elixos-deck-fb`, the shim grants the region
+  (`elixos.deck=pci:|uio:|/dev`, ADR-117), and on the board the K230's display
+  controller scans it out after the RM69A10 bring-up ported from LilyGO's
+  U-Boot (ADR-120; register traces equal the vendor's on the build host).
+- *IEx on the panel:* a Spleen 12×24 terminal view hosting a second login
+  REPL, an on-screen keyboard fed by touch from the coprocessor, a status
+  line that shows rescue (ADR-116). The serial console is unchanged.
+- *Restarts:* a display lease; when it lapses the coprocessor shows
+  `Elixos restarting, was gen G attempt A` (ADR-119).
+- *Coprocessor drivers on the board:* display, touch (GT9895), LoRa (SX1262),
+  power key and power-off (PMU), UART3, each checked against LilyGO's own code
+  on the build host (ADR-121); the ring helper is kept running by PID 1
+  (ADR-118); the deck profile starts Postgres lazily (ADR-111).
+- *LoRa from Elixir:* `Elixos.Coproc.LoRa` sends and subscribes (ADR-113).
+- `make deck-image` builds `build/k230/elixos-deck.img`;
+  `docs/hardware/t-display-k230.md` covers flashing, consoles, buttons,
+  limits and where to buy.
+
+- [x] `make ci` green with `MILESTONE=33` (Zig 114, host 437, QEMU 66; images
+  reproducible), and `make deck-image` builds.
 
 **Hardware checklist (human-run).**
 - [ ] Boots to IEx on the AMOLED.

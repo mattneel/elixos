@@ -36,8 +36,12 @@ section says otherwise.
   console handback. M28 boots riscv64 to `iex(1)>` on QEMU virt
   ([recording](demos/m28-riscv64.mp4)), and M29 joins an AtomVM peer to the
   cluster over a private link ([recording](demos/m29-atomvm-peer.mp4)).
-- **Next (M30–M33):** the rest of the [K230 cyberdeck track](docs/ROADMAP.md#m30-k230-bring-up-gate-needs-the-board):
-  the LilyGO T-Display K230.
+- **Waiting for the board (M30–M33):** the [K230 cyberdeck track](docs/ROADMAP.md#m30-k230-bring-up-gate-needs-the-board)
+  for the LilyGO T-Display K230 is built and green in CI. That covers the
+  inter-core ring, AtomVM on the little core (tested in QEMU), the deck view
+  and board drivers, and `make deck-image`. Its hardware checklists
+  ([docs/hardware/t-display-k230.md](docs/hardware/t-display-k230.md)) still
+  have to be run on a board.
 - **Retired:** the M20 Ask question queue, by
   [ADR-093](docs/DECISIONS.md#adr-093-oh-my-jido-approvals-replace-the-ask-queue).
   Oh-My-Jido approvals are the only human-in-the-loop mechanism.
