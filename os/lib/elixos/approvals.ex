@@ -85,7 +85,9 @@ defmodule Elixos.Approvals do
 
   @doc """
   Starts the index. In normal mode it also starts the OS's `Elixos.Coding`
-  Oh-My-Jido runtime as a non-critical service; rescue starts neither.
+  Oh-My-Jido runtime as a non-critical service; rescue starts neither. The
+  deck profile (`profile: :deck`, ADR-111) and `runtime: false` start the
+  index alone: it still indexes every session the user starts with this host.
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -139,7 +141,7 @@ defmodule Elixos.Approvals do
       requests: %{},
       sessions: %{},
       views: %{},
-      runtime: Keyword.get(opts, :runtime, true)
+      runtime: Keyword.get(opts, :runtime, Keyword.get(opts, :profile, :full) == :full)
     }
 
     {:ok, state, {:continue, :runtime}}

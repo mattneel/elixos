@@ -48,6 +48,20 @@ defmodule Elixos.Boot.Cmdline do
   end
 
   @doc """
+  The image profile (ADR-111) from `elixos.profile`: `:deck` for exactly
+  `deck`, otherwise `:full`. The shim refuses any other value; a bare flag or
+  garbage that reaches the BEAM anyway is the default, the full machine.
+  Defaults to the running kernel's command line.
+  """
+  @spec profile(map()) :: :full | :deck
+  def profile(settings \\ current()) when is_map(settings) do
+    case Map.get(settings, "profile") do
+      "deck" -> :deck
+      _full_or_invalid -> :full
+    end
+  end
+
+  @doc """
   Whether the shim selected RAM-backed Live storage. Like its boolean parser,
   the last valid bare/1/0 flag wins; malformed values do not reset the choice.
   Defaults to the running kernel's command line.

@@ -18,6 +18,10 @@ defmodule Elixos.Oban.Manager do
   Nothing here is a scheduler fallback: in rescue, or when Postgres never came
   up, `status/0` is `{:error, :not_running}` and no queue exists. The manager
   does not restart a failed scheduler on its own.
+
+  Under the deck profile (ADR-111) Postgres starts on first use, so the
+  manager waits for it without a deadline and without starting it; a caller
+  that needs the scheduler (`status/0`, `enqueue/3`) is such a first use.
   """
 
   use GenServer
@@ -39,6 +43,8 @@ defmodule Elixos.Oban.Manager do
 
   `:startup_timeout` bounds the wait for Postgres (default two minutes);
   `:repo` and `:oban` name the connection module and the Oban instance.
+  `:profile` (`:full` by default, or `:deck`) is the image profile; see the
+  moduledoc.
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
@@ -54,6 +60,7 @@ defmodule Elixos.Oban.Manager do
       activated: false,
       declarations: %{},
       running: %{},
+      profile: Keyword.get(opts, :profile, :full),
       cron: [],
       postgres_timeout: Keyword.get(opts, :startup_timeout, @postgres_timeout_ms),
       repo: Keyword.get(opts, :repo, Elixos.Oban.Repo),
@@ -81,8 +88,10 @@ defmodule Elixos.Oban.Manager do
   def handle_continue(:start, state) do
     manager = self()
 
+    {profile, timeout} = {state.profile, state.postgres_timeout}
+
     Task.start(fn ->
-      case await_postgres(state.postgres_timeout) do
+      case await_postgres(profile, timeout) do
         :ok -> send(manager, :postgres_ready)
         {:error, reason} -> send(manager, {:startup_failed, {:postgres, reason}})
       end
@@ -174,7 +183,10 @@ defmodule Elixos.Oban.Manager do
 
   ## Startup
 
-  defp await_postgres(timeout) do
+  # ADR-111: the deck's Postgres starts on its first use, whenever that is.
+  defp await_postgres(:deck, _timeout), do: Elixos.Postgres.await_started()
+
+  defp await_postgres(:full, timeout) do
     deadline = System.monotonic_time(:millisecond) + timeout
     await_postgres_deadline(deadline)
   end
@@ -344,6 +356,10 @@ defmodule Elixos.Oban.Manager do
   end
 
   defp wait(state, from, kind) do
+    # A caller waiting for the scheduler needs the database: on the deck that
+    # is a first use (a no-op once Postgres has started).
+    if state.profile == :deck, do: Elixos.Postgres.ensure_started()
+
     token = make_ref()
     timer = Process.send_after(self(), {:await_timeout, token}, @await_timeout_ms)
     %{state | waiters: state.waiters ++ [{token, from, timer, kind}]}
