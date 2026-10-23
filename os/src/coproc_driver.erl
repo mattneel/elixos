@@ -14,6 +14,10 @@
 %%     simulation of it. A backend implements this module's callbacks and its
 %%     subsystem's.
 %%
+%% A subsystem that keeps its own timers (the display's lease, M33) sends
+%% itself {coproc_subsystem, Message}; the driver hands that to
+%% Subsystem:handle_info(Message, Backend, BackendState), not to the backend.
+%%
 %% Events and subscribers. A backend reports what happened (a packet came in,
 %% the screen was touched) as event terms; each gets the next sequence number
 %% and goes into a queue of at most ?LIMIT events (the oldest is dropped and
@@ -152,6 +156,9 @@ handle_cast(_Message, State) ->
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #{subscribers := Subscribers} = State) ->
     {noreply, State#{subscribers := drop(Pid, Subscribers)}};
+handle_info({coproc_subsystem, Message}, #{subsystem := Subsystem, backend := Backend, bstate := S0} = State) ->
+    {Events, S} = Subsystem:handle_info(Message, Backend, S0),
+    {noreply, emit(Events, State#{bstate := S})};
 handle_info(Message, #{backend := Backend, bstate := S0} = State) ->
     {Events, S} = Backend:handle_info(Message, S0),
     {noreply, emit(Events, State#{bstate := S})}.

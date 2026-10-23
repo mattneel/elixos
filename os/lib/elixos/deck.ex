@@ -19,7 +19,9 @@ defmodule Elixos.Deck do
       the session has its own working directory (ADR-020) and the serial
       console's session is untouched;
     * subscribes to `Elixos.Coproc.Touch` whenever the coprocessor link
-      runs, and turns taps into keys.
+      runs, and turns taps into keys;
+    * keeps the coprocessor's display lease (`Elixos.Deck.Lease`), so the
+      panel says `Elixos restarting` while this BEAM is away.
 
   The deck is a view, never boot-critical: without `ELIXOS_DECK` it does not
   start, and a helper that fails logs and stops the deck alone (the child is
@@ -56,7 +58,8 @@ defmodule Elixos.Deck do
   @doc """
   Starts the deck on the region named by `ELIXOS_DECK`, or steps aside
   (`:ignore`) without one. Options (tests): `region:`, `helper:`, `shell:`
-  an MFA returning the shell's pid, `status:` the status text, `name:`.
+  an MFA returning the shell's pid, `status:` the status text, `name:`,
+  `lease:` options for `Elixos.Deck.Lease` (`false`: no lease).
   """
   def start_link(opts \\ []) do
     case Keyword.get_lazy(opts, :region, fn -> System.get_env("ELIXOS_DECK") end) do
@@ -127,7 +130,8 @@ defmodule Elixos.Deck do
       binary: true,
       echo: true,
       expand_fun: nil,
-      coproc: nil
+      coproc: nil,
+      lease: Keyword.get(opts, :lease, [])
     }
 
     {:ok, state, {:continue, :open}}
@@ -139,6 +143,7 @@ defmodule Elixos.Deck do
       {:ok, port, seq} ->
         state = %{state | port: port, seq: seq} |> paint_all()
         send(self(), :subscribe)
+        if state.lease, do: Elixos.Deck.Lease.start_link(state.lease)
         {:noreply, start_shell(state)}
 
       {:error, reason} ->
