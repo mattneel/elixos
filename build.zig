@@ -62,6 +62,8 @@ pub fn build(b: *std.Build) void {
         .{ .name = "elixos-console-handover", .source = "shim/src/console_handover.zig" },
         // M31: the inter-core ring's TUN bridge (docs/PROTOCOL.md §11).
         .{ .name = "elixos-link", .source = "shim/src/link.zig" },
+        // M33: the deck framebuffer's writer (docs/PROTOCOL.md §12).
+        .{ .name = "elixos-deck-fb", .source = "shim/src/deck_fb.zig" },
     }) |helper| {
         const executable = b.addExecutable(.{
             .name = helper.name,

@@ -89,12 +89,18 @@ is available (`/usr/local/bin:/bin:/usr/bin` otherwise), and:
 | `ELIXOS_CTL_FD`     | fd of the control pipe's write end (not CLOEXEC, ≥ 3)  |
 | `ELIXOS_REPLY_FD`   | fd of the helper reply pipe's read end (not CLOEXEC, ≥ 3) |
 | `ELIXOS_RUNTIME`   | `machine` or `container`; shim-owned boundary marker |
+| `ELIXOS_DECK`       | machine only, when `elixos.deck` (§5) resolved: the deck framebuffer's path (§12) |
 
 - Machine fds 0, 1, 2 are `/dev/console`; native OCI retains the container
   runtime's stdio. The working directory is `/` and stays there (ADR-016).
   With writable `/priv`, the shim sets `ERL_CRASH_DUMP` to
   `/priv/crash/gen<g>-attempt<n>.dump` (§7, ADR-025) and
   `ERL_CRASH_DUMP_BYTES` to 1 MiB. Without writable state both are unset.
+- `ELIXOS_DECK` names a file the shim made `root:video` mode 0660 before
+  the launch (`/sys/bus/pci/devices/<bdf>/resource2` or `/dev/uio<n>`); it is
+  set for every launch of that shim run, normal and rescue, and absent when
+  the parameter is missing or did not resolve. Native OCI never sets it and
+  drops a caller's value.
 - The BEAM runs as `elixos`, real/effective/saved/filesystem uid 1000 and gid
   1000, with supplementary `input` (23) and `video` (27). Its permitted,
   effective, inheritable and ambient capabilities contain only
@@ -208,11 +214,26 @@ and malformed or unknown `elixos.*` tokens are counted and logged, never applied
 | `elixos.data=/dev/<dev>`        | /dev/vda   | ext4 device mounted on `/priv`                  |
 | `elixos.data_wait=<s≥0>`        | 10         | seconds to wait for that device to appear        |
 | `elixos.coproc_link=<if>,<ip>/<len>` | none  | give interface `<if>` IPv4 `<ip>/<len>` (len 1-32) and bring it up: the coprocessor link (M29) |
+| `elixos.deck=<spec>`            | none       | the deck framebuffer's device (M33, §12): `pci:<vendor>:<device>`, `uio:<name>` or `/dev/<path>` |
 
 `elixos.coproc_link` is applied by the shim before the BEAM starts, because
 the BEAM has no `CAP_NET_ADMIN`. `<if>` is a kernel interface name of 1-15
 characters `[A-Za-z0-9_.-]`; `<ip>` is a canonical dotted quad. The BEAM only
 reads it: `Elixos.Coproc` binds Erlang distribution to `<ip>` (ADR-098).
+
+`elixos.deck` is resolved by the shim before the BEAM starts, in normal and
+rescue mode, because the BEAM can neither enable a PCI device nor open a
+root-only node. `pci:<vendor>:<device>` takes the ids as sysfs prints them
+(`0x` and four lowercase hex digits, e.g. `pci:0x1af4:0x1110`, QEMU's
+`ivshmem-plain`): the first `/sys/bus/pci/devices/*` whose `vendor` and
+`device` match, its `resource2` (BAR 2), with memory decoding enabled through
+its `enable` file when that reads `0`. `uio:<name>` (1-64 of
+`[A-Za-z0-9_.,+-]`) is the first `/sys/class/uio/uio<n>` whose `name` is
+`<name>` (the board's device-tree node, e.g. `deck-fb`), as `/dev/uio<n>`; the
+region is its map 0, at mmap offset 0. `/dev/<path>` (no empty, `.` or `..`
+components) must be a character device. The shim then makes the file
+`root:video` (27) mode 0660, logs it (§6) and passes the path as
+`ELIXOS_DECK` (§3). A failure costs only the panel.
 
 Live is a storage choice, not a third launch mode. Normal Live uses the
 embedded service image; `elixos.safe` still selects rescue. With Live enabled,
@@ -291,6 +312,8 @@ the runtime's stdout. Each has prefix `elixos-shim: `. Placeholders:
 | `helper shutdown timeout name=postgres, killing`                       | PostgreSQL exceeded its fast-shutdown grace | M18 |
 | `coproc link <if> <ip>/<len>`                                          | `elixos.coproc_link` was applied      | M29  |
 | `coproc link <if> failed (<E>)`                                        | the interface could not be configured; the boot goes on | M29 |
+| `deck <path>`                                                          | `elixos.deck` resolved and was granted to the BEAM | M33 |
+| `deck <spec> failed (<E>)`                                             | the deck device was not found or could not be granted; the boot goes on | M33 |
 
 `attempt=<n>` is the plan's `next_state.attempts`. When planning from an
 unreadable or unmountable state, the shim uses the defaults (`0/0/0`).
@@ -588,7 +611,14 @@ the pixels:
 
 Pixel `(x, y)` is at `4096 + y × stride + 2x`. The orientation is the
 panel's own: portrait, 568 wide, 1232 tall, origin top left. A region is at
-least `4096 + stride × height` bytes (1,403,712; 1.5 MiB reserved).
+least `4096 + stride × height` bytes (1,403,648; 1.5 MiB reserved; QEMU's
+ivshmem needs a power of two, 2 MiB).
+
+**Initialisation.** A header whose magic, version, width, height, stride or
+format is wrong is initialised by Elixos: the magic is cleared, the rest of
+the header page zeroed, the fields written, then (after a write fence) the
+magic. A valid header is kept, `seq` included, across helper and BEAM
+restarts. Pixels are not cleared; the first commit covers the whole panel.
 
 **Committing.** Elixos writes pixels, then the damage rectangle, then (after
 a write fence) increments `seq`. The coprocessor polls `seq`; when it
@@ -602,3 +632,46 @@ what it missed, or the whole frame.
 commit, the coprocessor's display driver draws its own status line (the
 `coproc_display` status, ADR-113) over the last frame; the next commit
 replaces it.
+
+### The helper: `elixos-deck-fb`
+
+`/usr/bin/elixos-deck-fb <region>` (static Zig, `shim/src/deck_fb.zig`) runs
+as the BEAM's child (a Port of `Elixos.Deck`) with the BEAM's identity; the
+region is `ELIXOS_DECK` (§3). It maps exactly the region size above
+(`MAP_SHARED`, offset 0; a regular file shorter than that is refused),
+initialises the header if needed, then serves **packet-4** on stdin/stdout
+(a four-byte big-endian length, then the payload). Its only buffer is one
+packet; nothing is allocated per command.
+
+Helper to BEAM, ASCII: `READY 568 1232 <seq>` once mapped, and
+`COMMITTED <seq>` after each commit. BEAM to helper: one command per packet,
+an opcode byte and little-endian `u16` numbers; a rectangle is `x y w h`,
+non-empty and inside the panel.
+
+| Payload | Effect |
+|---|---|
+| `F` rect colour | fill the rectangle with one RGB565 colour |
+| `B` rect pixels | copy `w × h` RGB565 pixels, rows top to bottom |
+| `M` rect tx ty | move the rectangle to `(tx, ty)` (inside the panel; overlap allowed) |
+| `C` rect | commit with this damage rectangle (above), then reply `COMMITTED <seq>` |
+
+A zero-length payload, or end of input, exits 0. A malformed packet, a
+rectangle outside the panel or a region that cannot be mapped prints
+`elixos-deck-fb: <what> failed (<error>)` on stderr and exits 1; the deck then
+steps aside (it is never boot-critical).
+
+### The deck view (`Elixos.Deck`)
+
+Started by the boot tree when `ELIXOS_DECK` is set, normal and rescue mode.
+The panel is split (`Elixos.Deck.Layout`): a status line at the top
+(`y 0-28`; `rescue` and the generation in rescue mode on red, the
+generation otherwise), a terminal of 46 × 33 cells of 12 × 24 px from
+`(4, 32)`, and an on-screen keyboard on `y 832-1232` (5 rows of 80 px, 10
+units of 56 px). Glyphs are Spleen 12x24 (BSD 2-Clause,
+`os/priv/deck/LICENSE.spleen`). The terminal hosts a login REPL session
+(`Elixos.Boot.Login.login_repl/0`) whose group leader is the deck, an IO
+server; the serial console's session is unchanged. Taps arrive from
+`Elixos.Coproc.Touch` (`{:touch, :down | :up, x, y}`, panel coordinates): a
+key is pressed on `:down` and typed on `:up`. A keystroke commits only the
+cells it changed. `Elixos.Deck.info/0` reports `seq`, `status`, `touch`
+(subscribed) and `region`; `lines/0` the terminal's text.

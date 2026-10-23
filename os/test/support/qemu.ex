@@ -58,6 +58,10 @@ defmodule Elixos.Test.QEMU do
     * `:uefi` - `{esp_image, ovmf_code, ovmf_vars_copy}`: boot through firmware
       instead of `-kernel`/`-initrd`
     * `:gpu` - add a virtio framebuffer, virtio keyboard and private QMP socket
+    * `:deck` - a host file of 2 MiB (`Elixos.Test.DeckScreen.region/2`):
+      the deck framebuffer (M33, docs/PROTOCOL.md §12) as an `ivshmem-plain`
+      PCI device (1af4:1110) whose BAR 2 is that file, shared with the
+      guest, plus `elixos.deck=pci:0x1af4:0x1110` on the kernel command line
   """
   @spec boot(map(), keyword()) :: t()
   def boot(_context, opts) do
@@ -79,7 +83,8 @@ defmodule Elixos.Test.QEMU do
         ["-device", "virtio-rng-pci"],
         boot_args(arch, opts),
         net_args(opts),
-        graphics_args(qmp_path)
+        graphics_args(qmp_path),
+        deck_args(Keyword.get(opts, :deck))
       ]
       |> Enum.concat()
 
@@ -107,7 +112,11 @@ defmodule Elixos.Test.QEMU do
         # still print, which is what the tests that check them need.
         append =
           Enum.join(
-            [console(arch), "panic=-1", "quiet" | Keyword.get(opts, :append, [])],
+            [
+              console(arch),
+              "panic=-1",
+              "quiet" | deck_append(opts) ++ Keyword.get(opts, :append, [])
+            ],
             " "
           )
 
@@ -211,6 +220,24 @@ defmodule Elixos.Test.QEMU do
       "-device",
       "virtio-net-pci,netdev=n1"
     ]
+  end
+
+  # ivshmem-plain exposes a memory backend as BAR 2; share=on maps the host
+  # file itself, so the host reads what the guest writes. Its size must be a
+  # power of two.
+  defp deck_args(nil), do: []
+
+  defp deck_args(path) do
+    [
+      "-object",
+      "memory-backend-file,id=deckfb,size=#{File.stat!(path).size},mem-path=#{drive_path(path)},share=on",
+      "-device",
+      "ivshmem-plain,memdev=deckfb"
+    ]
+  end
+
+  defp deck_append(opts) do
+    if Keyword.get(opts, :deck), do: ["elixos.deck=pci:0x1af4:0x1110"], else: []
   end
 
   defp graphics_args(nil), do: []

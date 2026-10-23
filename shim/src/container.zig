@@ -117,6 +117,8 @@ pub fn reserved(key: []const u8) bool {
     for ([_][]const u8{
         "ROOTDIR",           "BINDIR",      "EMU",            "PROGNAME",      "HOME",            "TERM",           "LANG",           "PATH",
         "ELIXOS_GENERATION", "ELIXOS_MODE", "ELIXOS_ATTEMPT", "ELIXOS_CTL_FD", "ELIXOS_REPLY_FD", "ELIXOS_RUNTIME", "ELIXOS_CONSOLE",
+        // M33: a machine-only device grant; never forwarded from a container's caller.
+        "ELIXOS_DECK",
     }) |name| {
         if (std.mem.eql(u8, key, name)) return true;
     }

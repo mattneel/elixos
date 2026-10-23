@@ -44,6 +44,12 @@ pub const postgres_init = @import("postgres_init.zig");
 pub const container = @import("container.zig");
 pub const seed = @import("seed.zig");
 pub const netif = @import("netif.zig");
+pub const deck = @import("deck.zig");
+
+/// `ELIXOS_DECK=<path>` (PROTOCOL.md §3, M33): resolved from elixos.deck once
+/// per shim run, before the first launch, and passed to every BEAM it starts.
+var deck_environment: [deck.max_path + "ELIXOS_DECK=".len + 1]u8 = undefined;
+var deck_env: ?[*:0]const u8 = null;
 
 /// OCI environment pointer storage is allocated only before supervision. The
 /// original startup block remains untouched and is carried through panic exec.
@@ -317,6 +323,9 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
         // command line: the boot that panicked may have entered rescue because
         // its disk would not mount, which cannot be re-derived here.
         var overrides: recovery.Overrides = .{ .safe = adopted.safe or state_unreadable };
+        // An adopted BEAM's successors get the deck too; the device was
+        // already found and granted, so this says nothing.
+        if (!container.enabled) prepareDeck(settings, false);
         if (!overrides.safe) overrides.generation = settings.generation;
 
         const policy: recovery.Policy = .{ .max_attempts = settings.max_attempts };
@@ -391,6 +400,9 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
     if (!container.enabled) {
         prepareDeviceGroups("/dev", "fb", 27);
         prepareDeviceGroups("/dev/input", "event", 23);
+        // The deck framebuffer (M33): after /dev and /sys exist, in normal
+        // and rescue mode alike, never fatal.
+        prepareDeck(settings, true);
     }
     // 5. Plan, log it, persist it, then carry it out (ARCHITECTURE.md §3.3).
     const policy: recovery.Policy = .{ .max_attempts = settings.max_attempts };
@@ -711,6 +723,7 @@ fn execErts(
         zeroed(&reply, "ELIXOS_REPLY_FD={d}", .{reply_fd}),
         if (container.enabled) "ELIXOS_RUNTIME=container" else "ELIXOS_RUNTIME=machine",
         if (container.enabled) (if (container_environment.?.console) "ELIXOS_CONSOLE=1" else "ELIXOS_CONSOLE=0") else null,
+        if (container.enabled) null else deck_env,
         crash_env[0],
         crash_env[1],
     };
@@ -1566,6 +1579,21 @@ fn configureLink(link: cmdline.Link) void {
     }
 }
 
+/// The deck framebuffer from elixos.deck (M33, PROTOCOL.md §12): finds the
+/// device, grants it to the BEAM's `video` group and remembers its path for
+/// the launch environment. `announce` logs the outcome (§6); a failure only
+/// costs the panel.
+fn prepareDeck(settings: cmdline.Settings, announce: bool) void {
+    const spec = settings.deck orelse return;
+    var path_buffer: [deck.max_path + 1]u8 = undefined;
+    if (deck.prepareDevice(spec, &path_buffer)) |path| {
+        deck_env = zeroed(&deck_environment, "ELIXOS_DECK={s}", .{path});
+        if (announce) log("deck {s}", .{path});
+    } else |err| {
+        if (announce) log("deck {s} failed ({t})", .{ spec.text, err });
+    }
+}
+
 /// A bounded sleep. Used only while waiting for a device that may still be
 /// probing; nothing else in the shim sleeps.
 fn sleepMs(ms: u32) void {
@@ -1794,6 +1822,8 @@ test {
     std.testing.refAllDecls(netif);
     std.testing.refAllDecls(@import("ring.zig"));
     std.testing.refAllDecls(@import("link.zig"));
+    std.testing.refAllDecls(deck);
+    std.testing.refAllDecls(@import("deck_fb.zig"));
 }
 
 test "panic adoption preserves the original OCI environment for later relaunch" {

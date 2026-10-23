@@ -6,6 +6,7 @@ const std = @import("std");
 const testing = std.testing;
 const milestone = @import("milestone.zig");
 const decimal = @import("decimal.zig");
+const deck = @import("deck.zig");
 
 pub const Settings = struct {
     /// elixos.safe[=1|0]: boot the factory in rescue mode.
@@ -38,6 +39,10 @@ pub const Settings = struct {
     /// (M29, ADR-098). The shim gives the interface this address and brings it
     /// up before the BEAM starts; Elixos.Coproc binds its listener to it.
     coproc_link: ?Link = null,
+    /// elixos.deck=<spec>: the deck framebuffer's device (M33, PROTOCOL.md
+    /// §12): `pci:<vendor>:<device>`, `uio:<name>` or `/dev/<path>`. The
+    /// shim finds it, grants it to the BEAM and passes it as ELIXOS_DECK.
+    deck: ?deck.Spec = null,
     /// Count of elixos.* tokens that were unknown or malformed. The shim logs it.
     invalid: u32 = 0,
 };
@@ -97,6 +102,12 @@ pub fn parse(text: []const u8) Settings {
         } else if (std.mem.eql(u8, name, "coproc_link")) {
             if (parseLink(value)) |link| {
                 settings.coproc_link = link;
+            } else {
+                settings.invalid += 1;
+            }
+        } else if (std.mem.eql(u8, name, "deck")) {
+            if (deck.parseSpec(value)) |spec| {
+                settings.deck = spec;
             } else {
                 settings.invalid += 1;
             }
@@ -319,4 +330,18 @@ test "cmdline: a malformed coprocessor link is refused, never half-applied" {
         try testing.expect(settings.coproc_link == null);
         try testing.expectEqual(@as(u32, 1), settings.invalid);
     }
+}
+
+test "cmdline: the deck names its framebuffer's device" {
+    try milestone.require(33);
+    const settings = parse("console=ttyS0 elixos.deck=pci:0x1af4:0x1110");
+    const spec = settings.deck orelse return error.TestExpectedDeck;
+    try testing.expectEqualStrings("0x1af4", spec.target.pci.vendor);
+    try testing.expectEqualStrings("0x1110", spec.target.pci.device);
+    try testing.expectEqual(@as(u32, 0), settings.invalid);
+    // The last valid one wins; a malformed one is counted and changes nothing.
+    const later = parse("elixos.deck=pci:0x1af4:0x1110 elixos.deck=uio:deck-fb elixos.deck=/etc/passwd elixos.deck");
+    try testing.expectEqualStrings("deck-fb", later.deck.?.target.uio);
+    try testing.expectEqual(@as(u32, 2), later.invalid);
+    try testing.expectEqualStrings("/dev/uio0", parse("elixos.deck=/dev/uio0").deck.?.target.path);
 }

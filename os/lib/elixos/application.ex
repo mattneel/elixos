@@ -146,6 +146,11 @@ defmodule Elixos.Application do
             # still comes up).
             {Elixos.SSH, []},
             {Elixos.Boot.Login, {env, image}},
+            # The deck's panel (M33): a second login REPL session on the
+            # shared-memory framebuffer the shim granted (ELIXOS_DECK), in
+            # normal and rescue mode. Temporary and never boot-critical: no
+            # framebuffer, or a failing helper, costs the panel and nothing else.
+            {Elixos.Deck, []},
             # Commits the generation once it has been healthy for a while; in
             # rescue mode the child is skipped (:ignore), so a rescue boot never
             # makes itself last_good (ADR-007).
