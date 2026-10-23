@@ -4,15 +4,14 @@ Each milestone has a goal, the acceptance tests that define it (already in the
 repo), notes on how to get there, and a done checklist. Work them in order;
 `MILESTONE` holds the current one. The loop is in AGENTS.md.
 
-Fast tests: `make test`. Focused agent-arc iteration: `make check M=21`.
+Fast tests: `make test`. Focused iteration: `make check M=27`.
 Full QEMU suite: `make test-qemu` (M3 onward); milestone gate: `make ci`.
 The ARM64 smoke test is separate: `make test-qemu-aarch64`.
 
-**Current state:** M1–M20, M25 and M26 are delivered. M21–M24 have resumed
-against a fresh upstream OMP inventory (ADR-071), without a `clanklet`
-prerequisite. `MILESTONE=21` selects that resumed arc. The in-progress M27
-GUI's host and x86_64 QEMU suites passed before this gate selection;
-ARM64 packaging remains in progress.
+**Current state:** M1–M19 and M25–M27 are delivered. M20 (the Ask queue) is
+retired by ADR-093: Oh-My-Jido approvals are the only human-in-the-loop
+mechanism. M21–M24 are withdrawn by ADR-083, not deferred for another port
+attempt. The K230 cyberdeck track (M28–M33) is next.
 
 ---
 
@@ -634,7 +633,16 @@ and the ADR for the dependencies is written.
 
 ---
 
-## M20: Ask the human
+## M20: Ask the human (retired by ADR-093)
+
+**Retired.** The human cut the OS question queue: Oh-My-Jido approvals and
+questions carry their session, run and effect, and are the only
+human-in-the-loop mechanism. `Elixos.Ask`, its Jido action, the `elixos-ask:`
+console line and the acceptance below are removed. `Elixos.Approvals` indexes
+open Oh-My-Jido requests from every session, including detached agents, and
+every login IEx/SSH session answers them (`approvals/0`, `approve/1`,
+`deny/1`, `answer/2`); `os/test/elixos/approvals_test.exs` covers it. What
+follows is the historical record of the delivered queue.
 
 **Goal.** Questions are data in the OS; front-ends are only views. `Elixos.Ask`
 keeps a queue of open questions, any front-end can answer one, and the asking
@@ -680,267 +688,21 @@ and the notice line and the question shape are in PROTOCOL.md.
 
 ---
 
-## M21: The OMP toolset on Elixos
+## M21–M24: Withdrawn coding-agent arc
 
-> **Resumed (ADR-071).** Inventory and port canonical upstream OMP 18.10.1
-> onto Jido Actions/Tools. The reference is commit
-> `90701813e5fba6919067848989378b4ee6239c13`; no `clanklet` prerequisite remains.
+**Withdrawn by the human (ADR-083).** Elixos does not port OMP's toolset,
+prompts, skills, provider stack or agent runtime. The proposed bundled coding
+agent, agent-driven self-modification and toolset-native hot paths are no
+longer Elixos milestones. Oh-My-Jido is a separate capability-oriented project.
 
-**Goal.** An agent on the box gets the whole coding-agent toolset: every tool
-the pinned OMP SDK exposes, with the same names, parameters, outputs and error
-behaviour, so a prompt written for OMP works unchanged. The first
-implementation is OMP's own TypeScript, run by QuickBEAM inside a peer BEAM
-node that the main VM supervises - a crash in the JavaScript engine takes down
-only the peer.
+Their unimplemented scaffolds, reference inventory and acceptance suites are
+retired rather than left deferred. The previous work is recoverable from Git
+history and the private rollback archive; it is not a delivered OS feature.
+Numbers M21–M24 remain reserved so M25–M27 and their tests keep their identities.
 
-**Acceptance.** `test/elixos/toolset_test.exs` (the inventory equals the pinned
-SDK's tool factories; the dispatcher picks the implementation before each call
-and records which one ran; QuickBEAM runs with `apis: false` and its limits
-set), `test/elixos/toolset_differential_test.exs` (every tool in the inventory
-passes its fixtures recorded from OMP - outputs *and* failure semantics - in
-the peer node), and `test/integration/m21_toolset_test.exs`: on the box a tool
-call runs in the peer node, never the main VM; it sees only the calling
-session's workspace and directory; and killing the peer mid-call returns an
-error to the caller while the prompt keeps answering and the shim never
-notices (no missed heartbeat, no relaunch).
-
-**Port progress.** The real descriptor catalog covers 56 tool IDs and 86
-schema variants. Think and Todo pass their complete recorded corpus through
-Jido and the peer; native glob/shell effect engines have separate real-reference
-smoke proof. Filesystem tools, other session/runtime surfaces, image acceptance
-and the full M21 gate remain in progress. [Port notes](notes/omp-tool-port.md)
-record the runtime boundaries and exercised checks.
-
-**Notes.**
-- *The reference.* Upstream 18.10.1 at commit
-  `90701813e5fba6919067848989378b4ee6239c13` replaces the historical 18.8.7
-  pin under ADR-071. `os/test/fixtures/omp/inventory.exs` records the current
-  pin. Outcomes come from actual upstream calls, never from the port.
-- *The inventory.* [OMP_INVENTORY.md](OMP_INVENTORY.md) and
-  `omp-inventory.json` enumerate the complete 56-ID surface: primary,
-  hidden, settings-gated and context-specific helper tools. The compiled
-  catalog captures all 86 recorded schema variants from their real constructors.
-  Membership is not enablement: dependency/settings/session gates remain
-  distinct. Dynamic MCP and extension inventories are user configuration.
-- *The tool host.* QuickBEAM (Hex `quickbeam` 0.11.3, pinned with its checksum
-  like every dependency) runs in a peer node started with `:peer` and
-  supervised by the main VM; QuickJS never loads into the main VM. It runs
-  with `apis: false` - with `apis: [:node]`, a write to `process.env` reaches
-  `System.put_env/2`, which is VM-global (ADR-016). Use
-  `QuickBEAM.ContextPool` and `QuickBEAM.Context`: 0.11.3's high-level
-  `QuickBEAM.start/1` silently drops `:max_reductions`. Context startup receives
-  positive memory and reduction budgets; every eval/call receives its timeout.
-  Acceptance executes quota-breaking code and verifies the context still works,
-  rather than only comparing an options list.
-- *Pure core, Elixir effects.* Each tool splits into a pure core (parsing,
-  matching, patch application, formatting), which runs in QuickBEAM, and Elixir
-  effect handlers for everything QuickBEAM's missing Bun and Node APIs would
-  have done - spawning processes, file access, globbing, the network - each
-  scoped to the calling session's workspace and its M9 session directory. A
-  tool sees what its session may see, and nothing VM-global moves.
-- *Native dependencies.* External binaries belong to pinned Alpine packages.
-  For portable OMP effects, reuse the unchanged Rust engines through the
-  shell-free `toolhost` executable (ADR-077), not the Bun/N-API transport.
-  Other effects use scoped Elixir/Zig handlers as in ADR-047. Target packaging,
-  provider transport and exact differential acceptance remain required.
-- *The suite.* Fixtures are recorded from the pinned OMP - Unicode, malformed
-  input, numeric boundaries, large payloads - and compared on outputs and on
-  failure semantics. Shadow comparisons, when a second implementation runs
-  beside the first, compute only pure results: effects run once. The dispatcher
-  (`Elixos.Toolset`) chooses the implementation before each call and records
-  which one ran, so a later implementation (M24's native ones) is promoted or
-  reverted tool by tool without touching callers.
-- *Generation selection.* `config/config.exs` can select a tool's Elixir or
-  native module with `config :elixos, Elixos.Toolset, implementations:
-  %{"<tool>" => {:elixir | :native, module}}`; absent entries use QuickBEAM.
-  The module implements `Elixos.Toolset.Implementation.call/2`, with OMP
-  parameters and the isolated session. M24's runtime promotion or reversion
-  overrides that generation selection. Configuration is in the always-loaded
-  OS config, not the optional `MIX_TARGET=elixos` layer.
-- *What waits.* A tool that depends on a later milestone waits for it, and the
-  inventory says so (whatever needs a browser waits for M25); the rest go
-  ahead.
-- *Checked 2026-10-10.* QuickBEAM 0.11.3 publishes `x86_64-linux-musl` and
-  `aarch64-linux-musl` NIFs, so it needs no source build. Its dependency `oxc`
-  (a Rust NIF that strips TypeScript) publishes musl only for x86_64 in 0.19.0.
-  For aarch64, melange builds `oxc` from source with Alpine's Rust, preserving
-  QuickBEAM's TypeScript path on both architectures. QuickBEAM's own source
-  build needs Zig 0.16, which melange provides if its precompiled NIFs go away.
-
-**Done when.** `make ci` is green with `MILESTONE=21`, the three test files
-pass, and ADR-047 holds.
-
-- [ ] Demo recorded: `demos/m21-toolset.mp4` (`make demo M=21`): `read`, `grep`
-  and `edit` from the prompt through the peer node, then the peer killed
-  mid-call and the prompt still there.
-
----
-
-## M22: The on-box coding agent
-
-> **Resumed (ADR-071).** Port the upstream prompt and skill surface onto the
-> Jido coding-agent runtime after M21's tools. The former human-agent-work
-> dependency no longer blocks this milestone.
-
-**Goal.** A coding agent lives on the machine. A Jido agent owns the loop and
-uses M21's toolset; it starts from IEx or over SSH like any REPL session,
-reads its project instructions from the repository it works in, asks the human
-through M20's Ask, and works in its own workspace on `/priv`. Its system
-prompt and its tools are code that lives in the generation.
-
-**Acceptance.** `test/elixos/coder_test.exs` (the loop against a scripted model
-on the host: tool calls round-trip through the toolset, a subagent - OMP's
-`task` - is a Jido agent under the same supervisor, a question goes through
-`Elixos.Ask`, the repository's `AGENTS.md` reaches the model, and a credential
-never appears in anything logged) and `test/integration/m22_coder_test.exs`:
-from IEx, the agent completes a small coding task in a workspace under
-`/priv/work/` with the real toolset, against a model stub on the loopback so
-the test needs no network; the result is on disk; and the stub's credential is
-in neither the console transcript nor `/priv/journal.log`.
-
-**Notes.**
-- *The loop.* `Elixos.Coder` is a Jido agent: a model turn, tool calls through
-  `Elixos.Toolset`, the results back, until the model yields - OMP's semantics,
-  `yield` and `goal` included. Subagents (`task`) are Jido agents under the
-  same supervisor with their own sessions, and `wait` waits on them. Questions
-  to the human are `Elixos.Ask` questions (M20), so the console, an SSH session
-  or the GUI can answer them.
-- *Instructions.* Project instructions come from the `AGENTS.md` of the
-  repository the agent is working in, as in OMP. The agent's own system prompt
-  and its tool selection are code in the generation (ADR-048): saved, NEXT'd
-  and committed like any module, restored by a fallback, and in rescue the
-  factory's - never a working copy.
-- *Isolation.* Each session has its own workspace (a directory under
-  `/priv/work/`, a git worktree when the work is a repository) and its own M9
-  session directory. Nothing VM-global moves (ADR-016): not the cwd, not the
-  environment.
-- *Credentials.* Model credentials live in `/priv/credentials/`, outside any
-  generation - a generation is shared, restorable state; a key is neither - and
-  never reach a log, the journal or a crash dump: the client holds them as
-  values it redacts wherever state is formatted.
-- *Models.* The client speaks the OpenAI-compatible API M15's agents already
-  use (`Elixos.Agents.LLM`). The test's model is a scripted stub on the
-  loopback that replays tool calls; the demo is a run against a live model.
-- *Starting it.* `Elixos.Coder.start/1` from IEx or an SSH session (M12) ties
-  the agent's output to that session's group leader, like any REPL session
-  (M9).
-
-**Done when.** `make ci` is green with `MILESTONE=22`, both test files pass,
-and ADR-048 holds.
-
-- [ ] Demo recorded: `demos/m22-coder.mp4` (`make demo M=22`), against a live
-  model.
-
----
-
-## M23: Self-modification
-
-> **Resumed (ADR-071).** Implement generation-only self-modification; it does
-> not depend on the human finishing a separate OMP integration. The original
-> candidate, health, evidence and fallback acceptance remains the contract.
-
-**Goal.** The agent can change Elixos itself - OS code, its own tools, its own
-prompt - and those changes reach the running system only through generations:
-a candidate built in a child ERTS and tested in a peer node, then NEXT, a
-reboot, real health checks, and COMMIT or fallback, with the evidence kept.
-Code the agent writes never loads directly into the main VM.
-
-**Acceptance.** `test/elixos/candidate_test.exs` (a candidate's manifest
-records what produced it - session, model, tool revisions, parent generation;
-the health predicate runs the system's own checks, not liveness; hot-loading
-from an agent session is refused) and
-`test/integration/m23_self_modification_test.exs`:
-- the agent, driven by a scripted model, improves one of its own tools; the
-  candidate passes its suite in a peer node, is committed, and the improvement
-  survives a reboot;
-- a deliberately broken candidate falls back to `last_good`, and its evidence -
-  crash dump and logs - is on `/priv/evidence/<generation>/`;
-- factory rescue runs the factory's agent, its prompt and its tools, not the
-  suspect one.
-
-**Notes.**
-- *The path.* `Elixos.Candidate` builds a candidate from a working tree in a
-  child ERTS (M11's mechanism; never the main VM's code server), runs the
-  full portable system unit suite and the toolset's recorded fixture/smoke suite
-  against it in a peer node, then hands it to the shim: NEXT, reboot, health,
-  COMMIT or fallback - M6 to M8, unchanged. M17 is what makes this safe:
-  whatever a candidate does,
-  it cannot alter `last_good` or the factory.
-- *Real health.* `Elixos.Boot.AutoCommit`'s predicate becomes the system's own
-  checks - its tests and the toolset smoke tests - not just "the VM stayed up".
-  A candidate that boots but fails them is never committed, and the shim's
-  attempt counter falls back.
-  Host build orchestration (`:host_orchestration`) and QEMU provisioning are
-  not on-box suites: rerunning candidate-build orchestration inside its own
-  validation would recurse. The same full portable suite runs before NEXT and
-  at boot, in an isolated peer; deliberate core and selected-tool defects must
-  fail the real checks, not only injected callbacks.
-- *Evidence.* A failed candidate's crash dump, its logs and the failing check
-  are kept under `/priv/evidence/<generation>/` (ADR-025's dumps already live
-  on `/priv`); a fallback never deletes evidence.
-- *Provenance.* Each manifest records what produced it: the session, the
-  model, the tool revisions (the dispatcher's record, M21) and the parent
-  generation. `Elixos.Candidate.provenance/1` reads it back.
-- *Never in the main VM.* Code the agent writes is compiled and tested outside
-  the main VM and reaches it only by being booted as a generation; hot code
-  loading from an agent session is refused (ADR-049).
-- *Side effects.* A rollback restores code and the image's state, not the
-  world: a sent message, a payment or a migration stays done. Migrations follow
-  the expand-before-commit rule (M18): a generation ships only migrations its
-  parent can ignore.
-
-**Done when.** `make ci` is green with `MILESTONE=23`, both test files pass,
-and ADR-049 holds.
-
-- [ ] Demo recorded: `demos/m23-self-modification.mp4` (`make demo M=23`).
-
----
-
-## M24: Native hot paths
-
-> **Resumed (ADR-071).** Measure and port the toolset's native hot paths after
-> the reference differential suite is available. The original parity,
-> concurrent p99, peer-crash and artifact-pinning acceptance remains unchanged.
-
-**Goal.** Measured hot paths of the toolset move to Zig through Zigler, as pure
-functions, one at a time - promoted only when the differential suite says they
-match and a benchmark says they are faster where it counts.
-
-**Acceptance.** `test/elixos/native_test.exs`: one hot path (edit's patch
-application) runs natively with results identical to the reference across the
-whole differential suite; its p99 latency under concurrent sessions,
-conversion overhead included, beats the QuickBEAM implementation's; and a
-deliberately crashing native candidate, run in the peer node, takes down only
-the peer - the caller gets an error, the main VM never notices.
-`test/integration/m24_native_test.exs`: on the box the dispatcher records the
-native implementation as the one that ran, and the generation's manifest pins
-its library, the target and the toolchain.
-
-**Notes.**
-- *Promotion (ADR-050).* Measure first; port a pure function; promote it only
-  after the differential suite passes and a p99 benchmark under concurrent
-  sessions, conversion overhead included, shows the gain. Unproven native code
-  runs in the peer node; a promoted implementation moves into the main VM only
-  if latency demands it.
-- *NIF discipline.* Synchronous NIFs only for bounded work well under 1 ms;
-  longer work uses dirty or threaded execution with admission limits.
-- *Pinning.* Generation manifests pin native libraries content-addressed - each
-  version its own file name, so loading a new one never replaces an old one in
-  place - plus the target and the toolchain. `Elixos.Native.pin_library/2`
-  packages a built library under its actual SHA-256; `Image.save/2` records the
-  exact pins in `manifest.native_libraries`. Zigler fetches its own Zig with
-  `mix zig.get`: that version is pinned and baked into the toolchain package
-  as `/priv/toolchain/zigler/zig`, separate from the shim's tracking-master
-  compiler. Nothing is fetched on the box.
-- *Reverting.* The dispatcher can revert one tool's implementation without a
-  generation switch. That reverts the implementation, not the environment: the
-  library stays pinned in the manifest that shipped it.
-
-**Done when.** `make ci` is green with `MILESTONE=24`, both test files pass,
-and ADR-050 holds.
-
-- [ ] Demo recorded: `demos/m24-native.mp4` (`make demo M=24`): the benchmark,
-  then the crashing candidate taking down only the peer.
+Existing M15 Jido agents, generation recovery/sealing, on-box builds, the
+browser, the native toolchain and the framebuffer GUI are unchanged. The Ask
+queue was later retired separately (M20, ADR-093).
 
 ---
 
@@ -1039,22 +801,29 @@ https://builds.hex.pm/installs/hex.csv`.
 
 ## M27: GUI (Emerge on the framebuffer)
 
-**Goal.** A dialog on the cyberdeck's own screen: Emerge renders the Ask
-queue's questions to the panel, the person answers with the keyboard, and IEx
-stays alive behind it - a GUI that is never in the boot-critical path, whose
-first app is the queue M20 already has.
+**Goal.** A dialog on the cyberdeck's own screen for Oh-My-Jido approvals and
+questions (ADR-093): Emerge renders the open requests to the panel, the person
+answers with the keyboard, and IEx stays alive behind it. The GUI never starts
+at boot - Elixos boots to `iex(1)>` - and never takes the screen or keyboard on
+its own. It is opened on purpose with `Elixos.GUI.start/0`, refuses when
+nothing is pending, and hands the screen back on Escape, on F12, or when
+nothing is pending any more.
 
-**In progress.** The four off-screen dialogs, framebuffer sink, evdev input,
-lease-based console handover and QEMU GPU/QMP support are implemented.
-`make test` and the x86_64 GUI acceptance have passed; the synchronized
-development demo exercises real keyboard input for all four dialog kinds.
-ARM64 renderer packaging and the full milestone gate are still in progress.
+**Done (2026-10-23).** The off-screen dialogs, framebuffer sink, evdev
+input, lease-based console handover and QEMU GPU/QMP support render
+`Elixos.Approvals` requests. The renderer NIF and factory are cross-built for
+ARM64 on the build host (ADR-094). `make ci` is green with `MILESTONE=27`
+(379 host tests, 57 QEMU tests, both images) and `make test-qemu-aarch64`
+passes. `demos/m27-gui` was recorded from the approvals script on 2026-10-22.
 
-**Acceptance.** `test/elixos/emerge_render_test.exs` (each Ask dialog renders
-with no display and its pixels are checked) and
-`test/integration/m27_gui_test.exs`: a pending question appears on the
-framebuffer, an injected key answers it, the asking agent gets the answer, and
-the console works again after the GUI exits (rescue stays text-only).
+**Acceptance.** `test/elixos/emerge_render_test.exs` (each request kind
+renders with no display and its pixels are checked),
+`test/elixos/approvals_test.exs` (detached requests, explicit approval and
+denial, closed expiry and restart) and `test/integration/m27_gui_test.exs`:
+the machine boots to IEx without the GUI, a real Oh-My-Jido question is
+pending, the GUI opened from IEx shows it, an injected key answers it, the
+waiting tool gets the answer, and the console is handed back when nothing is
+pending (and on Escape; rescue stays text-only).
 
 **Notes. What Emerge actually offers (checked against its 0.4.2 docs).**
 - *Frames.* `backend: :headless, rendering_api: :raster, headless: [mode:
@@ -1105,7 +874,262 @@ the console works again after the GUI exits (rescue stays text-only).
 **Done when.** `make ci` is green with `MILESTONE=27`, both test files pass,
 and the ADRs (the renderer as a service; the input path) are written.
 
-- [ ] Milestone demo gate: `demos/m27-gui.mp4` combines synchronized framebuffer and console recordings (`make demo M=27`). Development recording published; tick at the completed milestone gate.
+- [x] Done (2026-10-23): `make ci` green at `MILESTONE=27`, ARM64 smoke passes, ADR-069/070 written.
+- [x] Milestone demo gate: `demos/m27-gui.mp4` combines synchronized framebuffer and console recordings (`make demo M=27`), recorded from the approvals script on 2026-10-22.
+
+---
+
+## M28: riscv64 on QEMU virt
+
+*The K230 cyberdeck track (M28–M33) follows M27 and precedes any other
+unstarted milestone; its milestones are worked in order.* The track makes the
+LilyGO T-Display K230 the first-class Elixos cyberdeck: Elixos runs on the
+K230's 1.6 GHz core (CPU1) under an unmodified mainline kernel, AtomVM runs on
+its 800 MHz core (CPU0), and the two cores form one BEAM cluster over Erlang
+distribution - the first coprocessed BEAM cluster on a cyberdeck. The board
+has two 64-bit RISC-V cores plus KPU, GPU and VPU; a 4.1" 568x1232 AMOLED
+(RM69A10 driver IC) with touch; LoRa; a camera; HDMI. RAM, storage, radios and
+the panel interface are not on the product page: the M30 gate finds them.
+
+**Ground rules for the whole track (M28–M33).**
+- *The kernel stays unmodified mainline (ADR-001).* The board device tree is
+  configuration, kept in this repo and compiled against mainline's includes:
+  it gives Linux only the 1.6 GHz core and reserves the little core's memory.
+  A subsystem whose driver is not in a mainline release yet either waits or
+  moves to the coprocessor. Never patch the kernel.
+- *Boot firmware is not the kernel.* Prefer mainline U-Boot and OpenSBI where
+  they support the K230; otherwise pin Canaan's, record it in an ADR, and
+  verify it by checksum like every other input (ADR-009).
+- *Hardware steps are checklists the human runs*, with the images and scripts
+  prepared here. When a step needs the board: get everything ready, write the
+  checklist, and stop. Everything else is tested on the host or in QEMU.
+- *Gates stop and ask.* When a gate finds a blocker (for example, mainline
+  cannot boot the big core yet), write it up in `docs/notes/k230.md`, stop
+  that path and ask the human. Never route around the kernel rule.
+
+**Goal.** A third architecture with no hardware needed: Elixos built for
+riscv64 boots on `qemu-system-riscv64 -machine virt` to `iex(1)>`.
+
+**Acceptance.** `test/integration/m28_riscv64_test.exs` (tagged `:riscv64`,
+the smoke set M16 runs for aarch64): boot to `iex(1)>`, `Elixos.info()`
+reports riscv64, a module defined at the prompt survives `Elixos.save()` and a
+reboot, and `Elixos.poweroff()` powers off; separately, the BEAM reports the
+interpreter flavour.
+
+**Notes.**
+- Alpine has shipped riscv64 since 3.20. Add riscv64 to the melange/apko
+  build (M16): `kernel/config.riscv64`, the shim (Zig), OTP and Elixir, the
+  factory, and the lockfiles.
+- The BEAM's JIT does not cover RISC-V, so OTP runs the interpreter. Verify
+  `:erlang.system_info(:emu_flavor)` is `:emu` and record boot-to-IEx time and
+  memory.
+- Emerge ships riscv64 NIFs for glibc only, so build the musl NIF from source
+  with melange. If Skia will not build for riscv64 musl, say so here: the
+  deck's console must not depend on Emerge (M33).
+- The test harness gains `arch: :riscv64` (QEMU binary, machine, console,
+  artifacts) and the `:riscv64` tag is excluded unless its own make target
+  asks for it, as `:aarch64` is.
+
+**Done when.** `make ci` is green with `MILESTONE=28`, the riscv64 smoke set
+passes, the emulator flavour and boot-to-IEx time and memory are recorded
+here, and the ADR is written.
+
+- [ ] ADR (to be written): riscv64 as the third architecture.
+- [ ] Emerge on riscv64 musl: built from source, or recorded as unavailable.
+- [ ] Demo recorded: `demos/m28-riscv64.mp4` (`make demo M=28`).
+
+---
+
+## M29: AtomVM as an Elixos peer
+
+**Goal.** With no hardware needed, an AtomVM node joins Elixos over an
+internal-only Erlang distribution link, and the code it runs is generation
+content.
+
+**Acceptance.** `test/elixos/coproc_test.exs` (host: `Elixos.Coproc` against
+AtomVM's Unix build) and `test/integration/m29_atomvm_peer_test.exs`:
+AtomVM's Unix build on the host and Elixos in QEMU connect over a virtual
+link with the cookie; spawn, send, receive, and monitor/link work across the
+nodes; killing AtomVM raises `nodedown` and the link reconnects; a new bundle
+deploys and runs, and fallback restores the old one; distribution is not
+reachable from any other interface.
+
+**Notes.**
+- Package AtomVM's Unix build with melange. Pin AtomVM main: stable 0.6.6
+  lacks even OTP 28 support.
+- Elixos becomes a distributed node only on internal links: the listener is
+  bound to the coprocessor link, never to external interfaces. The cookie
+  lives in `/priv`. AtomVM has no TLS distribution, so this link must never
+  leave the device.
+- `Elixos.Coproc` supervises the link: connect, monitor, reconnect, and run
+  calls against the coprocessor node. For a fixed two-node topology, prefer
+  fixed ports without an epmd daemon, if AtomVM supports that.
+- Coprocessor code is generation content. The `.avm` bundle (packed with
+  packbeam or ExAtomVM) is stored in the generation like any module.
+  Deploying sends it to the coprocessor and restarts its VM; falling back to
+  `last_good` restores the matching bundle.
+- OTP compatibility: AtomVM loads `.beam` files, and OTP 29's opcodes and
+  distribution handshake may be newer than AtomVM supports. Find out. Either
+  contribute OTP 29 support upstream (preferred) or pin an older OTP in the
+  toolchain just for coprocessor bundles.
+
+**Done when.** `make ci` is green with `MILESTONE=29`, both test files pass,
+and the ADRs are written.
+
+- [ ] ADR (to be written): the coprocessor architecture and its
+  internal-only distribution.
+- [ ] ADR (to be written): coprocessor bundles as generation content.
+- [ ] ADR (to be written): the AtomVM and OTP version choice.
+- [ ] Demo recorded: `demos/m29-atomvm-peer.mp4` (`make demo M=29`).
+
+---
+
+## M30: K230 bring-up gate (needs the board)
+
+**Goal.** Know what the board is and what mainline supports on it, and boot
+our image on the big core with the little core running an image we loaded.
+
+**Acceptance.** This milestone is a gate, not an automated test: its output
+is `docs/notes/k230.md` and the human-run hardware checklist below. M28's
+riscv64 smoke set keeps the image honest in QEMU.
+
+**Notes.**
+- *Survey:* RAM and storage; the panel interface (MIPI DSI or QSPI); the touch
+  controller; radios (the LoRa chip, any Wi-Fi or Bluetooth); USB; the HDMI
+  path; power and battery.
+- *Support:* for each subsystem, which mainline release supports it, if any.
+  Clock, pinctrl, USB and SD/MMC support for the K230 were still landing in
+  2026.
+- *Boot:* can mainline boot on the 1.6 GHz core alone? Work out the kernel
+  config the C908 needs (T-Head errata, Svpbmt), and how firmware loads and
+  releases the little core with its own image. The board device tree gives
+  Linux only the big core and reserves the little core's memory.
+- *Output:* `docs/notes/k230.md` with a support matrix, an ADR per subsystem
+  saying whether Linux or the coprocessor owns it, and a deck image profile
+  sized to the RAM, with heavy services off by default.
+- A blocker found here is written up in `docs/notes/k230.md`; that path stops
+  and the human is asked.
+
+**Hardware checklist (human-run; images and scripts prepared first).**
+- [ ] Our image boots on the big core to the shim's banner and `iex(1)>` on
+  the serial console.
+- [ ] The little core runs a trivial image we loaded.
+
+**Done when.** The survey, support matrix and boot findings are in
+`docs/notes/k230.md`, the ADRs are written, and the human has run the
+checklist.
+
+- [ ] ADR (to be written): the board device tree as configuration.
+- [ ] ADR (to be written): the boot firmware choice (mainline or pinned
+  Canaan U-Boot and OpenSBI, verified by checksum).
+- [ ] ADRs (to be written): Linux-or-coprocessor ownership, one per subsystem.
+- [ ] ADR (to be written): the deck image profile.
+
+---
+
+## M31: The inter-core link (needs the board)
+
+**Goal.** A private point-to-point IP link between the cores, carrying plain
+TCP Erlang distribution with no custom carrier.
+
+**Acceptance.** `test/elixos/coproc_ring_test.exs` (host): the ring protocol
+and the helper run against a shared-memory file standing in for the reserved
+region, covering throughput, backpressure, corruption detection and either
+side restarting. QEMU's ivshmem can exercise the UIO path if useful.
+
+**Notes.** A reserved shared-memory ring between the cores, using the K230
+mailbox if it is reachable without a kernel driver and polling otherwise. The
+Linux side maps it through UIO (configuration: `generic-uio` in the device
+tree). A static Zig helper bridges the ring to a TUN device, and lwIP runs on
+the coprocessor side.
+
+**Hardware checklist (human-run).**
+- [ ] Ping across the link.
+- [ ] Distribution comes up over it.
+- [ ] Latency and throughput are recorded here.
+
+**Done when.** `make ci` is green with `MILESTONE=31`, the host test passes,
+and the human has run the checklist.
+
+---
+
+## M32: AtomVM on the little core (needs the board)
+
+**Goal.** AtomVM runs on the K230's 800 MHz core, owns the subsystems the
+gate assigned it, and outlives the big core's BEAM.
+
+**Acceptance.** `test/elixos/coproc_drivers_test.exs` (host): AtomVM's Unix
+build with simulated drivers exposes each coprocessor-owned subsystem as
+Erlang processes, and keeps them running while the Elixos side restarts or
+switches generations.
+
+**Notes.**
+- An AtomVM platform port for the 800 MHz core: AtomVM's Unix build on
+  Canaan's RT-Smart if its POSIX layer is close enough, otherwise bare metal.
+  It includes timers, memory, the ring transport (M31) and lwIP.
+- The coprocessor owns whatever the gate assigned it - likely the panel, touch
+  and LoRa through vendor RTOS drivers, so vendor code stays off the Linux
+  side. Each is exposed as Erlang processes.
+- It keeps running while the big core's BEAM restarts or switches
+  generations.
+
+**Hardware checklist (human-run).**
+- [ ] The little core boots AtomVM.
+- [ ] It joins Elixos.
+- [ ] It survives a BEAM crash on the big core.
+
+**Done when.** `make ci` is green with `MILESTONE=32`, the host test passes,
+and the human has run the checklist.
+
+---
+
+## M33: The deck (the first coprocessed BEAM cluster on a cyberdeck)
+
+**Goal.** The T-Display K230 is a cyberdeck: it boots to IEx on its AMOLED,
+takes touch and an on-screen keyboard, talks LoRa from Elixir, and keeps the
+panel alive while the big core's BEAM restarts.
+
+**Acceptance.** `test/integration/m33_deck_test.exs` (Elixos side, in QEMU):
+the framebuffer protocol, the terminal view hosting the login REPL, and
+simulated coprocessor input.
+
+**Notes.**
+- *Display:* Elixos renders and the coprocessor scans out. Frames go into a
+  shared-memory framebuffer, which the coprocessor pushes to the AMOLED;
+  choose the deck's orientation.
+- *IEx on the panel:* a terminal view hosting the login REPL as a session.
+  Boot lands there and the serial console stays available. A plain
+  bitmap-font renderer is the fallback if Emerge is not available on riscv64
+  (M28).
+- *Input:* touch events arrive as messages from the coprocessor, with an
+  on-screen keyboard. Add a USB keyboard once mainline USB support for the
+  K230 lands.
+- While the big core's BEAM restarts, the coprocessor keeps the panel alive
+  with status ("restarting, attempt 2"), and the session returns.
+- *LoRa from Elixir:* send and receive messages.
+- *Rescue stays reachable:* the panel shows rescue status, and the serial
+  console works.
+- `make deck-image` builds the SD card image (firmware, kernel, our device
+  tree, the coprocessor image, the deck profile).
+  `docs/hardware/t-display-k230.md` covers flashing, the serial console pins,
+  known limits per mainline release, and where to buy.
+
+**Hardware checklist (human-run).**
+- [ ] Boots to IEx on the AMOLED.
+- [ ] Touch and the on-screen keyboard work.
+- [ ] `Node.list()` shows the coprocessor.
+- [ ] A LoRa message arrives as a message.
+- [ ] Killing the BEAM keeps the panel alive and the session comes back.
+- [ ] Save, reboot, still there.
+- [ ] Poweroff powers off.
+
+**Done when.** `make ci` is green with `MILESTONE=33`, the QEMU test passes,
+`make deck-image` builds, `docs/hardware/t-display-k230.md` is written, and
+the human has run the checklist.
+
+- [ ] Demo recorded: a phone video of the deck plus the serial cast; two
+  decks exchanging LoRa, or a LoRa message arriving in IEx as an Erlang
+  message.
 
 ---
 
@@ -1116,13 +1140,10 @@ kernel/factory upgrades on hardware (Q5), process-state persistence (Q2),
 gsh packaging (Q6), CRIU as a stretch goal. A terminal view in Emerge that
 hosts IEx as just another REPL session, so the GUI can become the shell.
 
-### Hardware-accelerated graphics profiles (ADR-072)
+The independent `live_gpui` integration and separate AMD/NVIDIA accelerated
+image profiles remain planned under ADR-072. They depend on the human's
+completed stack; neither that checkout nor the vendor profiles are part of
+the withdrawn OMP port.
 
-Integrate the human's completed `live_gpui` stack — GPUI + LiveView via
-Rustler — and ship AMD and NVIDIA hardware-accelerated images. Each profile
-packages its vendor drivers, firmware and graphics userspace dependencies;
-the OS, LiveView and agent code remain shared. The current native-editor
-screenshot is a smoke test of that unfinished project, not a shipped backend.
-Verify real acceleration and native editing under busy callbacks, keyed-row
-reordering and view-process restart on each profile.
-
+After the K230 track (M28–M33), not in it: the KPU through the coprocessor's
+vendor runtime, the camera, and the coprocessor as a watchdog for the big core.
