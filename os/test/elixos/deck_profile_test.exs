@@ -221,9 +221,15 @@ defmodule Elixos.DeckProfileTest do
   end
 
   test "the full profile still starts the coding runtime at boot", ctx do
-    priv_dir = Application.get_env(:elixos, :priv_dir)
+    previous = Application.fetch_env(:elixos, :priv_dir)
     Application.put_env(:elixos, :priv_dir, ctx.tmp_dir)
-    on_exit(fn -> Application.put_env(:elixos, :priv_dir, priv_dir) end)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, priv_dir} -> Application.put_env(:elixos, :priv_dir, priv_dir)
+        :error -> Application.delete_env(:elixos, :priv_dir)
+      end
+    end)
 
     start_supervised!({DynamicSupervisor, name: Elixos.Package.Services, strategy: :one_for_one})
     start_supervised!({Approvals, mode: :normal, profile: :full})
