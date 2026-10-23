@@ -19,6 +19,18 @@ defmodule Elixos.Coproc do
   restarts its VM. Falling back to `last_good` boots that generation, whose
   bundle is then deployed the same way.
 
+  The coprocessor owns subsystems Linux cannot drive (M32: the UART3
+  console, the display unit with touch and HDMI, LoRa, the power key and
+  power-off; ADR-104, ADR-106, ADR-107, ADR-109). Each is a driver process its
+  runtime starts at boot, independent of this link, reached through
+  `Elixos.Coproc.Console`, `.Display`, `.Touch`, `.LoRa` and `.Power`.
+  Subscriptions (`subscribe/2`) are held here and renewed whenever the peer
+  comes up; the drivers queue events until a subscriber acknowledges them,
+  so what happens while Elixos restarts arrives when it is back. Only a
+  bundle change restarts the coprocessor's VM: the drivers restart with it,
+  taking over their predecessors' state, and a generation switch that keeps
+  the bundle leaves them running.
+
   At boot (`start_link(:boot)`) the link is configured from:
 
     * `/priv/coproc/config.exs` - a literal keyword list: `node:` the peer
@@ -43,7 +55,36 @@ defmodule Elixos.Coproc do
   @reconnect_ms 1_000
   @call_timeout 5_000
 
+  # The coprocessor's drivers (M32): each subsystem's registered process on
+  # the peer (os/src/coproc_*.erl).
+  @drivers %{
+    console: :coproc_console,
+    display: :coproc_display,
+    touch: :coproc_touch,
+    lora: :coproc_lora,
+    power: :coproc_power
+  }
+
+  # The runtime archive: the start module, the drivers and their simulated
+  # backends (ADR-098; M32).
+  @runtime [
+    :elixos_coproc,
+    :coproc_drivers,
+    :coproc_driver,
+    :coproc_console,
+    :coproc_console_sim,
+    :coproc_display,
+    :coproc_display_sim,
+    :coproc_touch,
+    :coproc_touch_sim,
+    :coproc_lora,
+    :coproc_lora_sim,
+    :coproc_power,
+    :coproc_power_sim
+  ]
+
   @type bundle :: Bundle.t() | nil
+  @type subsystem :: :console | :display | :touch | :lora | :power
 
   ## API
 
@@ -93,6 +134,58 @@ defmodule Elixos.Coproc do
     erpc(node(), module, function, args, timeout)
   end
 
+  ## Drivers (M32)
+
+  @doc """
+  The coprocessor's driver processes, one per subsystem it owns (ADR-104,
+  ADR-106, ADR-107, ADR-109). They run on the peer whether Elixos is
+  connected or not; `Elixos.Coproc.Display` and its siblings reach them.
+  """
+  @spec drivers() :: {:ok, %{subsystem() => pid() | :undefined}} | {:error, term()}
+  def drivers do
+    with {:ok, pids} <- call(:coproc_drivers, :pids, []) do
+      {:ok, Map.new(@drivers, fn {subsystem, name} -> {subsystem, Map.get(pids, name, :undefined)} end)}
+    end
+  end
+
+  @doc """
+  Subscribes `pid` to `subsystem`'s events: it receives each event term as a
+  message, e.g. `{:lora, packet, meta}`. The subscription belongs to this
+  link, not to the connection: it is renewed whenever the peer comes up, and
+  events the coprocessor queued meanwhile arrive then. It ends when `pid`
+  exits or unsubscribes.
+  """
+  @spec subscribe(subsystem(), pid()) :: :ok | {:error, term()}
+  def subscribe(subsystem, pid \\ self()) when is_map_key(@drivers, subsystem) and is_pid(pid) do
+    GenServer.call(__MODULE__, {:subscribe, subsystem, pid})
+  end
+
+  @doc "Ends `pid`'s subscription to `subsystem`."
+  @spec unsubscribe(subsystem(), pid()) :: :ok
+  def unsubscribe(subsystem, pid \\ self()) when is_map_key(@drivers, subsystem) and is_pid(pid) do
+    GenServer.call(__MODULE__, {:unsubscribe, subsystem, pid})
+  end
+
+  @doc """
+  Feeds `stimulus` to a simulated driver backend, as the hardware would: a
+  touch, a packet from the air, a key press (the `simulate/2` clauses in
+  `os/src/coproc_*_sim.erl`). A hardware backend refuses it.
+  """
+  @spec simulate(subsystem(), term()) :: term()
+  def simulate(subsystem, stimulus) when is_map_key(@drivers, subsystem) do
+    driver_call(:coproc_driver, :simulate, [Map.fetch!(@drivers, subsystem), stimulus])
+  end
+
+  @doc false
+  # Runs a driver API function on the peer: its reply, or {:error, reason}
+  # when the call itself failed.
+  def driver_call(module, function, args) do
+    case call(module, function, args) do
+      {:ok, reply} -> reply
+      {:error, _} = error -> error
+    end
+  end
+
   @doc """
   Makes `bundle` (`nil` for none) the one the coprocessor must run, and waits
   until it does: deployed, restarted and reconnected, or `{:error, :timeout}`.
@@ -140,11 +233,15 @@ defmodule Elixos.Coproc do
     end
   end
 
-  @doc "The coprocessor runtime archive: `:elixos_coproc`, the archive's start module."
+  @doc """
+  The coprocessor runtime archive: `:elixos_coproc`, the archive's start
+  module, and the drivers it starts (`:coproc_drivers` and the
+  `:coproc_*` modules, M32).
+  """
   @spec runtime() :: {:ok, Bundle.t()} | {:error, term()}
   def runtime do
-    with {:ok, bytecode} <- object_code(:elixos_coproc) do
-      Bundle.pack([{:elixos_coproc, bytecode}], start: :elixos_coproc)
+    with {:ok, beams} <- beams(@runtime, &object_code/1) do
+      Bundle.pack(beams, start: :elixos_coproc)
     end
   end
 
@@ -156,15 +253,19 @@ defmodule Elixos.Coproc do
   def bundle(modules) when is_list(modules) do
     if Process.whereis(Elixos.Boot.Recorder), do: :ok = Elixos.Boot.Recorder.sync()
 
+    with {:ok, beams} <- beams(modules, &bytecode/1), do: Bundle.pack(beams)
+  end
+
+  defp beams(modules, fetch) do
     modules
     |> Enum.reduce_while({:ok, []}, fn module, {:ok, acc} ->
-      case bytecode(module) do
+      case fetch.(module) do
         {:ok, bytecode} -> {:cont, {:ok, [{module, bytecode} | acc]}}
         {:error, _} = error -> {:halt, error}
       end
     end)
     |> case do
-      {:ok, beams} -> Bundle.pack(Enum.reverse(beams))
+      {:ok, beams} -> {:ok, Enum.reverse(beams)}
       error -> error
     end
   end
@@ -336,7 +437,11 @@ defmodule Elixos.Coproc do
          deployed: nil,
          waiting: [],
          timer: nil,
-         reconnect_ms: Keyword.get(opts, :reconnect_ms, @reconnect_ms)
+         reconnect_ms: Keyword.get(opts, :reconnect_ms, @reconnect_ms),
+         # subsystem => %{subscriber pid => monitor ref}
+         subscribers: %{},
+         # subsystem => {driver pid, last sequence number delivered}
+         seen: %{}
        }}
     else
       {:error, reason} -> {:stop, reason}
@@ -359,6 +464,31 @@ defmodule Elixos.Coproc do
     {:noreply, sync(state)}
   end
 
+  def handle_call({:subscribe, subsystem, pid}, _from, state) do
+    pids = Map.get(state.subscribers, subsystem, %{})
+
+    if Map.has_key?(pids, pid) do
+      {:reply, :ok, state}
+    else
+      pids = Map.put(pids, pid, Process.monitor(pid))
+      state = put_in(state.subscribers[subsystem], pids)
+      # Subscribing again is harmless: the driver resends what it still
+      # queues, and whatever was delivered already is dropped as a duplicate.
+      {:reply, :ok, remote_subscribe(state, subsystem)}
+    end
+  end
+
+  def handle_call({:unsubscribe, subsystem, pid}, _from, state) do
+    case Map.get(state.subscribers, subsystem, %{}) do
+      %{^pid => ref} ->
+        Process.demonitor(ref, [:flush])
+        {:reply, :ok, drop_subscriber(state, subsystem, pid)}
+
+      _ ->
+        {:reply, :ok, state}
+    end
+  end
+
   @impl true
   def handle_info(:connect, state) do
     state = %{state | timer: nil}
@@ -373,6 +503,32 @@ defmodule Elixos.Coproc do
 
   def handle_info({:nodedown, peer, _info}, %{peer: peer} = state) do
     {:noreply, schedule(%{state | up: false})}
+  end
+
+  # A driver event (os/src/coproc_driver.erl): fanned out to the subsystem's
+  # subscribers, then acknowledged so the driver stops queueing it. Without a
+  # subscriber it is left unacknowledged: the driver keeps it for the next.
+  def handle_info({:coproc_event, name, driver, seq, event}, state) do
+    with {:ok, subsystem} <- subsystem(name),
+         pids when map_size(pids) > 0 <- Map.get(state.subscribers, subsystem, %{}) do
+      unless duplicate?(state.seen, subsystem, driver, seq) do
+        for pid <- Map.keys(pids), do: send(pid, event)
+      end
+
+      GenServer.cast(driver, {:ack, seq})
+      {:noreply, put_in(state.seen[subsystem], {driver, max_seen(state.seen, subsystem, driver, seq)})}
+    else
+      _ -> {:noreply, state}
+    end
+  end
+
+  def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
+    state =
+      Enum.reduce(state.subscribers, state, fn {subsystem, pids}, state ->
+        if Map.has_key?(pids, pid), do: drop_subscriber(state, subsystem, pid), else: state
+      end)
+
+    {:noreply, state}
   end
 
   def handle_info({:deploy_timeout, ref}, state) do
@@ -444,7 +600,62 @@ defmodule Elixos.Coproc do
   end
 
   defp up(%{up: true} = state), do: state
-  defp up(state), do: sync(%{state | up: true})
+
+  # The peer is (back) up: converge on the wanted bundle, then renew every
+  # subscription - the peer's drivers may be new (a restarted coprocessor), or
+  # the old ones holding events queued while the link was down.
+  defp up(state) do
+    state = sync(%{state | up: true})
+    Enum.reduce(Map.keys(state.subscribers), state, &remote_subscribe(&2, &1))
+  end
+
+  defp remote_subscribe(%{up: false} = state, _subsystem), do: state
+
+  defp remote_subscribe(state, subsystem) do
+    name = Map.fetch!(@drivers, subsystem)
+
+    case erpc(state.peer, :coproc_driver, :subscribe, [name, self()], @call_timeout) do
+      {:ok, {:ok, _driver}} ->
+        state
+
+      other ->
+        Logger.warning("Elixos.Coproc: subscribing to #{name} on #{state.peer} failed: #{inspect(other)}")
+        state
+    end
+  end
+
+  defp drop_subscriber(state, subsystem, pid) do
+    pids = state.subscribers |> Map.fetch!(subsystem) |> Map.delete(pid)
+
+    if map_size(pids) == 0 do
+      if state.up do
+        _ = erpc(state.peer, :coproc_driver, :unsubscribe, [Map.fetch!(@drivers, subsystem), self()], @call_timeout)
+      end
+
+      %{state | subscribers: Map.delete(state.subscribers, subsystem)}
+    else
+      %{state | subscribers: Map.put(state.subscribers, subsystem, pids)}
+    end
+  end
+
+  defp subsystem(name) do
+    case Enum.find(@drivers, fn {_subsystem, driver} -> driver == name end) do
+      {subsystem, _driver} -> {:ok, subsystem}
+      nil -> :error
+    end
+  end
+
+  # Events are numbered per driver process; a new driver starts a new series.
+  defp duplicate?(seen, subsystem, driver, seq) do
+    match?({^driver, last} when seq <= last, Map.get(seen, subsystem))
+  end
+
+  defp max_seen(seen, subsystem, driver, seq) do
+    case Map.get(seen, subsystem) do
+      {^driver, last} -> max(last, seq)
+      _ -> seq
+    end
+  end
 
   defp schedule(%{timer: nil} = state) do
     %{state | timer: Process.send_after(self(), :connect, state.reconnect_ms)}

@@ -3039,3 +3039,92 @@ it; the profile is chosen by the image, never by the session.
 **Consequences.** The first SQL query on the deck pays Postgres's startup.
 The budget is measured on the board in M33 and recorded in
 docs/notes/k230.md.
+
+## ADR-112: The inter-core link is a polled shared-memory ring under plain IP
+
+**Status:** accepted (2026-10-23), M31.
+
+**Context.** The two K230 cores share memory but no coherent cache, no
+mainline mailbox driver and no remoteproc. Distribution must stay plain TCP
+(ADR-098). The first draft of the ring gave each direction `S/2 - 64` data
+bytes while counting stream positions modulo 2^32; unless the capacity
+divides 2^32, positions jump when a counter wraps and unread bytes are
+overwritten after about 4 GiB of traffic.
+
+**Decision.**
+- docs/PROTOCOL.md §11: two single-producer, single-consumer rings in one
+  region, CRC-32 framed, polled at least every millisecond. Each ring's
+  capacity is the largest power of two not above `S/2 - 64` (at most
+  2^31), so a region is best sized `2 × capacity + 4096`. A bad CRC drops
+  one frame; an unparsable stream resynchronises (`tail = head`). A side
+  that restarts keeps the ring and bumps its epoch; a restarted reader
+  discards only frames meant for its previous incarnation.
+- `elixos-link` (static Zig, `shim/src/link.zig`, sharing `ring.zig` and the
+  interface configuration in `netif.zig` with the shim) bridges the ring to
+  a TUN device. It drops a packet when its outgoing ring is full and lets IP
+  retransmit.
+- `spec/ring.vectors` pins capacities, headers, frames, decoding and a wrap
+  across 2^32 for the Zig suite and for the Elixir implementation the tests
+  use as the far side.
+- The K230 mailbox may replace polling later without changing the layout.
+
+**Consequences.** Measured on the build host (WSL2): 54-81 MB/s from the
+Zig writer to the Elixir reader, 62-72 MB/s helper to helper over TCP, and
+1.1-2.2 ms ping round trips, mostly the 1 ms idle poll on each side. Polling
+costs the idle cores a little power. The coprocessor side (M32) implements
+the same rules, including the power-of-two capacity.
+
+## ADR-113: Coprocessor drivers are runtime processes with queued, acknowledged events
+
+**Status:** accepted (2026-10-23), M32.
+
+**Context.** The M30 gate gave the coprocessor UART3, the display unit,
+LoRa and the power key and power-off (ADR-104, ADR-106, ADR-107, ADR-109).
+They must outlive restarts of the Elixos BEAM. AtomVM cannot monitor a
+remote pid and signals nothing when a distribution connection closes, so a
+driver cannot tell that its subscriber has gone.
+
+**Decision.**
+- One registered process per subsystem on the coprocessor node
+  (`coproc_console`, `coproc_display`, `coproc_touch`, `coproc_lora`,
+  `coproc_power`), started by `:elixos_coproc` before distribution: a generic
+  `coproc_driver` plus a subsystem module that defines the API and its
+  backend behaviour. Backends are `coproc_<x>_<set>`, the set chosen by
+  `ELIXOS_COPROC_DRIVERS`; the host tests use `sim`, the board gets its own.
+- Events are numbered and queued (64 per driver, oldest dropped and
+  counted) until acknowledged; a new subscriber first receives the queue.
+  Each remote node holds one subscription, replaced when it subscribes
+  again.
+- `Elixos.Coproc` owns the local subscribers, renews every subscription on
+  nodeup, acknowledges what it delivered and drops duplicates by driver pid
+  and sequence number. `Elixos.Coproc.{Console, Display, Touch, LoRa, Power}`
+  are the per-subsystem APIs.
+- AtomVM patch 0003 (extends ADR-100): the distribution connection
+  controller stops with `{shutdown, closed}` when its socket closes, so a
+  peer redialling with the same node incarnation is accepted at once instead
+  of being refused for up to 15 s. Meant for upstream.
+
+**Consequences.** Events that happen while Elixos is away arrive when it
+returns; delivery is at-least-once across a BEAM restart. Bundle code on the
+coprocessor may subscribe too.
+
+## ADR-114: A generation switch touches the coprocessor only when its bundle changes
+
+**Status:** accepted (2026-10-23), M32. Amends ADR-099.
+
+**Context.** AtomVM can add and replace modules but cannot delete or purge
+them, and the M29 tests rely on a bundle deploy restarting the VM.
+
+**Decision.** The drivers live in the coprocessor runtime, not in the
+bundle. A switch that keeps the bundle (a save, booting another generation
+with the same bundle, a fallback) never touches the coprocessor, so the
+drivers keep their pids. A bundle change still ends the VM; the runtime
+first saves the drivers' state (`coproc_drivers:handoff/0`) next to the
+bundle and restores it in the next VM before distribution starts.
+
+**Consequences.** On a bundle change the drivers' pids change and the panel
+is dark for about a second; queued events, the display status and counters
+survive, events in the moments after the save are lost. On the board the
+handoff needs storage that survives the little core's restart (M32 board
+work). An in-place bundle swap would need an AtomVM delete/purge patch and an
+ADR changing the M29 tests.

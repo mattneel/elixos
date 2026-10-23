@@ -58,3 +58,38 @@ What took time, so the next session does not repeat it.
   connection, so the link survives the coprocessor restarting.
 - With two NICs, `ip=dhcp` lets the kernel pick either; `ip=:::::eth0:dhcp`
   pins it to the external one.
+
+## Drivers (M32)
+
+- The runtime archive (`Elixos.Coproc.runtime/0`) carries the drivers:
+  `coproc_drivers` (supervisor), `coproc_driver` (the generic process) and,
+  per subsystem, `coproc_<x>` (API + backend behaviour) and its backends
+  `coproc_<x>_<set>`. `ELIXOS_COPROC_DRIVERS` picks the set (default `sim`).
+  They start before distribution, so they never depend on Elixos.
+- AtomVM cannot monitor a remote pid (`monitor/2` takes local pids only) and
+  sends no exit or DOWN signal when a distribution connection closes. A
+  driver therefore cannot tell that an Elixos subscriber is gone. Events are
+  numbered and queued (64 per driver) until acknowledged; a subscriber gets
+  the queue on subscribing. A remote node has one subscription, replaced on
+  resubscribe; `Elixos.Coproc` renews them on every nodeup and drops
+  duplicates by `{driver pid, seq}`.
+- Sending to a pid of a node that is not connected makes AtomVM autoconnect
+  (`net_kernel` setup through epmd); it fails harmlessly because Elixos never
+  registers with an epmd. A pid of an earlier Elixos incarnation (another
+  creation) is dropped silently.
+- AtomVM only adds modules: `code:load_binary/3` replaces the name lookup,
+  but there is no delete or purge, and the old code stays in memory. A
+  bundle change therefore still ends the VM (ADR-099); the runtime hands the
+  drivers' state (`coproc_drivers:handoff/0`, term_to_binary in
+  `<bundle>.drivers`) to the next VM, which restores it before
+  distribution. A generation switch that keeps the bundle never touches the
+  coprocessor.
+- Patch 0003: AtomVM's `socket_dist_controller` stopped `normal` when the
+  socket closed, so the linked connection process lived on until the next
+  tick (up to 15 s) and net_kernel kept the node "alive"; an Elixos that
+  reconnected meanwhile with the same creation failed the handshake
+  (`invalid_challenge`) every time. It now stops `{shutdown, closed}`.
+  A new Elixos incarnation reconnected fine even before the patch.
+- Testing the restart of Elixos needs a second BEAM: `:peer` with
+  `connection: :standard_io` and no name starts it undistributed, so its own
+  `Elixos.Coproc` can start distribution.

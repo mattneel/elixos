@@ -1090,6 +1090,13 @@ Linux side maps it through UIO (configuration: `generic-uio` in the device
 tree). A static Zig helper bridges the ring to a TUN device, and lwIP runs on
 the coprocessor side.
 
+**Results (2026-10-23, host side).** The ring (docs/PROTOCOL.md §11,
+ADR-112) is `shim/src/ring.zig`; `elixos-link` bridges it to a TUN device.
+The host test runs two helpers on one file in separate user and network
+namespaces: 54-81 MB/s Zig writer to Elixir reader, 62-72 MB/s TCP helper to
+helper, 1.1-2.2 ms ping (the 1 ms poll). Capacity is a power of two so stream
+positions survive the 2^32 counter wrap.
+
 **Hardware checklist (human-run).**
 - [ ] Ping across the link.
 - [ ] Distribution comes up over it.
@@ -1119,6 +1126,14 @@ switches generations.
   side. Each is exposed as Erlang processes.
 - It keeps running while the big core's BEAM restarts or switches
   generations.
+
+**Results (2026-10-23, host side).** Five driver processes on the
+coprocessor node (console, display, touch, LoRa, power) with simulated
+backends on the host; events are queued and acknowledged because AtomVM
+cannot see a remote subscriber leave (ADR-113). A generation switch that
+keeps the bundle leaves them running; a bundle change restarts AtomVM and
+hands their state over (ADR-114). AtomVM patch 0003 makes a redialling peer
+reconnect at once.
 
 **Hardware checklist (human-run).**
 - [ ] The little core boots AtomVM.

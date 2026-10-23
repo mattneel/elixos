@@ -9,6 +9,13 @@
 %% code - on the host the launcher restarts AtomVM, on hardware whatever loaded
 %% the coprocessor does.
 %%
+%% It also starts the coprocessor's drivers (M32, coproc_drivers) before
+%% distribution: they run whether Elixos is connected or not. They are part
+%% of this runtime, not of the bundle, so a generation switch that keeps the
+%% bundle never touches them. A deploy ends the VM and the drivers with it;
+%% their state (queued events, the display's status and last frame) is handed
+%% to the next VM in <bundle>.drivers and restored before distribution starts.
+%%
 %% Configuration comes from the environment (the host stand-in's launcher sets
 %% it; the cookie is read from a file, never passed in the environment):
 %%
@@ -16,6 +23,7 @@
 %%   ELIXOS_COPROC_PORT         the fixed distribution port to listen on
 %%   ELIXOS_COPROC_COOKIE_FILE  file holding the shared cookie
 %%   ELIXOS_COPROC_BUNDLE       the bundle file (absent means no bundle)
+%%   ELIXOS_COPROC_DRIVERS      the drivers' backend set (default sim)
 %%
 %% AtomVM's distribution always registers with an epmd on 127.0.0.1:4369 and
 %% binds 0.0.0.0, so the runtime starts AtomVM's own Erlang epmd first. Elixos
@@ -34,6 +42,8 @@ start() ->
     Cookie = trim(read_file(env("ELIXOS_COPROC_COOKIE_FILE"))),
     BundlePath = env("ELIXOS_COPROC_BUNDLE"),
     Digest = load_bundle(BundlePath),
+    {ok, _} = coproc_drivers:start_link(driver_set()),
+    ok = coproc_drivers:restore(take_handoff(BundlePath)),
     % A host epmd may already own 4369: then AtomVM's own epmd (started
     % unlinked, as its start_link/1 would take this process down with it)
     % fails to bind, and registering with the host's works as well.
@@ -77,9 +87,10 @@ loop(#{path := Path, digest := Digest} = State) ->
         {{deploy, Bundle}, From, Ref} ->
             case store(Path, Bundle) of
                 ok ->
+                    Handoff = save_handoff(Path),
                     From ! {Ref, ok},
-                    io:format("elixos_coproc: bundle ~s deployed, restarting~n", [
-                        show(digest_of(Bundle))
+                    io:format("elixos_coproc: bundle ~s deployed, restarting (drivers ~s)~n", [
+                        show(digest_of(Bundle)), Handoff
                     ]),
                     % Let the reply cross the link before the VM goes away.
                     % AtomVM has no erlang:halt/0,1: the VM ends when its
@@ -90,6 +101,38 @@ loop(#{path := Path, digest := Digest} = State) ->
                 {error, _} = Error ->
                     From ! {Ref, Error},
                     loop(State)
+            end
+    end.
+
+driver_set() ->
+    case os:getenv("ELIXOS_COPROC_DRIVERS") of
+        false -> sim;
+        Set -> list_to_atom(Set)
+    end.
+
+%% The drivers' state for the next VM, next to the bundle. A failure costs the
+%% state, never the deploy.
+save_handoff(BundlePath) ->
+    try write_file(BundlePath ++ ".drivers", term_to_binary(coproc_drivers:handoff())) of
+        ok -> <<"handed off">>;
+        {error, _} -> <<"not handed off">>
+    catch
+        _:_ -> <<"not handed off">>
+    end.
+
+%% What the previous VM handed off, read once.
+take_handoff(BundlePath) ->
+    Path = BundlePath ++ ".drivers",
+    case read_file(Path) of
+        <<>> ->
+            #{};
+        Binary ->
+            _ = atomvm:posix_unlink(Path),
+            try binary_to_term(Binary) of
+                #{} = Handoff -> Handoff;
+                _ -> #{}
+            catch
+                _:_ -> #{}
             end
     end.
 
@@ -109,10 +152,14 @@ store(Path, none) ->
         {error, _} = Error -> Error
     end;
 store(Path, Bundle) ->
+    write_file(Path, Bundle).
+
+%% Replaces Path's contents atomically: a temporary file, synced, renamed.
+write_file(Path, Data) ->
     Temporary = Path ++ ".new",
     case atomvm:posix_open(Temporary, [o_wronly, o_creat, o_trunc], 8#600) of
         {ok, Fd} ->
-            Written = write_all(Fd, Bundle),
+            Written = write_all(Fd, Data),
             Synced = atomvm:posix_fsync(Fd),
             ok = atomvm:posix_close(Fd),
             case {Written, Synced} of

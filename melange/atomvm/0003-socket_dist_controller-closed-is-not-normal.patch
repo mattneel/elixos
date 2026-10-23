@@ -1,0 +1,16 @@
+--- a/libs/estdlib/src/socket_dist_controller.erl	2026-10-23 13:12:46.353845505 -0400
++++ b/libs/estdlib/src/socket_dist_controller.erl	2026-10-23 13:12:50.875693710 -0400
+@@ -190,7 +190,12 @@
+         {select, {select_info, recv, SelectHandle}} when is_reference(SelectHandle) ->
+             {ok, State#state{select_handle = SelectHandle}};
+         {error, closed} ->
+-            {stop, normal, State};
++            % Not normal: the connection process (linked as this controller's
++            % supervisor, and not trapping exits) must go down with the
++            % socket, so net_kernel forgets the node and the peer can connect
++            % again at once. With normal it lingered until the next tick
++            % failed, and every reconnect meanwhile was refused.
++            {stop, {shutdown, closed}, State};
+         {error, Reason} ->
+             {stop, {recv_error, Reason}, State}
+     end.

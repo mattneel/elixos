@@ -7,7 +7,11 @@ defmodule Elixos.Test.AtomVM do
   time it exits: a deploy stores the new bundle and ends AtomVM
   (`:elixos_coproc.deploy/1`), and a killed AtomVM comes back as well. Every
   start prints `elixos_coproc: <node> up, bundle <digest>`; `await_up/3` waits
-  for the n-th one.
+  for the n-th one, `starts/1` counts them.
+
+  The runtime's drivers (M32) run their simulated backends
+  (`ELIXOS_COPROC_DRIVERS=sim`): AtomVM's standard output stands in for
+  UART3, and `Elixos.Coproc.simulate/2` for the hardware.
 
   AtomVM's distribution binds 0.0.0.0 on the fixed port (ADR-098), and its epmd
   4369 unless the host already runs one.
@@ -38,6 +42,9 @@ defmodule Elixos.Test.AtomVM do
     File.write!(runtime_file, runtime)
     File.write!(cookie_file, Keyword.fetch!(opts, :cookie) <> "\n")
 
+    # A fresh coprocessor: no bundle unless given, nothing handed off.
+    File.rm(bundle_file <> ".drivers")
+
     case Keyword.get(opts, :bundle) do
       nil -> File.rm(bundle_file)
       bundle -> File.write!(bundle_file, bundle)
@@ -47,7 +54,8 @@ defmodule Elixos.Test.AtomVM do
       {~c"ELIXOS_COPROC_NODE", Atom.to_charlist(node)},
       {~c"ELIXOS_COPROC_PORT", Integer.to_charlist(port)},
       {~c"ELIXOS_COPROC_COOKIE_FILE", String.to_charlist(cookie_file)},
-      {~c"ELIXOS_COPROC_BUNDLE", String.to_charlist(bundle_file)}
+      {~c"ELIXOS_COPROC_BUNDLE", String.to_charlist(bundle_file)},
+      {~c"ELIXOS_COPROC_DRIVERS", ~c"sim"}
     ]
 
     args = [runtime_file, artifact("atomvmlib.avm")]
@@ -61,6 +69,10 @@ defmodule Elixos.Test.AtomVM do
   def await_up(%__MODULE__{pid: pid}, count \\ 1, timeout \\ 30_000) do
     GenServer.call(pid, {:await_up, count}, timeout)
   end
+
+  @doc "How many times AtomVM has come up so far."
+  @spec starts(t()) :: non_neg_integer()
+  def starts(%__MODULE__{pid: pid}), do: GenServer.call(pid, :starts)
 
   @doc "Kills the running AtomVM (SIGKILL); the launcher starts it again."
   @spec kill(t()) :: :ok
@@ -124,6 +136,7 @@ defmodule Elixos.Test.AtomVM do
   end
 
   def handle_call(:output, _from, state), do: {:reply, state.output, state}
+  def handle_call(:starts, _from, state), do: {:reply, length(state.ups), state}
 
   @impl true
   def handle_info({port, {:data, data}}, %{port: port} = state) do
