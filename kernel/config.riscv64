@@ -41,3 +41,6 @@ CONFIG_PHY_CANAAN_USB=y
 # The shared regions with the little core, as /dev/uioN (M31, ADR-112).
 CONFIG_UIO=y
 CONFIG_UIO_PDRV_GENIRQ=y
+# elixos-link bridges the ring to a TUN device (M33: the shim starts it at
+# boot from elixos.coproc_ring); riscv's defconfig has no TUN.
+CONFIG_TUN=y
