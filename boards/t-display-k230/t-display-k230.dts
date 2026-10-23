@@ -50,6 +50,32 @@
 			reg = <0x0 0x07000000 0x0 0x01000000>;
 			no-map;
 		};
+
+		/*
+		 * Shared with the little core (2 MiB): the inter-core ring
+		 * (docs/PROTOCOL.md §11) at 0x08000000 and the deck framebuffer
+		 * (§12) at 0x08100000. Linux reaches them only through the UIO
+		 * nodes below, which map them uncached.
+		 */
+		coproc_shared: coproc-shared@8000000 {
+			reg = <0x0 0x08000000 0x0 0x00200000>;
+			no-map;
+		};
+	};
+
+	/*
+	 * generic-uio (uio_pdrv_genirq.of_id=generic-uio on the command
+	 * line): /dev/uioN with the node name in /sys/class/uio/uioN/name.
+	 * No interrupt: both sides poll (ADR-112).
+	 */
+	coproc-ring@8000000 {
+		compatible = "generic-uio";
+		reg = <0x0 0x08000000 0x0 0x00021000>;
+	};
+
+	deck-fb@8100000 {
+		compatible = "generic-uio";
+		reg = <0x0 0x08100000 0x0 0x00180000>;
 	};
 
 	timerx_pulse_in: clock-50000000 {

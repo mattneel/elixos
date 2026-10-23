@@ -1,0 +1,51 @@
+socket_dist_controller: send the rest of a partial send
+
+socket:send/2 may take only part of the data ({ok, Rest}); the controller
+ignored the rest, and the stream to the peer lost its framing. Seen with
+AtomVM on lwIP (Elixos coprocessor firmware), where a full send buffer is
+normal. It now waits for room and sends the rest.
+
+--- a/libs/estdlib/src/socket_dist_controller.erl	2026-10-23 14:18:26.599989466 -0400
++++ b/libs/estdlib/src/socket_dist_controller.erl	2026-10-23 14:18:37.887991066 -0400
+@@ -90,7 +90,7 @@
+     Socket = gen_server:call(Controller, socket),
+     DataBin = iolist_to_binary(Data),
+     DataSize = byte_size(DataBin),
+-    socket:send(Socket, <<DataSize:16, DataBin/binary>>).
++    send_all(Socket, <<DataSize:16, DataBin/binary>>).
+ 
+ setopts_pre_nodeup(_Controller) ->
+     ok.
+@@ -142,7 +142,7 @@
+     {reply, {ok, Received, Sent, 0}, State}.
+ 
+ handle_cast(tick, #state{socket = Socket, sent = Sent} = State) ->
+-    socket:send(Socket, <<0:32>>),
++    send_all(Socket, <<0:32>>),
+     {noreply, State#state{sent = Sent + 1}};
+ handle_cast({handshake_complete, DHandle}, State0) ->
+     ok = erlang:dist_ctrl_get_data_notification(DHandle),
+@@ -218,6 +218,22 @@
+         Data ->
+             DataBin = ?PRE_PROCESS(Data),
+             DataSize = byte_size(DataBin),
+-            socket:send(Socket, <<DataSize:32, DataBin/binary>>),
++            send_all(Socket, <<DataSize:32, DataBin/binary>>),
+             send_data_loop(State#state{sent = Sent + 1})
+     end.
++
++%% socket:send/2 may take only part of the data ({ok, Rest}; on lwIP when
++%% the send buffer is full). Dropping the rest would desynchronise the
++%% stream, so wait for room and send it.
++send_all(Socket, Data) ->
++    case socket:send(Socket, Data) of
++        ok ->
++            ok;
++        {ok, Rest} ->
++            receive
++            after 1 -> ok
++            end,
++            send_all(Socket, Rest);
++        {error, _} = Error ->
++            Error
++    end.

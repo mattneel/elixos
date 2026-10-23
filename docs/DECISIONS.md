@@ -3128,3 +3128,93 @@ survive, events in the moments after the save are lost. On the board the
 handoff needs storage that survives the little core's restart (M32 board
 work). An in-place bundle swap would need an AtomVM delete/purge patch and an
 ADR changing the M29 tests.
+
+## ADR-115: The little core runs AtomVM on bare metal
+
+**Status:** accepted (2026-10-23), M32.
+
+**Context.** The coprocessor runtime (ADR-113) must run on the K230's
+800 MHz core with no Linux. Canaan's RT-Smart would bring a vendor kernel and
+SDK outside the from-source pins (ADR-094, ADR-102) and nothing a single VM
+needs.
+
+**Decision.**
+- AtomVM on bare metal, M-mode, one scheduler (`coproc/`, built by
+  `melange/coproc-firmware.yaml` with Alpine's `riscv-none-elf` GCC):
+  picolibc, lwIP 2.2.1 (raw API, no OS) with one point-to-point netif over
+  the ring's little side (`coproc/src/ring.c`, checked against
+  `spec/ring.vectors`) plus loopback for epmd, Mbed TLS 3.6.7 for crypto
+  only, and a RAM file system so `:elixos_coproc` runs unchanged. The VM
+  restarts itself when its start module returns, as a deploy expects.
+- Configuration and the AVM packs travel in a payload (`mkpayload.py`) that
+  U-Boot loads next to the image.
+- Memory: the 16 MiB at `0x07000000` holds the image (at most 4 MiB), the
+  payload (+4 MiB, at most 2 MiB) and the heap (+6 to 16 MiB); the ring and
+  the framebuffer are the shared regions at `0x08000000`.
+- The ring is uncached on both cores: its header puts writer and reader
+  fields in one cache line, and the cores' caches are not coherent, so cache
+  maintenance cannot keep it consistent. Linux maps it through UIO
+  (uncached); the little core must map it through an uncached window.
+- AtomVM's lwIP socket layer needed fixes (closed-socket crash, data before
+  accept, segmented and blocked sends, optional Nagle, partial sends in the
+  distribution controller): `melange/atomvm-baremetal/*.patch`, meant for
+  upstream. The firmware builds its own `atomvmlib.avm` with them.
+- QEMU virt with its RAM backed by a shared file stands in for the board:
+  `elixos-link` attaches to the ring at its file offset, and
+  `os/test/integration/m32_coproc_firmware_test.exs` pings the firmware and
+  calls a driver over distribution.
+
+**Consequences.** Measured in QEMU (TCG): ping 1.27 ms, erpc 1.24 ms,
+about 10 MiB/s each way, a 750 KiB image. Open on the board: the little
+core's uncached window and caches, UART3's clock and pin mux, its timer
+address, a hardware entropy source (the TRNG), and loading the payload from
+U-Boot.
+
+## ADR-116: The deck view is a bitmap-font terminal hosting the login REPL
+
+**Status:** accepted (2026-10-23), M33.
+
+**Context.** On the deck, Elixos renders and the coprocessor scans out
+(ADR-106, PROTOCOL §12). OTP cannot `mmap`, and the panel must work in
+rescue and without NIFs.
+
+**Decision.**
+- `Elixos.Deck` draws the panel itself: Spleen 12×24 glyphs (BSD-2-Clause,
+  `os/priv/deck/`), a small terminal emulator (wrapping, scrolling,
+  CR/LF/BS/TAB, erase and cursor-move escapes; colour codes dropped), a
+  status line, and an on-screen QWERTY keyboard with shift and a symbol layer
+  on the lower third of the portrait panel.
+- The view is a full Erlang IO server and the group leader of a second login
+  session (`Elixos.Boot.Login.login_repl/0`, its own working directory by
+  ADR-020). The serial console's session is unchanged.
+- Pixels reach the region only through `elixos-deck-fb` (static Zig, spawned
+  by the BEAM): fill, blit, move and commit with a damage rectangle; a
+  keystroke commits only the cells it changed.
+- Touch arrives from `Elixos.Coproc.Touch` (ADR-113): a tap presses on
+  `:down` and types on `:up`.
+- The view starts in normal and rescue mode as a temporary, never
+  boot-critical child; rescue has no touch, because the coprocessor link is
+  off there.
+
+**Consequences.** No colour, tab completion or history on the panel yet.
+Emerge stays the GUI for approvals and is not needed for the deck.
+
+## ADR-117: The shim finds the deck framebuffer and grants it to the BEAM
+
+**Status:** accepted (2026-10-23), M33.
+
+**Context.** The BEAM is unprivileged (M17) and cannot enable a PCI device or
+open root-only nodes. UIO device numbers depend on probe order.
+
+**Decision.** `elixos.deck=<spec>` (PROTOCOL §5) is a shim-side parameter:
+`pci:<vendor>:<device>` (QEMU's ivshmem: its `resource2`, enabled if needed),
+`uio:<name>` (the board: the UIO device whose name is the device tree node's)
+or a `/dev/` path. PID 1 resolves it before launching ERTS, sets the file
+`root:video` 0660 as it does for `/dev/fb*`, logs `deck <path>` or the
+failure (§6), and passes `ELIXOS_DECK=<path>` (§3) in normal and rescue mode.
+Container builds never set it. Only sysfs PCI resources, UIO nodes and `/dev`
+paths qualify, so the parameter cannot chown arbitrary files. The shim's
+test block registers the new modules with `refAllDecls`.
+
+**Consequences.** A failure costs only the panel. The board needs
+`elixos.deck=uio:deck-fb` on its command line.

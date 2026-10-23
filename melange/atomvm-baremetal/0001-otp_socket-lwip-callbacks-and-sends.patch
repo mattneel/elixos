@@ -1,0 +1,158 @@
+otp_socket (lwIP): callbacks without a socket; partial and full sends
+
+Found bringing AtomVM up on the Elixos coprocessor firmware (bare metal,
+lwIP 2.2.1 NO_SYS, epmd and distribution over loopback and a point-to-point
+netif):
+
+- After socket:close/1 the pcb lives on (FIN, TIME_WAIT) with tcp_arg NULL
+  but tcp_err_cb still registered; a reset then calls it with arg NULL and
+  it dereferences it (load fault at address -8). Close now unregisters the
+  err callback (listening pcbs have none) and the recv callback (lwIP's
+  default frees late data), and tcp_err_cb ignores a pcb without a socket.
+- An accepted pcb has tcp_arg NULL until its owner calls accept. Data the
+  client sends at once (epmd's ALIVE2_REQ right after connect) was queued,
+  found no resource and was dropped, so registration never got an answer.
+  tcp_recv_cb now refuses it (ERR_MEM): lwIP keeps it as refused_data and
+  offers it again on its next timer tick, by when accept has run.
+- tcp_recv_handler frees the pbuf of a socket closed meanwhile.
+- do_socket_send queued at most one MSS per call, so socket:send/2 of
+  anything larger returned {ok, Rest}; with the send buffer full it
+  returned SocketWouldBlock, which nif_socket_send_internal turned into
+  {error, closed}. It now queues as much as tcp_sndbuf allows, an MSS at a
+  time, and a full buffer answers {ok, Data} (a 10 kB distribution reply
+  never arrived before).
+- A platform may define OTP_SOCKET_LWIP_NODELAY to create every TCP pcb
+  with Nagle off. There is no {tcp, nodelay} option on lwIP; distribution
+  (which OTP runs with nodelay) otherwise waits out the peer's delayed ACK:
+  erpc round trips took 44 ms over a link that pings in 1.2 ms.
+
+--- a/src/libAtomVM/otp_socket.c	2026-10-23 14:09:35.584767027 -0400
++++ b/src/libAtomVM/otp_socket.c	2026-10-23 14:20:31.474171143 -0400
+@@ -601,6 +601,11 @@
+     if (domain == PF_INET && type == SOCK_STREAM && protocol == IPPROTO_TCP) {
+         LWIP_BEGIN();
+         rsrc_obj->tcp_pcb = tcp_new();
++#ifdef OTP_SOCKET_LWIP_NODELAY
++        if (rsrc_obj->tcp_pcb) {
++            tcp_nagle_disable(rsrc_obj->tcp_pcb);
++        }
++#endif
+         LWIP_END();
+         rsrc_obj->socket_state = SocketStateTCPNew;
+     } else if (domain == PF_INET && type == SOCK_DGRAM && protocol == IPPROTO_UDP) {
+@@ -805,6 +810,11 @@
+         if (rsrc_obj->socket_state & SocketStateTCP) {
+             LWIP_BEGIN();
+             tcp_arg(rsrc_obj->tcp_pcb, NULL);
++            if (rsrc_obj->tcp_pcb->state != LISTEN) {
++                tcp_err(rsrc_obj->tcp_pcb, NULL);
++                // lwIP's default receiver frees what still arrives.
++                tcp_recv(rsrc_obj->tcp_pcb, NULL);
++            }
+             err_t err = tcp_close(rsrc_obj->tcp_pcb);
+             LWIP_END();
+             if (UNLIKELY(err != ERR_OK)) {
+@@ -863,6 +873,9 @@
+     list_init(&conn_rsrc_obj->received_list);
+ 
+     tcp_arg(newpcb, conn_rsrc_obj);
++#ifdef OTP_SOCKET_LWIP_NODELAY
++    tcp_nagle_disable(newpcb);
++#endif
+     tcp_recv(newpcb, tcp_recv_cb);
+     return conn_rsrc_obj;
+ }
+@@ -930,7 +943,11 @@
+     // The resource should have been set by now as make_resource was queued first
+     struct SocketResource *rsrc_obj = tpcb->callback_arg;
+     if (IS_NULL_PTR(rsrc_obj)) {
++        // Closed since the callback queued it: nobody will read it.
+         TRACE("Unexpected null resource in tcp_recv_handler -- buf = %p\n", (void *) event->tcp_recv.buf);
++        if (event->tcp_recv.buf) {
++            pbuf_free(event->tcp_recv.buf);
++        }
+     } else {
+         struct TCPReceivedItem *new_item = malloc(sizeof(struct TCPReceivedItem));
+         list_append(&rsrc_obj->received_list, &new_item->list_head);
+@@ -950,7 +967,12 @@
+ 
+ static err_t tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
+ {
+-    UNUSED(arg);
++    // An accepted pcb has no resource until the owner calls accept: refuse
++    // the data so lwIP keeps it (refused_data) and offers it again on its
++    // next timer tick, instead of queueing it for a pcb nobody reads yet.
++    if (arg == NULL) {
++        return ERR_MEM;
++    }
+ 
+     // Enqueue an event to further process recv
+     // The resource may or may not have been created, so we store tpcb instead.
+@@ -2491,22 +2513,30 @@
+         pbuf_free(p);
+     } else {
+         // If the socket is connection-mode, dest_addr shall be ignored.
+-        // Because we are copying, we cannot really send tcp_sndbuf(rsrc_obj->tcp_pcb) at once
+-        size_t buflen = MIN(len, TCP_MSS);
+-        int flags = TCP_WRITE_FLAG_COPY;
+-        if (buflen < len) {
+-            flags |= TCP_WRITE_FLAG_MORE;
++        // Queue as much as the send buffer takes, an MSS at a time (lwIP
++        // copies it), so a send larger than one segment is not cut short.
++        size_t queued = 0;
++        err = ERR_OK;
++        while (queued < len && tcp_sndbuf(rsrc_obj->tcp_pcb) > 0) {
++            size_t buflen = MIN(MIN(len - queued, TCP_MSS), tcp_sndbuf(rsrc_obj->tcp_pcb));
++            int flags = TCP_WRITE_FLAG_COPY;
++            if (queued + buflen < len) {
++                flags |= TCP_WRITE_FLAG_MORE;
++            }
++            err = tcp_write(rsrc_obj->tcp_pcb, buf + queued, buflen, flags);
++            if (err != ERR_OK) {
++                break;
++            }
++            queued += buflen;
+         }
+-        err = tcp_write(rsrc_obj->tcp_pcb, buf, buflen, flags);
+         if (err == ERR_MEM) {
+-            sent_data = 0;
+-        } else {
+-            if (err == ERR_OK) {
+-                err = tcp_output(rsrc_obj->tcp_pcb);
+-                if (err == ERR_OK) {
+-                    sent_data = buflen;
+-                }
+-            }
++            err = ERR_OK;
++        }
++        if (err == ERR_OK && queued > 0) {
++            err = tcp_output(rsrc_obj->tcp_pcb);
++        }
++        if (err == ERR_OK) {
++            sent_data = queued;
+         }
+     }
+     LWIP_END();
+@@ -2573,6 +2603,10 @@
+     size_t len = term_binary_size(data);
+ 
+     ssize_t sent_data = do_socket_send(rsrc_obj, buf, len, dest);
++    // A full send buffer is {ok, Data} (nothing sent yet), not closed.
++    if (sent_data == SocketWouldBlock) {
++        sent_data = 0;
++    }
+     SMP_RWLOCK_UNLOCK(rsrc_obj->socket_lock);
+ 
+     // {ok, RestData} | {error, Reason}
+@@ -2680,6 +2714,11 @@
+     UNUSED(err);
+ 
+     struct SocketResource *rsrc_obj = (struct SocketResource *) arg;
++    // A pcb whose socket was closed (tcp_arg NULL) or never got its
++    // resource (accepted, not yet handled) has no one to tell.
++    if (rsrc_obj == NULL) {
++        return;
++    }
+     struct RefcBinary *rsrc_refc = refc_binary_from_data(rsrc_obj);
+     GlobalContext *global = rsrc_refc->resource_type->global;
+     int32_t target_pid = rsrc_obj->selecting_process_id;

@@ -1,0 +1,148 @@
+# The Elixos coprocessor firmware (M32): AtomVM on bare metal for the K230's
+# little core (C908, rv64gc, M-mode), with lwIP over the §11 inter-core ring
+# and the coprocessor runtime's distribution on top. Sources are coproc/ (the
+# platform port), AtomVM at the commit melange/atomvm.yaml pins with its
+# patches plus melange/atomvm-baremetal/*.patch, lwIP 2.2.1 and Mbed TLS
+# 3.6.7 (crypto only). docs/notes/coproc-firmware.md has the design.
+#
+# Cross-built on x86_64 with Alpine's bare-metal riscv-none-elf GCC and
+# picolibc (ADR-094: no compiler under emulation). Two targets from the same
+# sources, differing only in build parameters (coproc/CMakeLists.txt):
+#   k230       loads at 0x07000000, UART3, ring at 0x08000000
+#   qemu-virt  loads at 0x80000000, the virt 16550, ring at 0x81000000
+#
+# Before the cross builds, the ring code (coproc/src/ring.c) runs the shared
+# golden vectors (spec/ring.vectors) with the host compiler.
+#
+# Outputs, under /usr/share/elixos/coproc-firmware/ in the APK:
+# coproc-<target>.elf and .bin, mkpayload.py, licenses/, SOURCES.
+package:
+  name: elixos-coproc-firmware
+  version: 0.8.0_git20260928
+  epoch: 0
+  description: "Elixos coprocessor firmware: AtomVM, lwIP and the inter-core ring on the K230 little core"
+  copyright:
+    - license: Apache-2.0 AND BSD-3-Clause AND (Apache-2.0 OR GPL-2.0-or-later)
+  dependencies:
+    runtime: []
+
+vars:
+  atomvm-commit: 3a9ea46b8cf28066caf126c46119dc58f950de5f
+  atomvm-sha256: 9e70f0f7ff3a112ebc45f48d0eacad6b94844cec105b9c3ca845d1eb1009d76a
+  lwip-tag: STABLE-2_2_1_RELEASE
+  lwip-sha256: ce0b7461c0ad9602c376f0bf07c5eb7253b48c7bf66f011c6bf3e2a96731c539
+  mbedtls-version: 3.6.7
+  mbedtls-sha256: a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6
+  rebar3-version: 3.27.0
+  rebar3-sha256: af85aab41f9fd74bdd6341ebdf6fe9c88077aab9f8eac82371583fa02f2b0bdf
+  packbeam-version: 0.8.2
+  packbeam-sha256: e60a55e2184698ec485fb1d02166b4cd173bbce5c99c7bced49a6e9be5f948ad
+
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+    packages:
+      - alpine-release=3.24.3-r0
+      - build-base
+      - busybox
+      - bash
+      - curl
+      - cmake
+      - samurai
+      - gperf
+      - python3
+      - gcc-riscv-none-elf=16.1.0-r0
+      - binutils-riscv-none-elf=2.45.1-r0
+      - picolibc-riscv-none-elf=1.8.11-r0
+      # atomvmlib.avm, built here with the same patches (estdlib's dist
+      # controller is patched; melange/atomvm.yaml's archive is not).
+      - erlang28
+      - erlang28-dev
+      - elixir
+      - mbedtls3-dev
+      - zlib-dev
+
+pipeline:
+  - runs: |
+      set -eu
+      work=/tmp/coproc
+      in=/home/build
+      out="${{targets.destdir}}/usr/share/elixos/coproc-firmware"
+      mkdir -p "$work" "$out/licenses"
+
+      # Downloads are kept in melange's cache directory (build/coproc-dl on
+      # the host) and verified on every use.
+      dl=/var/cache/melange
+      fetch() { # url file sha256
+        if ! echo "$3  $dl/$2" | sha256sum -c - 2>&1; then
+          curl -fsSL -o "$dl/$2.part" "$1"
+          mv "$dl/$2.part" "$dl/$2"
+          echo "$3  $dl/$2" | sha256sum -c -
+        fi
+      }
+      atomvm_url="https://github.com/atomvm/AtomVM/archive/${{vars.atomvm-commit}}.tar.gz"
+      lwip_url="https://github.com/lwip-tcpip/lwip/archive/refs/tags/${{vars.lwip-tag}}.tar.gz"
+      mbedtls_url="https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-${{vars.mbedtls-version}}/mbedtls-${{vars.mbedtls-version}}.tar.bz2"
+      fetch "$atomvm_url" atomvm-${{vars.atomvm-commit}}.tar.gz ${{vars.atomvm-sha256}}
+      fetch "$lwip_url" lwip-${{vars.lwip-tag}}.tar.gz ${{vars.lwip-sha256}}
+      fetch "$mbedtls_url" mbedtls-${{vars.mbedtls-version}}.tar.bz2 ${{vars.mbedtls-sha256}}
+      fetch "https://github.com/erlang/rebar3/releases/download/${{vars.rebar3-version}}/rebar3" \
+        rebar3-${{vars.rebar3-version}} ${{vars.rebar3-sha256}}
+      fetch "https://repo.hex.pm/tarballs/atomvm_packbeam-${{vars.packbeam-version}}.tar" \
+        atomvm_packbeam-${{vars.packbeam-version}}.tar ${{vars.packbeam-sha256}}
+
+      mkdir -p "$work/atomvm" "$work/lwip" "$work/mbedtls"
+      tar -xzf "$dl/atomvm-${{vars.atomvm-commit}}.tar.gz" -C "$work/atomvm" --strip-components=1
+      tar -xzf "$dl/lwip-${{vars.lwip-tag}}.tar.gz" -C "$work/lwip" --strip-components=1
+      tar -xjf "$dl/mbedtls-${{vars.mbedtls-version}}.tar.bz2" -C "$work/mbedtls" --strip-components=1
+      # The Unix build's patches (melange/atomvm/), then the bare-metal ones.
+      for patch in "$in"/patches/atomvm/*.patch "$in"/patches/atomvm-baremetal/*.patch; do
+        [ -e "$patch" ] || continue
+        echo "coproc-firmware: atomvm: $(basename "$patch")"
+        patch -d "$work/atomvm" -p1 --forward < "$patch"
+      done
+
+      # The ring against the shared golden vectors, on the build host.
+      cc -std=c11 -Wall -Wextra -Werror -I"$in/coproc/src" -o "$work/ring_vectors_test" \
+        "$in/coproc/test/ring_vectors_test.c" "$in/coproc/src/ring.c"
+      "$work/ring_vectors_test" "$in/ring.vectors"
+
+      for target in k230 qemu-virt; do
+        cmake -S "$in/coproc" -B "$work/build-$target" -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_TOOLCHAIN_FILE="$in/coproc/cmake/riscv-none-elf.cmake" \
+          -DCOPROC_TARGET=$target \
+          -DATOMVM_SRC="$work/atomvm" -DLWIP_DIR="$work/lwip" -DMBEDTLS_DIR="$work/mbedtls"
+        cmake --build "$work/build-$target" -j"$(nproc)"
+        install -m0644 "$work/build-$target/coproc-$target.elf" "$work/build-$target/coproc-$target.bin" "$out/"
+      done
+      install -m0755 "$in/coproc/tools/mkpayload.py" "$out/mkpayload.py"
+      sh "$in/coproc/tools/build-atomvmlib.sh" "$work/atomvm" "$work/build-atomvmlib" \
+        "$dl/rebar3-${{vars.rebar3-version}}" "$dl/atomvm_packbeam-${{vars.packbeam-version}}.tar"
+      install -m0644 "$work/build-atomvmlib/libs/atomvmlib.avm" "$out/atomvmlib.avm"
+
+      install -m0644 "$work/atomvm/LICENSES/Apache-2.0.txt" "$out/licenses/atomvm-Apache-2.0.txt"
+      install -m0644 "$work/lwip/COPYING" "$out/licenses/lwip-COPYING"
+      install -m0644 "$work/mbedtls/LICENSE" "$out/licenses/mbedtls-LICENSE"
+      {
+        echo "atomvm ${{vars.atomvm-commit}} $atomvm_url sha256=${{vars.atomvm-sha256}}"
+        echo "lwip ${{vars.lwip-tag}} $lwip_url sha256=${{vars.lwip-sha256}}"
+        echo "mbedtls ${{vars.mbedtls-version}} $mbedtls_url sha256=${{vars.mbedtls-sha256}}"
+        echo "toolchain $(riscv-none-elf-gcc --version | awk 'NR == 1')"
+        echo "libc picolibc-riscv-none-elf=1.8.11-r0 (Alpine v3.24)"
+        for patch in "$in"/patches/*/*.patch; do
+          [ -e "$patch" ] || continue
+          echo "patch $(basename "$(dirname "$patch")")/$(basename "$patch") sha256=$(sha256sum "$patch" | cut -d' ' -f1)"
+        done
+      } > "$out/SOURCES"
+
+      # Evidence in the build log: the images' sizes, entry points and the
+      # first instruction at the load address.
+      for target in k230 qemu-virt; do
+        riscv-none-elf-size -A "$out/coproc-$target.elf"
+        riscv-none-elf-readelf -h "$out/coproc-$target.elf"
+        ls -l "$out/coproc-$target.bin"
+      done
+      cat "$out/SOURCES"

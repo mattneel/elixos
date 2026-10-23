@@ -12,7 +12,7 @@ BUILD ?= build
 export ELIXOS_BUILD := $(abspath $(BUILD))
 
 .PHONY: help check-tools test test-shim deps test-os test-qemu test-qemu-aarch64 test-qemu-riscv64 image-riscv64 check ci audit demo demos \
-        image images reproducible uefi-image disk qemu format clean distclean atomvm k230-bringup
+        image images reproducible uefi-image disk qemu format clean distclean atomvm k230-bringup coproc-firmware
 
 help: ## List targets
 	@awk -F':.*## ' '/^[a-z0-9-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -32,7 +32,7 @@ deps: ## Fetch the locked Elixir dependency set for the OS
 test-os: deps atomvm ## ExUnit tests for the Elixir userland (no QEMU)
 	cd os && ELIXOS_MILESTONE=$(MILESTONE) mix test
 
-test-qemu: deps image uefi-image atomvm ## Boot real images in QEMU (slow): os/test/integration
+test-qemu: deps image uefi-image atomvm coproc-firmware ## Boot real images in QEMU (slow): os/test/integration
 	cd os && ELIXOS_QEMU=1 ELIXOS_MILESTONE=$(MILESTONE) mix test test/integration
 
 test-qemu-aarch64: images ## The aarch64 smoke set, on qemu-system-aarch64 (TCG: slow)
@@ -45,7 +45,7 @@ test-qemu-riscv64: image-riscv64 ## The riscv64 smoke set, on qemu-system-riscv6
 
 ci: test test-qemu images ## Everything for the current milestone, both architectures
 
-check: image atomvm ## While working on one milestone: host tests + its own integration tests, not the suite (M=26)
+check: image atomvm coproc-firmware ## While working on one milestone: host tests + its own integration tests, not the suite (M=26)
 	@[ -n "$(M)" ] || { echo "usage: make check M=<milestone>" >&2; exit 1; }
 	zig build test -Dmilestone=$(M) --summary all
 	cd os && ELIXOS_MILESTONE=$(M) mix test
@@ -75,6 +75,9 @@ image-riscv64: ## The riscv64 image (M28, ADR-097), cross-built on the build hos
 
 atomvm: ## AtomVM for the build host, the coprocessor stand-in the M29 tests run (cached)
 	scripts/build-atomvm.sh
+
+coproc-firmware: ## The little core's bare-metal AtomVM firmware (ring, lwIP) for the K230 and QEMU virt (M32, cached)
+	scripts/build-coproc-firmware.sh
 
 k230-bringup: ## The T-Display K230 bring-up SD card (M30): firmware, riscv64 kernel, DTB, little-core image
 	scripts/build-image.sh riscv64

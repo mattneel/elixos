@@ -1,0 +1,134 @@
+/*
+ * The coprocessor firmware's memory map (docs/notes/coproc-firmware.md),
+ * filled in by coproc/CMakeLists.txt. The little core's region starts at the
+ * load address (the K230's 16 MiB reserved for it, REGION bytes):
+ *
+ *   [0, PAYLOAD)          this image: code, data, .bss, the stack
+ *   [PAYLOAD, HEAP)       the payload (config, AVM packs, files), loaded separately
+ *   [HEAP, REGION)        the malloc arena
+ *
+ * The §11 inter-core ring is a separate region shared with the big core,
+ * [RING_ADDR, RING_ADDR + S) (on the K230 the board DT's no-map region).
+ *
+ * The image is a flat binary entered at its first byte; everything is in RAM,
+ * so .data and .tdata are used in place (no copy). The TLS symbols follow
+ * picolibc's own picolibc.ld, whose _init_tls/_set_tls read them.
+ */
+OUTPUT_ARCH(riscv)
+ENTRY(_start)
+
+MEMORY
+{
+	image (rwx) : ORIGIN = @COPROC_LOAD_ADDR@, LENGTH = @COPROC_PAYLOAD_OFFSET@
+}
+
+SECTIONS
+{
+	.text : {
+		KEEP(*(.text.start))
+		*(.text.unlikely .text.unlikely.*)
+		*(.text.startup .text.startup.*)
+		*(.text .text.*)
+	} >image
+
+	.init_array : ALIGN(8) {
+		PROVIDE_HIDDEN(__preinit_array_start = .);
+		PROVIDE_HIDDEN(__bothinit_array_start = .);
+		KEEP(*(.preinit_array))
+		PROVIDE_HIDDEN(__preinit_array_end = .);
+		PROVIDE_HIDDEN(__init_array_start = .);
+		KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*) SORT_BY_INIT_PRIORITY(.ctors.*)))
+		KEEP(*(.init_array .ctors))
+		PROVIDE_HIDDEN(__init_array_end = .);
+		PROVIDE_HIDDEN(__bothinit_array_end = .);
+		PROVIDE_HIDDEN(__fini_array_start = .);
+		KEEP(*(SORT_BY_INIT_PRIORITY(.fini_array.*) SORT_BY_INIT_PRIORITY(.dtors.*)))
+		KEEP(*(.fini_array .dtors))
+		PROVIDE_HIDDEN(__fini_array_end = .);
+	} >image
+
+	.rodata : {
+		*(.rdata)
+		*(.rodata .rodata.*)
+		*(.srodata.cst16) *(.srodata.cst8) *(.srodata.cst4) *(.srodata.cst2)
+		*(.srodata .srodata.*)
+		*(.data.rel.ro .data.rel.ro.*)
+		*(.got.plt) *(.got)
+	} >image
+
+	.data : ALIGN(8) {
+		*(.data .data.*)
+		. = ALIGN(8);
+		PROVIDE(__global_pointer$ = . + 0x800);
+		*(.sdata .sdata.* .sdata2.*)
+		PROVIDE(__tls_head_start = .);
+		KEEP(*(.stack_chk .stack_chk.*))
+		PROVIDE(__tls_head_end = .);
+	} >image
+
+	.tdata : ALIGN_WITH_INPUT {
+		PROVIDE(__tls_first = .);
+		*(.tdata .tdata.*)
+		PROVIDE(__data_end = .);
+		PROVIDE(__tdata_end = .);
+	} >image
+
+	.tbss (NOLOAD) : {
+		*(.tbss .tbss.*)
+		*(.tcommon)
+		PROVIDE(__tls_end = .);
+		PROVIDE(__tbss_end = .);
+	} >image
+
+	/* ld.bfd does not advance the location counter for .tbss. */
+	.tbss_space (NOLOAD) : {
+		. = ADDR(.tbss);
+		. = . + SIZEOF(.tbss);
+	} >image
+
+	PROVIDE(__tls_start = SIZEOF(.tdata) ? ADDR(.tdata) : ADDR(.tbss));
+	PROVIDE(__tls_align = MAX(ALIGNOF(.tdata), ALIGNOF(.tbss)));
+	PROVIDE(__tls_head_size = ALIGN(__tls_head_end - __tls_head_start, __tls_align));
+	PROVIDE(__tdata_start = ADDR(.tdata) - __tls_head_size);
+	PROVIDE(__tdata_source = LOADADDR(.tdata) - __tls_head_size);
+	PROVIDE(__tdata_source_end = LOADADDR(.tdata) + SIZEOF(.tdata));
+	PROVIDE(__tdata_size = SIZEOF(.tdata) + __tls_head_size);
+
+	.bss (NOLOAD) : ALIGN(8) {
+		. = ALIGN(__tls_align);
+		PROVIDE(__tls_tail_start = .);
+		KEEP(*(.tls_tail_extra .tls_tail_extra.*))
+		PROVIDE(__tls_tail_end = .);
+		*(.sbss .sbss.*)
+		*(.bss .bss.*)
+		*(COMMON)
+		. = ALIGN(16);
+		__bss_end = .;
+	} >image
+
+	PROVIDE(__tls_space_size = __tls_end - __tls_start);
+	PROVIDE(__tls_space = __tls_start);
+	PROVIDE(__bss_start = ADDR(.tbss));
+	PROVIDE(__tbss_start = ADDR(.tbss));
+	PROVIDE(__tbss_offset = ADDR(.tbss) - __tls_start);
+	PROVIDE(__tbss_size = SIZEOF(.tbss));
+	PROVIDE(__tls_space_pad = ALIGN(__tls_space_size, __tls_align) - __tls_space_size);
+	PROVIDE(__tls_tail_size = __tls_space_pad + (__tls_tail_end - __tls_tail_start));
+	PROVIDE(__tls_size = __tls_head_size + __tls_space_size + __tls_tail_size);
+	PROVIDE(__tls_base = __tls_space - __tls_head_size);
+
+	.stack (NOLOAD) : ALIGN(16) {
+		__stack_bottom = .;
+		. = . + @COPROC_STACK_SIZE@;
+		__stack_top = .;
+	} >image
+
+	__image_end = .;
+	__payload_start = ORIGIN(image) + @COPROC_PAYLOAD_OFFSET@;
+	__payload_end = ORIGIN(image) + @COPROC_HEAP_OFFSET@;
+	__heap_start = ORIGIN(image) + @COPROC_HEAP_OFFSET@;
+	__heap_end = ORIGIN(image) + @COPROC_REGION_SIZE@;
+	__ring_start = @COPROC_RING_ADDR@;
+
+	/DISCARD/ : { *(.note*) *(.comment) *(.eh_frame*) *(.riscv.attributes) }
+}

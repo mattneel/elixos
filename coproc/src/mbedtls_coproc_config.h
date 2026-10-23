@@ -1,0 +1,49 @@
+/*
+ * Elixos coprocessor firmware: Mbed TLS user configuration. Only what
+ * AtomVM's otp_crypto.c needs for distribution and the runtime (md5 for the
+ * handshake digest, sha256 for bundle digests, CTR-DRBG for
+ * crypto:strong_rand_bytes/1); no TLS, X.509, PSA or file system. After
+ * AtomVM's stm32 platform (mbedtls_stm32_user_config.h).
+ */
+#ifndef COPROC_MBEDTLS_CONFIG_H
+#define COPROC_MBEDTLS_CONFIG_H
+
+#define MBEDTLS_NO_PLATFORM_ENTROPY
+#define MBEDTLS_PLATFORM_MS_TIME_ALT
+
+#undef MBEDTLS_HAVE_TIME_DATE
+#undef MBEDTLS_TIMING_C
+#undef MBEDTLS_FS_IO
+#undef MBEDTLS_NET_C
+#undef MBEDTLS_PSA_CRYPTO_C
+#undef MBEDTLS_PSA_CRYPTO_STORAGE_C
+#undef MBEDTLS_PSA_ITS_FILE_C
+#undef MBEDTLS_PSA_CRYPTO_CLIENT
+#undef MBEDTLS_LMS_C
+#undef MBEDTLS_SSL_TLS_C
+#undef MBEDTLS_SSL_CLI_C
+#undef MBEDTLS_SSL_SRV_C
+#undef MBEDTLS_SSL_SERVER_NAME_INDICATION
+#undef MBEDTLS_SSL_DTLS_HELLO_VERIFY
+#undef MBEDTLS_SSL_DTLS_ANTI_REPLAY
+#undef MBEDTLS_SSL_DTLS_CONNECTION_ID
+#undef MBEDTLS_SSL_PROTO_DTLS
+#undef MBEDTLS_SSL_PROTO_TLS1_2
+#undef MBEDTLS_SSL_PROTO_TLS1_3
+#undef MBEDTLS_SSL_TLS1_3_COMPATIBILITY_MODE
+#undef MBEDTLS_SSL_KEEP_PEER_CERTIFICATE
+#undef MBEDTLS_SSL_RENEGOTIATION
+#undef MBEDTLS_SSL_TICKET_C
+#undef MBEDTLS_SSL_COOKIE_C
+#undef MBEDTLS_SSL_CACHE_C
+#undef MBEDTLS_X509_USE_C
+#undef MBEDTLS_X509_CREATE_C
+#undef MBEDTLS_X509_CRT_PARSE_C
+#undef MBEDTLS_X509_CRL_PARSE_C
+#undef MBEDTLS_X509_CSR_PARSE_C
+#undef MBEDTLS_X509_CRT_WRITE_C
+#undef MBEDTLS_X509_CSR_WRITE_C
+#undef MBEDTLS_PKCS7_C
+#undef MBEDTLS_SELF_TEST
+
+#endif
