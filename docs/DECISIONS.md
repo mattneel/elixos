@@ -3026,7 +3026,7 @@ unpowered where the board allows.
 **Context.** The board has 1 GiB of RAM. The little core takes 16 MiB and
 OpenSBI 2 MiB, leaving Linux about 1006 MiB for the kernel, the initramfs
 held in RAM, the BEAM and everything it starts. The riscv64 image already
-leaves out the browser and GUI renderer (ADR-097).
+leaves out the browser (ADR-097); it carries the Emerge GUI renderer.
 
 **Decision.** The deck image is the riscv64 image plus the board files
 (firmware, DTB, coprocessor image), with heavy services off by default:

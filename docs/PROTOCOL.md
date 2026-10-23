@@ -562,3 +562,43 @@ ring → TUN, packets dropped as above, and frames this incarnation discarded
 as corrupt. `--offset` is page-aligned; a regular file must hold
 `offset + S` bytes. Without `--address` the interface is created but left
 down.
+
+## §12 The deck framebuffer (M33)
+
+Elixos renders and the coprocessor scans out (ADR-106). The framebuffer is a
+second shared region, separate from the ring (§11): reserved RAM on the
+board, an ivshmem device backed by a host file in QEMU, a plain file in host
+tests.
+
+**Layout.** All integers little-endian `u32`. A 4096-byte header page, then
+the pixels:
+
+| Offset | Field | Written by |
+|--------|-------|------------|
+| 0 | magic `0x44584C45` ("ELXD") | Elixos, last at initialisation |
+| 4 | version `1` | Elixos |
+| 8 | width in pixels: `568` | Elixos |
+| 12 | height in pixels: `1232` | Elixos |
+| 16 | stride in bytes: `width × 2` | Elixos |
+| 20 | format: `1` = RGB565, little-endian per pixel | Elixos |
+| 24 | seq: committed frames, wrapping at 2^32 | Elixos |
+| 28, 32, 36, 40 | damage `x, y, w, h` of the last commit | Elixos |
+| 44 | shown: the last seq the coprocessor scanned out | coprocessor |
+| 48-4095 | zero | - |
+
+Pixel `(x, y)` is at `4096 + y × stride + 2x`. The orientation is the
+panel's own: portrait, 568 wide, 1232 tall, origin top left. A region is at
+least `4096 + stride × height` bytes (1,403,712; 1.5 MiB reserved).
+
+**Committing.** Elixos writes pixels, then the damage rectangle, then (after
+a write fence) increments `seq`. The coprocessor polls `seq`; when it
+differs from `shown` it reads the damage rectangle (after a read fence),
+pushes at least that rectangle to the panel and stores `shown`. A damage
+rectangle covering the whole panel is always correct. Elixos may commit again
+before the coprocessor catches up; the coprocessor then pushes the union of
+what it missed, or the whole frame.
+
+**When Elixos is away.** While the BEAM restarts, or before the first
+commit, the coprocessor's display driver draws its own status line (the
+`coproc_display` status, ADR-113) over the last frame; the next commit
+replaces it.

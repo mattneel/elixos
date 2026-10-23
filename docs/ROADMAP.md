@@ -1097,6 +1097,9 @@ namespaces: 54-81 MB/s Zig writer to Elixir reader, 62-72 MB/s TCP helper to
 helper, 1.1-2.2 ms ping (the 1 ms poll). Capacity is a power of two so stream
 positions survive the 2^32 counter wrap.
 
+- [x] `make ci` green with `MILESTONE=31` (Zig 102, host 400, QEMU 61; images
+  reproducible).
+
 **Hardware checklist (human-run).**
 - [ ] Ping across the link.
 - [ ] Distribution comes up over it.
