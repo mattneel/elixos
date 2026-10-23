@@ -16,6 +16,8 @@
  *   COPROC_FB_ADDR         the §12 deck framebuffer region (K230: 0x08100000,
  *                          the board DT's `deck-fb`)
  *   COPROC_FB_SIZE         its size (K230: 0x180000, 1.5 MiB)
+ *   COPROC_PANEL_K230      1: the RM69A10 on the K230's VO and DSI host
+ *                          (panel_k230.c); 0: no display block (QEMU virt)
  *   COPROC_UART_BASE       16550-compatible UART register base
  *   COPROC_UART_SHIFT      register stride shift (DesignWare: 2, virt: 0)
  *   COPROC_UART_WORD       1: 32-bit register accesses, 0: byte accesses

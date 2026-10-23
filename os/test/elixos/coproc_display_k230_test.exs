@@ -5,12 +5,16 @@ defmodule Elixos.CoprocDisplayK230Test do
   the header, pushes what changed with the status line laid over it, and
   stores `shown`.
 
-  The hardware scan-out (RM69A10 over the K230's MIPI DSI) needs the board;
-  here the region is a plain file and the panel a mirror file that receives
-  every push (`ELIXOS_COPROC_DECK_REGION`, `ELIXOS_COPROC_DECK_PANEL`), on
-  AtomVM's Unix build with `ELIXOS_COPROC_DRIVERS=sim,display=k230`. The pure
-  bookkeeping (`:coproc_deck_scanout`) and the coprocessor's font
-  (`:coproc_font`, generated from Spleen) are also checked on the BEAM.
+  The hardware scan-out needs the board: there the K230's VO scans the region
+  out itself and the status band is a VO layer of its own
+  (coproc/src/panel_k230.c, checked on the build host against the vendor's
+  register trace by coproc/test/panel_trace/run.sh). Here the region is a
+  plain file and the panel a mirror file that receives every push with the
+  status band composed in (`ELIXOS_COPROC_DECK_REGION`,
+  `ELIXOS_COPROC_DECK_PANEL`), on AtomVM's Unix build with
+  `ELIXOS_COPROC_DRIVERS=sim,display=k230`. The pure bookkeeping
+  (`:coproc_deck_scanout`) and the coprocessor's font (`:coproc_font`,
+  generated from Spleen) are also checked on the BEAM.
   """
   use ExUnit.Case, async: false
 

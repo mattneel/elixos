@@ -3,7 +3,7 @@
 %% region's header; when seq differs from shown it pushes what changed
 %% (coproc_deck_scanout:plan/2) to the panel, the status line laid over it,
 %% then stores shown. set_status/2 (the lease's "Elixos restarting", or an
-%% explicit status) pushes the status band at once.
+%% explicit status) shows the status band at once.
 %%
 %% Two seams, each chosen at start from the environment (the payload's on
 %% the board, the launcher's on the host):
@@ -12,13 +12,15 @@
 %%           0x08100000 through the firmware's NIFs coproc_k230:fb_read/2 and
 %%           fb_write32/2 (coproc/src/platform_nifs.c); a path: that file
 %%           (posix_pread/pwrite), as the host tests use it.
-%%   panel   ELIXOS_COPROC_DECK_PANEL unset: the RM69A10 over the K230's MIPI
-%%           DSI host, coproc_k230:panel_open/0 and panel_write/5 - which
-%%           REQUIRE THE BOARD and are not ported yet: the firmware returns
-%%           {error, dsi_not_ported} and says so on UART3
-%%           (coproc/src/panel_k230.c). A path: a mirror file of the panel
-%%           (568 x 1232 RGB565, no header) that receives every push - the
-%%           host tests' fake scan-out sink.
+%%   panel   ELIXOS_COPROC_DECK_PANEL unset: the RM69A10 on the K230
+%%           (coproc/src/panel_k230.c). coproc_k230:panel_open/0 brings it up;
+%%           from then on the K230's VO scans the region's pixels out to the
+%%           panel by itself every frame, so a push is nothing but counting,
+%%           and the status band is a VO layer of its own over rows 0-27,
+%%           set with coproc_k230:panel_status/1 (<<>> removes it). REQUIRES
+%%           THE BOARD. A path: a mirror file of the panel (568 x 1232
+%%           RGB565, no header) that receives every push with the status
+%%           band composed in - the host tests' fake scan-out sink.
 %%
 %% A panel that cannot be opened leaves the backend polling but never storing
 %% shown: nothing was scanned out. info/1 reports panel => {error, Reason}.
@@ -50,7 +52,11 @@ start(Kept) ->
         pushes => 0
     },
     _ = erlang:send_after(0, self(), poll),
-    {ok, State}.
+    case Panel of
+        % The status layer outlives VM restarts: show this start's status.
+        board -> {ok, show_status(State)};
+        _ -> {ok, State}
+    end.
 
 info(State) ->
     Kept = with([status, frames, last_region, hdmi, shown, pushes, lease], State),
@@ -67,7 +73,16 @@ kind({error, _} = Error) -> Error.
 
 set_status(Text, State0) ->
     State = State0#{status := Text, overlay := coproc_deck_scanout:overlay(Text)},
-    {ok, push(coproc_deck_scanout:status_band(), State)}.
+    {ok, show_status(State)}.
+
+show_status(#{panel := board, overlay := Overlay} = State) ->
+    Band = case Overlay of none -> <<>>; Pixels -> Pixels end,
+    case coproc_k230:panel_status(Band) of
+        ok -> State;
+        {error, _} = Error -> State#{panel := Error}
+    end;
+show_status(State) ->
+    push(coproc_deck_scanout:status_band(), State).
 
 %% Elixos's explicit update: push it now, the poll may follow with the same.
 flush(Region, #{frames := Frames} = State) ->
@@ -115,13 +130,17 @@ push(_Rect, #{panel := {error, _}} = State) ->
     State;
 push(_Rect, #{region := {error, _}} = State) ->
     State;
-push(Rect, #{region := Region, panel := Panel, overlay := Overlay, pushes := Pushes} = State) ->
+%% The VO is scanning the region out: the pixels are on the panel by the
+%% next frame.
+push(_Rect, #{panel := board, pushes := Pushes} = State) ->
+    State#{pushes := Pushes + 1};
+push(Rect, #{region := Region, panel := {file, _Path, Fd}, overlay := Overlay, pushes := Pushes} = State) ->
     Result = lists:foldl(
         fun
             (Strip, ok) ->
                 Pixels = iolist_to_binary([read(Region, Offset, Length)
                                            || {Offset, Length} <- coproc_deck_scanout:rows(Strip)]),
-                panel_write(Panel, Strip, coproc_deck_scanout:compose(Strip, Pixels, Overlay));
+                mirror(Fd, Strip, coproc_deck_scanout:compose(Strip, Pixels, Overlay));
             (_Strip, Error) ->
                 Error
         end,
@@ -180,11 +199,6 @@ open_panel(Path) ->
         {ok, Fd} -> {file, Path, Fd};
         {error, _} = Error -> Error
     end.
-
-panel_write(board, {X, Y, W, H}, Pixels) ->
-    coproc_k230:panel_write(X, Y, W, H, Pixels);
-panel_write({file, _Path, Fd}, Rect, Pixels) ->
-    mirror(Fd, Rect, Pixels).
 
 mirror(Fd, {0, Y, 568, _H}, Pixels) ->
     pwrite(Fd, Pixels, Y * coproc_deck_scanout:stride());

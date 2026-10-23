@@ -1,18 +1,182 @@
-# The T-Display K230 panel: vendor sources for the scan-out port (M33)
+# The T-Display K230 panel: the port and its vendor sources (M33)
 
 The coprocessor's display backend (`os/src/coproc_display_k230.erl`) does
-the §12 bookkeeping and composes the status line; the one function that
-needs the board is the scan-out, `coproc/src/panel_k230.c`. It is **not
-ported**: `panel_open` returns `{error, dsi_not_ported}` and prints so on
-UART3. This page pins the vendor sources a port starts from (researched
-2026-10-23 by fetching each file at the commit given; line numbers as read).
+the §12 bookkeeping; the hardware is `coproc/src/panel_k230.c`. It is
+**ported** (2026-10-23) and **has never run on a board**: the bring-up is
+LilyGO's bare-metal U-Boot logo path for the RM69A10, re-implemented
+register for register and checked against the vendor code on the build
+host; the scan-out is the K230's VO scanning the §12 region by itself. The
+first section below is the port; the rest of the page is the research it
+started from (vendor sources, pinned).
 
-A note for the port: the K230's VO block scans a framebuffer out of DDR by
-itself (OSD layers with a base address and a stride). If an OSD format
-accepts RGB565 little-endian, the VO can scan the §12 region's pixels in
-place (`0x08101000`, stride 1136) and `panel_write` reduces to nothing
-beyond the uncached view of the region; the vendor path below uses OSD4 in
-XRGB8888 (format 3), so the RGB565 format code must be found first.
+## The port
+
+### What runs
+
+`panel_k230_open()` (called by `coproc_k230:panel_open/0`, once per firmware
+boot; VM restarts get the first result) does, in the vendor's order and with
+the vendor's values and delays (`U` = LT-BSP's U-Boot overlay, below):
+
+| Step | Vendor source |
+|---|---|
+| display power domain on (`disp_lpi_ctl` 0x9110303c, state 0x91103040), 500 µs | `U/board/canaan/common/logo/k230_logo.c` 144-193, called at 353 |
+| **Elixos:** IO22, IO25, IO35 muxed as GPIO outputs; IO35 high, 10 ms | board DT (LT-RT `canmv_k230/src/uboot/uboot/arch/riscv/dts/k230_canmv_v3p0.dts` 118, 124, 136); schematic net `IO35_DISEN` (below) |
+| IO22 reset: high, 200 ms, low, 200 ms, high, 200 ms; IO25 (LCD_EN) high | `st7701.c` 27-73, `k230_board_common.c` 363-411 |
+| display block reset 0x91101090, VO soft reset | `display_logo.c` 260-272 |
+| pixel clock: 0x91100078 divider 14 = 594 MHz / 15 = 39.6 MHz | `display_logo.c` 108-116; `k230_logo.c` 316-334 |
+| 2-lane D-PHY: PHY0 and PHY1 test codes, PLL M = 97 + 2, N = 4 + 1 (24 MHz × 99 / 5 = 475.2 Mbit/s per lane), hsfreqrange 0x87, lock polls | `display_logo.c` 802-977, 1013-1075 |
+| DSI host: 2 lanes, LP divider 8, video timing in lane-byte clocks, command mode with every command in LP | `display_logo.c` 28-132, 179-194; `st7701.c` 778-805 |
+| RM69A10 DCS list (13 packets, exact bytes and packet types, 3 ms each, 120 ms after sleep-out, 10 ms after display-on; brightness 0xFE) | `st7701.c` 75-106; packets `display_logo.c` 197-257 |
+| VO: DMA, mixer (RGB end to end), OSD0-3 and layer 0-2 defaults, line interrupt, timing 748 × 1268, background | `display_logo.c` 278-603; `st7701.c` 809-826 |
+| OSD4 on: the framebuffer layer | `display_logo.c` 692-725, with the differences below |
+| DSI host to video mode, HS commands, clock lane on (last, as the vendor does for the RM69A10) | `display_logo.c` 145-176; `st7701.c` 874-876 |
+
+About 0.93 s of delays. 748 × 1268 at 39.6 MHz is 41.8 Hz. The pixel-clock
+formula was the open "pixclk_div 14 does not match its comment" item: the
+divider is `594 MHz / (div + 1)`, which gives every pclk in `k230_logo.c`'s
+tables (39.6 MHz for 14, 74.25 MHz for 7, 24.75 MHz for 23).
+
+The U-Boot timing (39.6 MHz, 475.2 Mbit/s, hsfreqrange 0x87) is used, not
+the Linux one (49.5 MHz, 594 Mbit/s, PLL computed at run time): it is the
+bare-metal path the trace test can compile, and it is a complete constant
+set.
+
+### Scan-out: the VO scans the region (design a)
+
+After `panel_open` the VO's OSD4 layer reads the §12 pixels
+(`COPROC_FB_ADDR + 4096` = `0x08101000`, RGB565 = OSD format 2, stride
+1136 = 142 × 8 bytes, 568 × 1232) every frame, and the DSI host streams them
+to the panel in video mode. A commit needs no push: the backend's push on the
+board only counts, and `shown` is stored as before (the pixels are on the
+panel by the next frame, at most 24 ms later). The status band is OSD5, a
+568 × 28 RGB565 layer over rows 0-27 fed from a 64-byte-aligned buffer in
+the firmware (`coproc_k230:panel_status/1` copies the band there and enables
+it; `<<>>` disables it); Linux's Canaan driver stacks OSD5 (its cursor plane)
+over OSD4 (its primary plane).
+
+Why not DSI command-mode transfers of the damage (design b): the vendor's
+DSI setup for this panel is video mode (`dwc_dsi_init` writes `MODE_CFG` 0),
+no vendor path writes pixels with DCS `write_memory_start`, and pushing
+pixels through the DSI host's generic FIFO would cost the little core a copy
+of every damaged pixel plus the 1.4 MB first frame, where the VO costs
+nothing. The region is shared and uncached (PROTOCOL §12, ADR-112/115):
+the big core's writes are in DDR when it commits, and the VO reads DDR; the
+little core still reads only the header and writes only `shown`. A commit
+can tear for one frame (the VO may be mid-frame when Elixos writes); there is
+no TE line and the vendor path has no double buffering.
+
+`coproc_display_k230` with `ELIXOS_COPROC_DECK_PANEL` set (the host tests)
+keeps the old path: it composes the band into each push and writes a mirror
+file.
+
+### The trace test
+
+`coproc/test/panel_trace/run.sh` (run by `melange/coproc-firmware.yaml`
+before the cross builds, like the ring vectors; by hand
+`sh coproc/test/panel_trace/run.sh coproc build/coproc-dl build/panel-trace`):
+
+1. Fetches the vendor files of `coproc/test/panel_trace/vendor.lock` (LT-BSP
+   `display_logo.c`, `display_logo.h`, `st7701.c`, `k230_logo.c`,
+   `k230_board_common.c`; CAN-LS `vo_table.h`, `sysctl.h`, `platform.h`), each
+   checked by sha256, into the download cache.
+2. Compiles them on the build host against a register model
+   (`coproc/test/k230_mmio_mock.c`): `writel`/`readl`/`mdelay`/`udelay` become
+   calls into the model (`coproc/test/panel_trace/include/`), and the two
+   pieces that use plain volatile pointers (`k230_logo.c` 9-193 and
+   `k230_board_common.c` 358-411, extracted by line) are compiled as C++ with
+   `uint32_t` standing for a register cell class that turns loads and stores
+   into model calls (`golden_board.cc`). `golden_main.c` runs
+   `k230_display_logo()`'s two calls (353-354) with the RM69A10 parameters
+   (317-334).
+3. Compiles `panel_k230.c` against the same model and records
+   `panel_k230_open()`.
+4. Both traces list every register write and read (address, value) and every
+   delay (µs), in order. The model returns a per-address pattern for
+   registers never written (so read-modify-write masks show), and makes the
+   polled status registers ready on their third read (`nominal`) or never
+   (`dphy-timeout`: the vendor's 1000 and 2 × 100000 polls, 408k events).
+5. `patch --fuzz=0` applies `coproc/test/panel_trace/elixos.patch` to the
+   vendor trace; the result must equal ours byte for byte, in both
+   scenarios. The patch's header documents each hunk:
+   - pads and IO35 (inserted before the reset pulse);
+   - the GPIO output fix: `k230_gpio('o')` writes the *direction* register's
+     old value (plus the pin) into the *data* register, driving every other
+     output of the bank; ours sets the pin's bit in the data register's own
+     value (one extra read per output step, and different data-register
+     values afterwards);
+   - the VO scaler coefficient tables (320 writes from `vo_table.h`, GPL-2.0)
+     are not loaded: only the video layers 0-2 scale and they stay off;
+   - OSD4: format 2 not 3, address `0x08101000` not `0x1f000000`, stride 142
+     not 284.
+
+   Everything else - 427 events of ours, the vendor's 737 less the 320 table
+   writes - is identical. Result on 2026-10-23 (host gcc and in the melange
+   build): `panel trace (nominal): ours = vendor's + elixos.patch: 427
+   events, vendor's 737`; `panel trace (dphy-timeout): ... 408408 events,
+   vendor's 408718`. A changed DCS byte (0xFE → 0xFF) fails it.
+6. Runs `coproc/test/panel_k230_test.c`: the power domain first; IO22/25/35
+   end as driven outputs; OSD4's registers; no scaler writes; the DCS
+   headers in order; video mode and the clock lane last; one bring-up per
+   boot; a power-domain failure stops after 4 accesses; a D-PHY timeout runs
+   the vendor's bounded polls and still completes the sequence, then fails;
+   the status band's OSD5 registers, its buffer a copy, removal keeps OSD4;
+   wrong sizes and calls before open are refused; the QEMU build
+   (`COPROC_PANEL_K230=0`) touches nothing.
+
+What the test does not show: that the vendor sequence is right for this
+board (it is LilyGO's), and anything the hardware does with the values.
+
+### Licences
+
+The U-Boot overlay files (`display_logo.c/.h`, `st7701.c`, `k230_logo.c`) have
+no licence header and live in U-Boot, so they are GPL-2.0+; `vo_table.h`
+says GPL-2.0; `k230_board_common.c`, `sysctl.h`, `platform.h` and the board DT
+are Canaan's BSD-3-Clause; Linux's `canaan_vo.c` (the RGB565 format code) is
+GPL-2.0-only. `panel_k230.c` copies no vendor code: it is our own
+implementation of the register accesses (addresses, values, order, delays)
+and the panel's DCS bytes, i.e. hardware facts, as data tables and new code;
+the GPL coefficient table is deliberately left out. The vendor files are
+compiled only into the host test binaries in `build/`, never into the
+firmware, so the firmware's licence (Apache-2.0 AND BSD-3-Clause AND
+(Apache-2.0 OR GPL-2.0-or-later)) is unchanged. `[INFERENCE]` That register
+sequences are not copyrightable expression is the usual reading, not legal
+advice; if that is doubted, the firmware would have to be GPL-2.0+.
+
+### Only the board can tell
+
+1. UART3 prints `elixos coproc: panel: RM69A10 568x1232 up, the VO scans
+   0x08101000 ...`, not a power-domain or D-PHY failure.
+2. IO35: `IO35_DISEN` switches the panel supply (Q3 to `LCD_VDD`) and high is
+   on. If the panel stays dark with the D-PHY up, try IO35 low; if the
+   panel was lit before (U-Boot logo) and goes dark at our IO35 step, the
+   polarity is inverted. The board DT muxes IO35 as GPIO; LilyGO's Linux uses
+   it as I2S data.
+3. Colours and byte order: RGB565 through OSD format 2 with DMA control 0x40
+   (the vendor's OSD4 value; Linux uses 0x4F for RGB565). Red and blue
+   swapped, or green garbled, means the DMA byte map (`OSD_DMA_CTRL` bits 5:4,
+   `1234 -> 2143` = 2) or bit 6.
+4. Orientation and position: the image starts at the active window's
+   origin (XZONE/YZONE: 40, 16), as the vendor logo does.
+5. That OSD layers need no scaler coefficients (hunk 2). If OSD4 stays
+   black while the background colour (white, `0xffffff`) shows, load the
+   tables.
+6. The lane rate: 475.2 Mbit/s with hsfreqrange 0x87 (U-Boot's table; 0x87
+   is LilyGO's value for 594 Mbit/s, which they found stable; the DesignWare
+   range for 475 Mbit/s would be 0x16 → 0x96). Shifted or unstable pictures:
+   try 0x96.
+7. Shared pads: IO22/IO25 are in GPIO bank 0 with pins Linux may drive; our
+   read-modify-write of the bank's data register is not atomic against the
+   big core.
+8. Caches: the little core runs with its caches as reset leaves them (not
+   enabled by the firmware). When they are enabled, the region must stay
+   uncached and the status buffer must be uncached or cleaned after each
+   `panel_status`.
+9. Whether U-Boot or the big core's Linux touches the display block after the
+   coprocessor has opened the panel (our DT has no display nodes).
+
+---
+
+## The research (vendor sources)
 
 Every file below was fetched from raw.githubusercontent.com or the GitHub API at the pinned commit; line numbers are as read there. Claims not observed directly are marked `[INFERENCE]`; "my"/"I" below mean that research pass.
 

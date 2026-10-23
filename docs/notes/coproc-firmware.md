@@ -17,8 +17,8 @@ where `os/test/integration/m32_coproc_firmware_test.exs` checks it.
 | `coproc/src/ring.c` | §11 ring, little side; `coproc/test/ring_vectors_test.c` runs `spec/ring.vectors` on the host |
 | `coproc/src/net.c` | lwIP 2.2.1 (raw API, NO_SYS) netif over the ring: reads A, writes B, bare IPv4, no link layer |
 | `coproc/src/sys.c`, `otp_socket_platform.c`, `otp_net_lwip_raw.c`, `platform_nifs.c` | AtomVM's `sys_*` contract; the lwIP event queue; `net:getaddrinfo`; `atomvm:platform/0` = `elixos_coproc`; Mbed TLS entropy |
-| `coproc/src/platform_nifs.c` (M33) | `coproc_k230:fb_read/2`, `fb_write32/2` on the §12 region at `COPROC_FB_ADDR`; `panel_open/0`, `panel_write/5` |
-| `coproc/src/panel_k230.c` (M33) | the RM69A10/DSI scan-out: **not ported**, fails with `{error, dsi_not_ported}` and one UART line (sources: docs/notes/k230-panel.md) |
+| `coproc/src/platform_nifs.c` (M33) | `coproc_k230:fb_read/2`, `fb_write32/2` on the §12 region at `COPROC_FB_ADDR`; `panel_open/0`, `panel_status/1` |
+| `coproc/src/panel_k230.c`, `k230_mmio.c` (M33) | the RM69A10 bring-up (LilyGO's U-Boot register sequence) and the VO scan-out of the §12 region; the status band as a second VO layer. Register access goes through `k230_mmio.h`, so `coproc/test/panel_trace/run.sh` checks the port's register trace against the vendor code's on the build host (docs/notes/k230-panel.md). `COPROC_PANEL_K230=0` (QEMU virt): `{error, no_panel}` |
 | `coproc/src/main.c` | boot, then runs the VM again whenever the start module returns (a deploy ends the VM, ADR-099) |
 
 libc is picolibc (Alpine `picolibc-riscv-none-elf`, lp64d multilib, medany).
@@ -107,5 +107,9 @@ On the board, U-Boot must load both files: `coproc-k230.bin` at
    payload seed. Weak; the K230 TRNG is the fix.
 5. U-Boot environment: load the payload at `0x7400000` (done by the deck
    image, M33: `boards/t-display-k230/uboot-env-deck.txt`).
-6. The panel scan-out (`coproc/src/panel_k230.c`) is not ported; the
-   framebuffer region must also be uncached on the little core.
+6. The panel (`coproc/src/panel_k230.c`) is ported but has never run; its
+   board checks are in docs/notes/k230-panel.md. The framebuffer region must
+   be uncached on the little core (it only reads the header and writes
+   `shown`), and when the image runs cached, the status band's buffer
+   (`status_pixels`, which the VO reads) must be uncached or cleaned to DDR
+   after each `panel_k230_status`.

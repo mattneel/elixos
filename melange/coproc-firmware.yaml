@@ -12,7 +12,11 @@
 #   qemu-virt  loads at 0x80000000, the virt 16550, ring at 0x81000000
 #
 # Before the cross builds, the ring code (coproc/src/ring.c) runs the shared
-# golden vectors (spec/ring.vectors) with the host compiler.
+# golden vectors (spec/ring.vectors) with the host compiler, and the panel
+# port (coproc/src/panel_k230.c) runs its unit tests and its register-trace
+# comparison with LilyGO's U-Boot bring-up (coproc/test/panel_trace/run.sh,
+# which fetches the vendor files it pins by sha256 into the download cache;
+# they are compiled for the test only, never into the firmware).
 #
 # Outputs, under /usr/share/elixos/coproc-firmware/ in the APK:
 # coproc-<target>.elf and .bin, mkpayload.py, licenses/, SOURCES.
@@ -108,6 +112,9 @@ pipeline:
       cc -std=c11 -Wall -Wextra -Werror -I"$in/coproc/src" -o "$work/ring_vectors_test" \
         "$in/coproc/test/ring_vectors_test.c" "$in/coproc/src/ring.c"
       "$work/ring_vectors_test" "$in/ring.vectors"
+      # The panel port: unit tests and the register trace against the
+      # vendor's bring-up (coproc/test/panel_trace/run.sh).
+      sh "$in/coproc/test/panel_trace/run.sh" "$in/coproc" "$dl" "$work/panel-trace"
 
       for target in k230 qemu-virt; do
         cmake -S "$in/coproc" -B "$work/build-$target" -G Ninja \
@@ -136,6 +143,10 @@ pipeline:
           [ -e "$patch" ] || continue
           echo "patch $(basename "$(dirname "$patch")")/$(basename "$patch") sha256=$(sha256sum "$patch" | cut -d' ' -f1)"
         done
+        while read -r sha name url; do
+          case "$sha" in '' | '#'*) continue ;; esac
+          echo "test-only k230-panel $name $url sha256=$sha"
+        done < "$in/coproc/test/panel_trace/vendor.lock"
       } > "$out/SOURCES"
 
       # Evidence in the build log: the images' sizes, entry points and the

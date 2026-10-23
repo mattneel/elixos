@@ -44,6 +44,8 @@ if (COPROC_TARGET STREQUAL "k230")
     coproc_default(COPROC_RING_ADDR 0x08000000)
     # The deck framebuffer (PROTOCOL §12), the board DT's `deck-fb` region.
     coproc_default(COPROC_FB_ADDR 0x08100000)
+    # The RM69A10 panel on the VO/DSI block (src/panel_k230.c).
+    coproc_default(COPROC_PANEL_K230 1)
     coproc_default(COPROC_UART_BASE 0x91403000)
     coproc_default(COPROC_UART_SHIFT 2)
     coproc_default(COPROC_UART_WORD 1)
@@ -59,6 +61,8 @@ elseif (COPROC_TARGET STREQUAL "qemu-virt")
     coproc_default(COPROC_RING_ADDR 0x81000000)
     # As on the K230: 1 MiB after the ring.
     coproc_default(COPROC_FB_ADDR 0x81100000)
+    # No display block: panel_open/0 answers {error, no_panel}.
+    coproc_default(COPROC_PANEL_K230 0)
     coproc_default(COPROC_UART_BASE 0x10000000)
     coproc_default(COPROC_UART_SHIFT 0)
     coproc_default(COPROC_UART_WORD 0)
@@ -79,6 +83,7 @@ set(COPROC_DEFINITIONS
     COPROC_RING_SIZE=${COPROC_RING_SIZE}
     COPROC_FB_ADDR=${COPROC_FB_ADDR}
     COPROC_FB_SIZE=${COPROC_FB_SIZE}
+    COPROC_PANEL_K230=${COPROC_PANEL_K230}
     COPROC_UART_BASE=${COPROC_UART_BASE}
     COPROC_UART_SHIFT=${COPROC_UART_SHIFT}
     COPROC_UART_WORD=${COPROC_UART_WORD}
@@ -137,6 +142,7 @@ configure_file(src/coproc.ld.in ${CMAKE_CURRENT_BINARY_DIR}/coproc.ld @ONLY)
 add_executable(${COPROC_ELF}
     src/start.S
     src/hw.c
+    src/k230_mmio.c
     src/main.c
     src/net.c
     src/otp_net_lwip_raw.c

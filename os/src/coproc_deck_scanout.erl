@@ -13,6 +13,11 @@
 %%     compose/3 lays it over the framebuffer's pixels on the way to the panel.
 %%     The overlay is never written into the framebuffer: Elixos owns those
 %%     pixels, and clearing the status is just pushing the band again.
+%%
+%% On the board the K230's VO scans the region out itself and the overlay is
+%% a VO layer of its own (coproc_display_k230, coproc/src/panel_k230.c), so
+%% rows/1, strips/1 and compose/3 serve the panel mirror the host tests use;
+%% header/1, plan/2 and overlay/1 serve both.
 -module(coproc_deck_scanout).
 
 -export([header/1, plan/2, strips/1, rows/1, overlay/1, compose/3, status_band/0, full/0]).

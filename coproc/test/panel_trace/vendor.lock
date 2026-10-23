@@ -1,0 +1,14 @@
+# The vendor files the panel trace test (run.sh) compiles on the build host,
+# each pinned by commit and sha256: <sha256> <name> <url>. They are never
+# part of the firmware. Licences: the U-Boot overlay files (display_logo.*,
+# st7701.c, k230_logo.c) carry no header and so fall under U-Boot's
+# GPL-2.0+; vo_table.h says GPL-2.0; k230_board_common.c, sysctl.h and
+# platform.h are Canaan's BSD-3-Clause.
+e9a1b8428860a5d9d5981b0a5fb5c13bf1ccf3be5e71650a097b567a4f8f6270 display_logo.c https://raw.githubusercontent.com/Xinyuan-LilyGO/T-Display-K230/0ad78192bab04585ae51bb847695fdc74658f134/k230_bsp/overlay/buildroot-overlay/boot/uboot/u-boot-2022.10-overlay/board/canaan/common/logo/display_logo.c
+b3f8cd5f1b833d2a1520068b237470d0b5bca8da6b2ffd3994d412a4683b0ab7 display_logo.h https://raw.githubusercontent.com/Xinyuan-LilyGO/T-Display-K230/0ad78192bab04585ae51bb847695fdc74658f134/k230_bsp/overlay/buildroot-overlay/boot/uboot/u-boot-2022.10-overlay/board/canaan/common/logo/display_logo.h
+1f136df92f9e41967f1692c5d83ffeff1a50a62371fd75e474fd2a328e20efaa st7701.c https://raw.githubusercontent.com/Xinyuan-LilyGO/T-Display-K230/0ad78192bab04585ae51bb847695fdc74658f134/k230_bsp/overlay/buildroot-overlay/boot/uboot/u-boot-2022.10-overlay/board/canaan/common/logo/st7701.c
+a689aad2e7871399dd73da7abf19c86a7570175e7d25140a2fa608cd4da448d0 k230_logo.c https://raw.githubusercontent.com/Xinyuan-LilyGO/T-Display-K230/0ad78192bab04585ae51bb847695fdc74658f134/k230_bsp/overlay/buildroot-overlay/boot/uboot/u-boot-2022.10-overlay/board/canaan/common/logo/k230_logo.c
+4fcea0ed8db92969ca7e86885305ae8052baa8fc1ba7eccf5dea8bd0a6d8f37e k230_board_common.c https://raw.githubusercontent.com/Xinyuan-LilyGO/T-Display-K230/0ad78192bab04585ae51bb847695fdc74658f134/k230_bsp/overlay/buildroot-overlay/boot/uboot/u-boot-2022.10-overlay/board/canaan/common/k230_board_common.c
+40ca4b222232490cdbbe027c4bfd926db95859d7256633a74b744910d720f98c vo_table.h https://raw.githubusercontent.com/kendryte/k230_linux_sdk/fc6cc2151d54cb307be47f81815023f7ffb0eae6/buildroot-overlay/boot/uboot/u-boot-2022.10-overlay/board/canaan/common/logo/vo_table.h
+57376db634c30ae0e0306807374606f408ecf5f727edb6d56d30d7063135fe03 sysctl.h https://raw.githubusercontent.com/kendryte/k230_linux_sdk/fc6cc2151d54cb307be47f81815023f7ffb0eae6/buildroot-overlay/boot/uboot/u-boot-2022.10-overlay/arch/riscv/cpu/k230/sysctl.h
+818ba4587e8eb9ddf079d66678f6a34ee000683329268844cc80bab3bf24c6aa platform.h https://raw.githubusercontent.com/kendryte/k230_linux_sdk/fc6cc2151d54cb307be47f81815023f7ffb0eae6/buildroot-overlay/boot/uboot/u-boot-2022.10-overlay/arch/riscv/cpu/k230/platform.h

@@ -89,7 +89,7 @@ in [docs/notes/k230.md](../notes/k230.md#support-matrix)):
 | UART0 console | `8250_dw` | works |
 | SD card | `sdhci-of-dwcmshc` since v7.1; no mainline DT node | works with our DT node |
 | USB0, USB1 + RTL8152B Ethernet | K230 USB PHY v7.1, generic `dwc2`; no K230 DT node | via our DT |
-| Display (VO, MIPI DSI), RM69A10, GT9895, LT9611 | absent | owned by the little core (ADR-106); the panel scan-out is **not ported yet** (below) |
+| Display (VO, MIPI DSI), RM69A10, GT9895, LT9611 | absent | owned by the little core (ADR-106); the panel bring-up and VO scan-out are ported but unverified on the board (below); touch and HDMI not yet |
 | LoRa (SX1262) | no SX126x driver | owned by the little core (ADR-107); simulated backend so far |
 | Power key, power-off (K230 PMU) | absent | owned by the little core (ADR-109); simulated backend so far |
 | Wi-Fi (RTL8189FTV) | absent (out of tree) | off (ADR-108) |
@@ -101,12 +101,14 @@ Elixos boots to IEx on the serial console; the shim starts the inter-core
 link (`elixos-link` on the `coproc-ring` UIO region, PROTOCOL §5, §11); the
 deck view renders into the framebuffer region (§12); the coprocessor's
 display driver polls it, keeps `shown` and shows `Elixos restarting` while
-the BEAM is away. What does not yet: the coprocessor's RM69A10/DSI scan-out
-(`coproc/src/panel_k230.c` fails loudly, `{error, dsi_not_ported}`, sources
-for the port in [docs/notes/k230-panel.md](../notes/k230-panel.md)), and the
-board backends for touch, LoRa, the power key and UART3 (they run their
-simulations). Everything below "needs the board" was written without one;
-the checklists find out.
+the BEAM is away. The panel port (`coproc/src/panel_k230.c`) brings the
+RM69A10 up as LilyGO's U-Boot does (its register trace is checked against
+the vendor code's on the build host) and has the K230's VO scan the region
+out by itself, RGB565 at 41.8 Hz, with the status band as a second VO layer;
+it has never run on a board ([docs/notes/k230-panel.md](../notes/k230-panel.md)
+lists what only the board can tell). Not yet: the board backends for touch,
+LoRa, the power key and UART3 (they run their simulations). Everything below
+"needs the board" was written without one; the checklists find out.
 
 ## Hardware checklists
 
