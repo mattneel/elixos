@@ -12,7 +12,9 @@ defmodule Elixos.Oban do
   instance, `:name` (this supervisor, `Elixos.Oban` by default), `:manager`
   (`Elixos.Oban.Manager`), `:repo` (`Elixos.Oban.Repo`) and `:oban` (the
   Oban instance's own name, `Oban`). The accessors below address the default
-  instance.
+  instance. `:profile` is the image profile (ADR-111): under `:deck` the
+  scheduler follows a Postgres that starts on first use, and its own first
+  use (`status/0`, `enqueue/3`) starts the database.
 
   Boot order is load-bearing: the manager starts before
   `Elixos.Boot.Restore`, so a generation's `configure_app!/2` boot MFAs are

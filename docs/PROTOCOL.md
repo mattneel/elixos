@@ -215,6 +215,7 @@ and malformed or unknown `elixos.*` tokens are counted and logged, never applied
 | `elixos.data_wait=<s≥0>`        | 10         | seconds to wait for that device to appear        |
 | `elixos.coproc_link=<if>,<ip>/<len>` | none  | give interface `<if>` IPv4 `<ip>/<len>` (len 1-32) and bring it up: the coprocessor link (M29) |
 | `elixos.deck=<spec>`            | none       | the deck framebuffer's device (M33, §12): `pci:<vendor>:<device>`, `uio:<name>` or `/dev/<path>` |
+| `elixos.coproc_ring=<spec>`     | none       | the inter-core ring's device (M33, §11): `uio:<name>` or `/dev/<path>`; the shim keeps `elixos-link` running on it |
 
 `elixos.coproc_link` is applied by the shim before the BEAM starts, because
 the BEAM has no `CAP_NET_ADMIN`. `<if>` is a kernel interface name of 1-15
@@ -235,6 +236,29 @@ components) must be a character device. The shim then makes the file
 `root:video` (27) mode 0660, logs it (§6) and passes the path as
 `ELIXOS_DECK` (§3). A failure costs only the panel.
 
+`elixos.coproc_ring` is resolved like `elixos.deck` (`pci:` is refused: every
+QEMU `ivshmem` device has the same ids, so the first match could be the
+framebuffer). The shim, in normal and rescue mode, before the BEAM starts,
+forks a *keeper* process (named `elixos-ring`) that runs
+
+```
+/usr/bin/elixos-link --region <path> --size 135168 --tun <if> --side big [--address <ip>/<len>]
+```
+
+as root and starts it again whenever it exits: after 1 s, doubling up to
+30 s while it keeps failing, back to 1 s once it ran for a minute. The
+keeper outlives the BEAM's restarts and the shim's panic re-exec (it is not
+the shim's direct concern after the fork); at shutdown the straggler
+SIGTERM stops the helper and the keeper. `<if>` and the address are
+`elixos.coproc_link`'s (without it: `coproc0`, created and left down).
+`elixos.coproc_link` is then *not* applied by the shim itself: the helper
+re-creates the TUN interface on every start and configures it with
+`--address`; the shim waits up to 5 s for the interface to come up, so the
+BEAM can bind its address, and logs `coproc link` as below (`Timeout` when
+it did not). A ring that cannot be found logs its failure and then applies
+`elixos.coproc_link` as without a ring (which fails for a TUN name). A
+failure costs only the coprocessor.
+
 Live is a storage choice, not a third launch mode. Normal Live uses the
 embedded service image; `elixos.safe` still selects rescue. With Live enabled,
 `elixos.data` and `elixos.data_wait` never trigger a physical mount or wait.
@@ -251,6 +275,7 @@ BEAM side (`Elixos.Boot.Cmdline`):
 | parameter                  | default | meaning                                   |
 |----------------------------|---------|-------------------------------------------|
 | `elixos.commit_after=<s≥1>`| 30      | healthy seconds before auto-commit        |
+| `elixos.profile=full\|deck` | full    | the image's service profile (ADR-111): `deck` starts no PostgreSQL, Oban or coding runtime at boot; PostgreSQL starts on first use |
 
 Every parameter belongs to exactly one side, and the shim knows both tables
 (ADR-023): it *validates* a BEAM-side parameter's syntax and never applies it,
@@ -314,6 +339,11 @@ the runtime's stdout. Each has prefix `elixos-shim: `. Placeholders:
 | `coproc link <if> failed (<E>)`                                        | the interface could not be configured; the boot goes on | M29 |
 | `deck <path>`                                                          | `elixos.deck` resolved and was granted to the BEAM | M33 |
 | `deck <spec> failed (<E>)`                                             | the deck device was not found or could not be granted; the boot goes on | M33 |
+| `coproc ring <path>`                                                   | `elixos.coproc_ring` resolved; its keeper started `elixos-link` | M33 |
+| `coproc ring <spec> failed (<E>)`                                      | the ring's device was not found, or the keeper could not be forked; the boot goes on | M33 |
+| `coproc ring exited status=<n>, restarting in <n>ms`                   | the keeper's `elixos-link` exited (printed by the keeper) | M33 |
+| `coproc ring killed by signal <n>, restarting in <n>ms`                | the keeper's `elixos-link` died from a signal | M33 |
+| `coproc ring cannot fork, restarting in <n>ms`                         | the keeper could not fork the helper  | M33 |
 
 `attempt=<n>` is the plan's `next_state.attempts`. When planning from an
 unreadable or unmountable state, the shim uses the defaults (`0/0/0`).
@@ -628,10 +658,22 @@ rectangle covering the whole panel is always correct. Elixos may commit again
 before the coprocessor catches up; the coprocessor then pushes the union of
 what it missed, or the whole frame.
 
-**When Elixos is away.** While the BEAM restarts, or before the first
-commit, the coprocessor's display driver draws its own status line (the
-`coproc_display` status, ADR-113) over the last frame; the next commit
-replaces it.
+**When Elixos is away.** `Elixos.Deck` renews a lease on the coprocessor's
+display driver every 2 s (`coproc_display:lease(6000, Text)`, `Text` = mode,
+generation and boot attempt, e.g. `gen 3 attempt 1`). When the lease lapses
+- the BEAM crashed, hangs or restarts - the driver draws its own status line,
+`Elixos restarting, was <Text>`, over the last frame (and over frames
+committed meanwhile); the next renewal clears it. Before the first lease the
+board backend shows `Elixos starting`. The status is laid over the pixels on
+their way to the panel, in the status band (`y 0-27`); the region is never
+written by the coprocessor except `shown`.
+
+**The coprocessor's scan-out.** It polls the header (every 20 ms on the
+board, `os/src/coproc_display_k230.erl`); after a (re)start, or when `seq`
+moved by more than one since `shown`, or when the damage rectangle is not
+inside the panel, it pushes the whole frame, otherwise the damage
+rectangle; then it stores `shown = seq`. A panel that cannot be driven is
+never reported as shown.
 
 ### The helper: `elixos-deck-fb`
 

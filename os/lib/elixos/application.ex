@@ -18,6 +18,12 @@ defmodule Elixos.Application do
   non-zero so the shim counts the attempt and falls back (ADR-007). Database,
   scheduler, approvals, browser and SSH startup failures remain non-critical.
   The framebuffer GUI never starts at boot; it is opened on purpose from IEx.
+
+  The image profile (`elixos.profile`, ADR-111) is read once here and passed
+  to the services it concerns. `:full`, the default, is the boot above. The
+  `:deck` profile starts the PostgreSQL and Oban managers idle - the first use
+  of the database starts Postgres, and Oban follows it - and the approval
+  index without the OS's coding runtime.
   """
   use Application
 
@@ -94,6 +100,9 @@ defmodule Elixos.Application do
         # Before anything can load a generation: the base stays the base.
         Elixos.Boot.Base.stick()
 
+        # ADR-111: the image chooses its profile on the kernel command line.
+        profile = Elixos.Boot.Cmdline.profile()
+
         # A fresh provider volume has no image-populated home directory.
         # Restored services may exec with the session cwd before SSH/login run.
         with :ok <- File.mkdir_p(Elixos.Session.default()),
@@ -115,9 +124,10 @@ defmodule Elixos.Application do
             # a generation's oban declarations are collected while its modules
             # and services restore, and no queue exists until Elixos.Oban
             # .activate/0 below, once this tree - restore included - is up.
-            # Both are non-critical: a failure is logged, not fatal.
-            {Elixos.Postgres, mode: env.mode},
-            {Elixos.Oban, mode: env.mode},
+            # Both are non-critical: a failure is logged, not fatal. The deck
+            # profile starts both idle until the database's first use.
+            {Elixos.Postgres, mode: env.mode, profile: profile},
+            {Elixos.Oban, mode: env.mode, profile: profile},
             # The generation the shim launched, loaded before anything can use
             # it; a failure here stops the tree on purpose (ADR-007).
             {Elixos.Boot.Restore, {image, env}},
@@ -129,8 +139,9 @@ defmodule Elixos.Application do
             # Oh-My-Jido is the only human-in-the-loop mechanism (ADR-093):
             # its sessions own approvals and questions; this indexes every
             # open one so any IEx/SSH session can answer it, and starts the
-            # OS's coding runtime. Not boot-critical; rescue runs none of it.
-            {Elixos.Approvals, mode: env.mode},
+            # OS's coding runtime (not on the deck). Not boot-critical; rescue
+            # runs none of it.
+            {Elixos.Approvals, mode: env.mode, profile: profile},
             # The headless browser (M25): the ecosystem's stack over a Port,
             # given the binary the image ships. Not boot-critical and rescue
             # runs none of it, so a broken adapter costs the browser and not

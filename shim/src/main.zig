@@ -45,6 +45,7 @@ pub const container = @import("container.zig");
 pub const seed = @import("seed.zig");
 pub const netif = @import("netif.zig");
 pub const deck = @import("deck.zig");
+pub const coproc_ring = @import("coproc_ring.zig");
 
 /// `ELIXOS_DECK=<path>` (PROTOCOL.md §3, M33): resolved from elixos.deck once
 /// per shim run, before the first launch, and passed to every BEAM it starts.
@@ -366,10 +367,14 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
 
     // 2b. The coprocessor link (M29, ADR-098): the BEAM cannot configure an
     //     interface (it has no CAP_NET_ADMIN), so the shim gives the named one
-    //     its address and brings it up, as it does for loopback. Not fatal:
+    //     its address and brings it up, as it does for loopback. On the board
+    //     the link is the inter-core ring (M33): the shim starts elixos-link
+    //     on it, which creates and configures the interface. Not fatal:
     //     without it only the coprocessor is unreachable.
     if (!container.enabled) {
-        if (settings.coproc_link) |link| configureLink(link);
+        if (settings.coproc_ring) |spec| {
+            startRing(spec, settings.coproc_link);
+        } else if (settings.coproc_link) |link| configureLink(link);
     }
 
     // 3+4. /priv and boot.state. Live keeps the initramfs's RAM-backed /priv,
@@ -1579,6 +1584,59 @@ fn configureLink(link: cmdline.Link) void {
     }
 }
 
+/// The inter-core ring from elixos.coproc_ring (M33, PROTOCOL.md §11):
+/// finds the region's device, forks the keeper that runs elixos-link on it
+/// for the rest of the machine's life (coproc_ring.zig), then waits, bounded,
+/// for the helper to bring elixos.coproc_link's interface up, so that the
+/// BEAM's distribution can bind its address. Every failure costs only the
+/// coprocessor; the boot goes on.
+fn startRing(spec: deck.Spec, link: ?cmdline.Link) void {
+    var path_buffer: [deck.max_path + 1]u8 = undefined;
+    const path = deck.locate(spec, &path_buffer) catch |err| {
+        log(coproc_ring.failed_line, .{ spec.text, err });
+        // Says what became of the interface the link names (§6).
+        if (link) |l| configureLink(l);
+        return;
+    };
+    const S = struct {
+        var command: coproc_ring.Command = .{};
+    };
+    S.command.init(path, link) catch |err| {
+        log(coproc_ring.failed_line, .{ spec.text, err });
+        return;
+    };
+    const child = linux.fork();
+    if (linux.errno(child) != .SUCCESS) {
+        log(coproc_ring.failed_line, .{ spec.text, error.Fork });
+        if (link) |l| configureLink(l);
+        return;
+    }
+    if (child == 0) coproc_ring.keep(&S.command, log);
+    log(coproc_ring.started_line, .{path});
+
+    const l = link orelse return;
+    const a = l.address;
+    var waited: u32 = 0;
+    while (!interfaceUp(l.interface)) : (waited += coproc_ring.ready_poll_ms) {
+        if (waited >= coproc_ring.ready_timeout_ms) {
+            log("coproc link {s} failed ({t})", .{ l.interface, error.Timeout });
+            return;
+        }
+        sleepMs(coproc_ring.ready_poll_ms);
+    }
+    log("coproc link {s} {d}.{d}.{d}.{d}/{d}", .{ l.interface, a[0], a[1], a[2], a[3], l.prefix });
+}
+
+/// Whether the interface exists and is up (elixos-link brings it up last,
+/// after its address and netmask).
+fn interfaceUp(name: []const u8) bool {
+    const fd = linux.socket(linux.AF.INET, linux.SOCK.DGRAM | linux.SOCK.CLOEXEC, 0);
+    if (linux.errno(fd) != .SUCCESS) return false;
+    defer _ = linux.close(@intCast(fd));
+    const flags = netif.interfaceFlags(@intCast(fd), name) catch return false;
+    return flags.UP;
+}
+
 /// The deck framebuffer from elixos.deck (M33, PROTOCOL.md §12): finds the
 /// device, grants it to the BEAM's `video` group and remembers its path for
 /// the launch environment. `announce` logs the outcome (§6); a failure only
@@ -1824,6 +1882,7 @@ test {
     std.testing.refAllDecls(@import("link.zig"));
     std.testing.refAllDecls(deck);
     std.testing.refAllDecls(@import("deck_fb.zig"));
+    std.testing.refAllDecls(coproc_ring);
 }
 
 test "panic adoption preserves the original OCI environment for later relaunch" {

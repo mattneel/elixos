@@ -21,6 +21,13 @@ defmodule Elixos.Postgres do
   by default; nil leaves it unregistered), and `:privileges` (the existing helper
   client). Startup is bounded to 105 seconds, including helper replies, a
   60-second initialization wait and a 30-second SQL-readiness wait.
+
+  `:profile` is the image profile (ADR-111, `Elixos.Boot.Cmdline.profile/0`).
+  Under `:full`, the default, normal mode starts the server at once. Under
+  `:deck`, normal mode starts nothing at boot: the first `query/1` (or
+  `ensure_started/0`, which `Elixos.Oban` calls for its own first use) starts
+  it through the same worker, and `status/0` stays `{:error, :not_running}`
+  until then.
   """
 
   use GenServer, restart: :temporary
@@ -82,6 +89,21 @@ defmodule Elixos.Postgres do
     end
   end
 
+  @doc """
+  Starts a deck-profile server that has not started yet, without waiting for
+  it; any other server is left as it is. Always `:ok`.
+  """
+  @spec ensure_started() :: :ok
+  def ensure_started, do: GenServer.cast(__MODULE__, :start)
+
+  @doc """
+  Waits until the server is ready, without starting it: `:ok`, or the error
+  `query/1` would return. A deck-profile server that has not started keeps the
+  caller waiting for whoever starts it; `Elixos.Oban` follows the database so.
+  """
+  @spec await_started() :: :ok | {:error, term()}
+  def await_started, do: call(:await_started)
+
   defp call(message) do
     GenServer.call(__MODULE__, message, :infinity)
   catch
@@ -97,8 +119,17 @@ defmodule Elixos.Postgres do
         {:ok, state}
 
       :normal ->
-        send(self(), {:start, Keyword.get(opts, :privileges, Privileges)})
-        {:ok, %{state | phase: :starting}}
+        privileges = Keyword.get(opts, :privileges, Privileges)
+
+        case Keyword.get(opts, :profile, :full) do
+          :full ->
+            send(self(), {:start, privileges})
+            {:ok, %{state | phase: :starting}}
+
+          # ADR-111: on the deck the first use starts the server.
+          :deck ->
+            {:ok, Map.merge(state, %{phase: :idle, privileges: privileges})}
+        end
     end
   end
 
@@ -114,6 +145,9 @@ defmodule Elixos.Postgres do
 
   def handle_call(:status, _from, state),
     do: {:reply, {:error, :not_running}, state}
+
+  def handle_call(:await_ready, from, %{phase: :idle} = state),
+    do: handle_call(:await_ready, from, start(state))
 
   def handle_call(:await_ready, from, %{phase: :starting} = state),
     do: {:noreply, %{state | waiters: [from | state.waiters]}}
@@ -131,6 +165,16 @@ defmodule Elixos.Postgres do
 
   def handle_call(:await_ready, _from, state),
     do: {:reply, {:error, :not_running}, state}
+
+  # Oban waits on a deck-profile server without being its first use.
+  def handle_call(:await_started, from, %{phase: :idle} = state),
+    do: {:noreply, %{state | waiters: [from | state.waiters]}}
+
+  def handle_call(:await_started, from, state), do: handle_call(:await_ready, from, state)
+
+  @impl true
+  def handle_cast(:start, %{phase: :idle} = state), do: {:noreply, start(state)}
+  def handle_cast(:start, state), do: {:noreply, state}
 
   @impl true
   def handle_info({:start, privileges}, %{phase: :starting, worker: nil} = state) do
@@ -196,6 +240,12 @@ defmodule Elixos.Postgres do
   end
 
   defp stopped(state), do: %{state | phase: :stopped, postmaster: nil}
+
+  # A deck-profile server's first use: the same start a full boot sends itself.
+  defp start(state) do
+    send(self(), {:start, state.privileges})
+    %{state | phase: :starting}
+  end
 
   defp start_server(privileges) do
     with {:ok, init_pid} <- helper(privileges, "postgres-init"),

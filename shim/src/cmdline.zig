@@ -7,6 +7,7 @@ const testing = std.testing;
 const milestone = @import("milestone.zig");
 const decimal = @import("decimal.zig");
 const deck = @import("deck.zig");
+const coproc_ring = @import("coproc_ring.zig");
 
 pub const Settings = struct {
     /// elixos.safe[=1|0]: boot the factory in rescue mode.
@@ -43,6 +44,10 @@ pub const Settings = struct {
     /// §12): `pci:<vendor>:<device>`, `uio:<name>` or `/dev/<path>`. The
     /// shim finds it, grants it to the BEAM and passes it as ELIXOS_DECK.
     deck: ?deck.Spec = null,
+    /// elixos.coproc_ring=<spec>: the inter-core ring's device (M33,
+    /// PROTOCOL.md §11): `uio:<name>` or `/dev/<path>`. The shim keeps
+    /// `elixos-link` running on it, before and across the BEAM's launches.
+    coproc_ring: ?deck.Spec = null,
     /// Count of elixos.* tokens that were unknown or malformed. The shim logs it.
     invalid: u32 = 0,
 };
@@ -95,6 +100,9 @@ pub fn parse(text: []const u8) Settings {
             // the syntax, checks them, and never applies the value - the BEAM
             // reads it itself. A good value is not an invalid parameter.
             if (!validNumber(value, 1)) settings.invalid += 1;
+        } else if (std.mem.eql(u8, name, "profile")) {
+            // BEAM side too (ADR-111): the image's service profile.
+            if (!validProfile(value)) settings.invalid += 1;
         } else if (std.mem.eql(u8, name, "test.stop_before_launch")) {
             if (setFlag(&settings.test_stop_before_launch, value) == null) settings.invalid += 1;
         } else if (std.mem.eql(u8, name, "test.shim_panic_after")) {
@@ -111,6 +119,12 @@ pub fn parse(text: []const u8) Settings {
             } else {
                 settings.invalid += 1;
             }
+        } else if (std.mem.eql(u8, name, "coproc_ring")) {
+            if (coproc_ring.parseSpec(value)) |spec| {
+                settings.coproc_ring = spec;
+            } else {
+                settings.invalid += 1;
+            }
         } else {
             settings.invalid += 1;
         }
@@ -122,6 +136,12 @@ pub fn parse(text: []const u8) Settings {
 fn validNumber(value: ?[]const u8, min: u32) bool {
     const parsed = decimal.parseU32(value orelse return false) orelse return false;
     return parsed >= min;
+}
+
+/// `elixos.profile=full|deck` (ADR-111): read by Elixos.Boot.Cmdline.
+fn validProfile(value: ?[]const u8) bool {
+    const profile = value orelse return false;
+    return std.mem.eql(u8, profile, "full") or std.mem.eql(u8, profile, "deck");
 }
 
 /// `elixos.flag`, `=1` or `=0`; null for anything else. Returns true when set.
@@ -344,4 +364,31 @@ test "cmdline: the deck names its framebuffer's device" {
     try testing.expectEqualStrings("deck-fb", later.deck.?.target.uio);
     try testing.expectEqual(@as(u32, 2), later.invalid);
     try testing.expectEqualStrings("/dev/uio0", parse("elixos.deck=/dev/uio0").deck.?.target.path);
+}
+
+test "cmdline: the coprocessor ring names its region's device" {
+    try milestone.require(33);
+    const settings = parse("console=ttyS0 elixos.coproc_ring=uio:coproc-ring elixos.coproc_link=coproc0,10.0.3.15/24");
+    const spec = settings.coproc_ring orelse return error.TestExpectedRing;
+    try testing.expectEqualStrings("coproc-ring", spec.target.uio);
+    try testing.expectEqualStrings("uio:coproc-ring", spec.text);
+    try testing.expectEqualStrings("coproc0", settings.coproc_link.?.interface);
+    try testing.expectEqual(@as(u32, 0), settings.invalid);
+    // The last valid one wins; a malformed one (or a PCI device) is counted
+    // and changes nothing.
+    const later = parse("elixos.coproc_ring=uio:a elixos.coproc_ring=/dev/uio2 " ++
+        "elixos.coproc_ring=pci:0x1af4:0x1110 elixos.coproc_ring elixos.coproc_ring=uio:");
+    try testing.expectEqualStrings("/dev/uio2", later.coproc_ring.?.target.path);
+    try testing.expectEqual(@as(u32, 3), later.invalid);
+    try testing.expect(parse("elixos.deck=uio:deck-fb").coproc_ring == null);
+}
+
+test "cmdline: the image profile is a BEAM-side parameter" {
+    try milestone.require(33);
+    // ADR-111, ADR-023: validated here, applied by Elixos.Boot.Cmdline.
+    try testing.expectEqualDeep(Settings{}, parse("elixos.profile=deck"));
+    try testing.expectEqualDeep(Settings{}, parse("elixos.profile=full"));
+    for ([_][]const u8{ "elixos.profile", "elixos.profile=", "elixos.profile=Deck", "elixos.profile=lite" }) |bad| {
+        try testing.expectEqual(@as(u32, 1), parse(bad).invalid);
+    }
 }

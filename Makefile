@@ -12,7 +12,7 @@ BUILD ?= build
 export ELIXOS_BUILD := $(abspath $(BUILD))
 
 .PHONY: help check-tools test test-shim deps test-os test-qemu test-qemu-aarch64 test-qemu-riscv64 image-riscv64 check ci audit demo demos \
-        image images reproducible uefi-image disk qemu format clean distclean atomvm k230-bringup coproc-firmware
+        image images reproducible uefi-image disk qemu format clean distclean atomvm k230-bringup coproc-firmware deck-image
 
 help: ## List targets
 	@awk -F':.*## ' '/^[a-z0-9-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -82,6 +82,10 @@ coproc-firmware: ## The little core's bare-metal AtomVM firmware (ring, lwIP) fo
 k230-bringup: ## The T-Display K230 bring-up SD card (M30): firmware, riscv64 kernel, DTB, little-core image
 	scripts/build-image.sh riscv64
 	scripts/build-k230.sh
+
+deck-image: deps ## The T-Display K230 deck SD card (M33): the bring-up card plus the AtomVM firmware, its payload, the deck profile and env
+	scripts/build-image.sh riscv64
+	scripts/build-deck.sh
 
 reproducible: ## Assemble the x86_64 rootfs twice from the lockfile; print the one digest
 	scripts/build-image.sh x86_64

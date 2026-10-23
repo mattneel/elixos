@@ -1,0 +1,14 @@
+# The deck card's U-Boot environment (M33, scripts/build-deck.sh): applied
+# over the firmware's env.bin (U-Boot's defaults + uboot-env.txt) by
+# scripts/k230-env.py. KEY=VALUE per line.
+#
+# The little core gets the AtomVM firmware (coproc-k230.bin at 0x7000000) and
+# its payload (0x7400000, docs/notes/coproc-firmware.md); boot_baremetal
+# cleans exactly [addr, addr+size) from the big core's D-cache, so the size
+# covers the image and the payload: the first 6 MiB of the region.
+#
+# Linux: the deck framebuffer and the inter-core ring as UIO devices, the
+# ring's link (the shim runs elixos-link on it), the persistent data
+# partition and the deck profile (ADR-111).
+bootargs=console=ttyS0,115200 earlycon panic=-1 uio_pdrv_genirq.of_id=generic-uio elixos.data=/dev/mmcblk0p2 elixos.deck=uio:deck-fb elixos.coproc_ring=uio:coproc-ring elixos.coproc_link=coproc0,10.0.3.15/24 elixos.profile=deck
+bcoproc=ext4load mmc ${mmc_boot_dev_num}:1 0x7400000 /coproc-payload.bin && ext4load mmc ${mmc_boot_dev_num}:1 0x7000000 /coproc.bin && boot_baremetal 0 0x7000000 0x600000

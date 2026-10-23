@@ -155,12 +155,19 @@ pub const max_path = 96;
 
 pub const Error = error{ NotFound, NotADevice, Enable, Grant, System };
 
-/// Finds the spec's device, enables a PCI device's memory decoding if it is
-/// not yet enabled, and grants it to the `video` group read-write (0660).
-/// Returns the path, NUL-terminated in `buffer`.
-pub fn prepareDevice(spec: Spec, buffer: *[max_path + 1]u8) Error![:0]const u8 {
+/// Finds the spec's device and enables a PCI device's memory decoding if it
+/// is not yet enabled. Returns the path, NUL-terminated in `buffer`. Shared
+/// with `elixos.coproc_ring` (coproc_ring.zig), whose helper runs as root and
+/// needs no grant.
+pub fn locate(spec: Spec, buffer: *[max_path + 1]u8) Error![:0]const u8 {
     const path = try resolve(spec.target, buffer);
     if (spec.target == .pci) try enable(path);
+    return path;
+}
+
+/// `locate`, then grants the device to the `video` group read-write (0660).
+pub fn prepareDevice(spec: Spec, buffer: *[max_path + 1]u8) Error![:0]const u8 {
+    const path = try locate(spec, buffer);
     if (linux.errno(linux.fchownat(linux.AT.FDCWD, path, 0, video_gid, 0)) != .SUCCESS or
         linux.errno(linux.fchmodat2(linux.AT.FDCWD, path, 0o660, 0)) != .SUCCESS)
         return error.Grant;

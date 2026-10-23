@@ -1,5 +1,6 @@
 %% Simulated display unit for AtomVM's Unix build: records what it was asked
-%% to show instead of driving DSI. HDMI hotplug is a stimulus.
+%% to show instead of driving DSI. HDMI hotplug is a stimulus. A lapsed
+%% lease's status (coproc_display) is recorded as any other status.
 -module(coproc_display_sim).
 
 -behaviour(coproc_driver).
@@ -10,7 +11,7 @@
 init(undefined) ->
     {ok, #{status => <<>>, frames => 0, last_region => none, hdmi => disconnected}};
 init(#{} = Handoff) ->
-    {ok, Handoff}.
+    {ok, coproc_display:restored(Handoff)}.
 
 info(State) ->
     State#{width => 568, height => 1232}.
@@ -31,4 +32,4 @@ handle_info(_Message, State) ->
     {[], State}.
 
 handoff(State) ->
-    State.
+    coproc_display:handoff(State).
