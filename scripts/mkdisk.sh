@@ -11,6 +11,7 @@ ARCH="${1:-x86_64}"
 case "$ARCH" in
   x86_64) DISK="$BUILD/disk.img" ;;
   aarch64) DISK="$BUILD/aarch64/disk.img" ;;
+  riscv64) DISK="$BUILD/riscv64/disk.img" ;;
   *) echo "disk: unsupported architecture $ARCH" >&2; exit 1 ;;
 esac
 

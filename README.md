@@ -19,21 +19,24 @@ services headlessly, on the Linux kernel of the Docker daemon or the provider.
 
 Elixos is for shipping living Elixir apps and for personal machines: USB
 sticks, cyberdecks and SBCs. Machine images and native OCI packaging target
-**x86_64 and aarch64**. ARM64 packaging is not ARM64 runtime verification;
-the exercised runtime results below are x86_64 unless a section says otherwise.
+**x86_64, aarch64 and riscv64** (riscv64 since M28, for the K230 cyberdeck).
+Foreign architectures are cross-built on the build host and boot-tested in
+QEMU with a smoke set; the exercised runtime results below are x86_64 unless a
+section says otherwise.
 
 ## Status
 
-- **Delivered (M1–M19, M25–M27):** live generations and recovery, on-box Mix
+- **Delivered (M1–M19, M25–M28):** live generations and recovery, on-box Mix
   builds, SSH, UEFI boot, trusted Hex packages, Jido agents, package-built
   images, an unprivileged BEAM with sealed commits, PostgreSQL, persistent Oban
   jobs, a headless browser, Rust tooling, installed packages resolved as Mix
   dependencies, and an optional framebuffer GUI for Oh-My-Jido approvals,
   opened from IEx on x86_64 and ARM64. The [M27 recording](demos/m27-gui.mp4)
   shows approvals answered on the framebuffer with a real keyboard, then
-  console handback.
-- **Next (M28–M33):** the [K230 cyberdeck track](docs/ROADMAP.md#m28-riscv64-on-qemu-virt):
-  riscv64, AtomVM as a peer, and the LilyGO T-Display K230.
+  console handback. M28 boots riscv64 to `iex(1)>` on QEMU virt
+  ([recording](demos/m28-riscv64.mp4)).
+- **Next (M29–M33):** the rest of the [K230 cyberdeck track](docs/ROADMAP.md#m29-atomvm-as-an-elixos-peer):
+  AtomVM as a peer, and the LilyGO T-Display K230.
 - **Retired:** the M20 Ask question queue, by
   [ADR-093](docs/DECISIONS.md#adr-093-oh-my-jido-approvals-replace-the-ask-queue).
   Oh-My-Jido approvals are the only human-in-the-loop mechanism.
@@ -86,7 +89,7 @@ make image                        # kernel, shim, initramfs, service image, disk
 ```
 
 The build refuses a changed checkout under an old pin. Do not set the pin
-with command substitution. `make images` builds x86_64 and aarch64.
+with command substitution. `make images` builds x86_64, aarch64 and riscv64.
 
 ### Live EFI from a USB stick (x86_64)
 

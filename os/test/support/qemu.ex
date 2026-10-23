@@ -16,7 +16,8 @@ defmodule Elixos.Test.QEMU do
       assert out =~ "2"
 
   Artifacts default to build/bzImage and build/initramfs.cpio.gz on x86_64,
-  and build/aarch64/Image and build/aarch64/initramfs.cpio.gz on aarch64
+  build/aarch64/Image and build/aarch64/initramfs.cpio.gz on aarch64, and the
+  same under build/riscv64/ on riscv64
   (`:arch`), each overridable with its environment variable
   (ELIXOS_KERNEL / ELIXOS_INITRAMFS, ELIXOS_AARCH64_IMAGE /
   ELIXOS_AARCH64_INITRAMFS). Timeouts scale with ELIXOS_QEMU_SLOWDOWN
@@ -46,7 +47,7 @@ defmodule Elixos.Test.QEMU do
     * `:memory_mb` - default 1024
     * `:initramfs` - explicit initramfs file for a distinct boot profile
     * `:ssh_port` - forward host 127.0.0.1:<port> to guest port 22 (virtio-net, ip=dhcp)
-    * `:arch` - `:x86_64` (default) or `:aarch64`: which QEMU binary, machine,
+    * `:arch` - `:x86_64` (default), `:aarch64` or `:riscv64`: which QEMU binary, machine,
       console and artifacts the guest gets
     * `:uefi` - `{esp_image, ovmf_code, ovmf_vars_copy}`: boot through firmware
       instead of `-kernel`/`-initrd`
@@ -133,11 +134,13 @@ defmodule Elixos.Test.QEMU do
   # QEMU's escape (verified: `-drive file=/a,,b,if=none` opens "/a,b").
   defp drive_path(path), do: String.replace(path, ",", ",,")
 
-  # The two architectures ADR-041 builds for. aarch64 under TCG on an x86_64
-  # host is slow and needs no KVM: QEMU tries each -accel in order and falls
-  # back to the next.
+  # The architectures Elixos builds for (ADR-041, ADR-097). aarch64 and
+  # riscv64 under TCG on an x86_64 host are slow and need no KVM: QEMU tries
+  # each -accel in order and falls back to the next. riscv64 virt boots through
+  # QEMU's bundled OpenSBI firmware, which jumps to the -kernel Image.
   defp qemu_binary(:x86_64), do: "qemu-system-x86_64"
   defp qemu_binary(:aarch64), do: "qemu-system-aarch64"
+  defp qemu_binary(:riscv64), do: "qemu-system-riscv64"
 
   defp machine_args(:x86_64) do
     ["-machine", "q35", "-accel", "kvm", "-accel", "tcg", "-cpu", "max"]
@@ -147,16 +150,25 @@ defmodule Elixos.Test.QEMU do
     ["-machine", "virt", "-accel", "kvm", "-accel", "tcg", "-cpu", "cortex-a72"]
   end
 
+  defp machine_args(:riscv64) do
+    ["-machine", "virt", "-accel", "kvm", "-accel", "tcg", "-cpu", "rv64", "-bios", "default"]
+  end
+
   defp console(:x86_64), do: "console=ttyS0"
   defp console(:aarch64), do: "console=ttyAMA0"
+  defp console(:riscv64), do: "console=ttyS0"
 
   defp kernel_artifact(:x86_64), do: {"ELIXOS_KERNEL", "bzImage"}
   defp kernel_artifact(:aarch64), do: {"ELIXOS_AARCH64_IMAGE", "aarch64/Image"}
+  defp kernel_artifact(:riscv64), do: {"ELIXOS_RISCV64_IMAGE", "riscv64/Image"}
 
   defp initramfs_artifact(:x86_64), do: {"ELIXOS_INITRAMFS", "initramfs.cpio.gz"}
 
   defp initramfs_artifact(:aarch64),
     do: {"ELIXOS_AARCH64_INITRAMFS", "aarch64/initramfs.cpio.gz"}
+
+  defp initramfs_artifact(:riscv64),
+    do: {"ELIXOS_RISCV64_INITRAMFS", "riscv64/initramfs.cpio.gz"}
 
   defp net_args(opts) do
     case Keyword.get(opts, :ssh_port) do

@@ -28,7 +28,11 @@ future = for m <- (milestone + 1)..99//1, do: {:milestone, m}
 # The aarch64 smoke set runs under TCG emulation (slow) and needs the aarch64
 # image built, so `make test-qemu-aarch64` sets ELIXOS_QEMU_AARCH64=1 for it -
 # and a normal x86_64 run never picks it up.
-arch_excludes = if System.get_env("ELIXOS_QEMU_AARCH64") == "1", do: [], else: [:aarch64]
+# The same holds for the riscv64 smoke set (M28) and ELIXOS_QEMU_RISCV64.
+arch_excludes =
+  for {tag, variable} <- [aarch64: "ELIXOS_QEMU_AARCH64", riscv64: "ELIXOS_QEMU_RISCV64"],
+      System.get_env(variable) != "1",
+      do: tag
 
 exclude =
   if System.get_env("ELIXOS_QEMU") == "1",

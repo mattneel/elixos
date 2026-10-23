@@ -21,6 +21,7 @@ package:
 vars:
   zig-sha256-x86_64: cdecd965d8b8795afbb9f1a780904cba190d257ee7cd1d33347c4026dab5f64c
   zig-sha256-aarch64: ace7690851068ab61e0c377afe7426565b318b6b22b70f145b30bd30910ad405
+  zig-sha256-riscv64: 59f94fd562ec3ce8e00dcf258459a0a330de7bdcfe8119ebd5cb19152b798e21
 
 environment:
   contents:
@@ -44,31 +45,48 @@ pipeline:
   - runs: |
       zig_version="$(head -n1 /home/build/.zig-version)"
 
-      case "${{build.arch}}" in
-        x86_64) zig_arch=x86_64; zig_sha="${{vars.zig-sha256-x86_64}}" ;;
-        aarch64) zig_arch=aarch64; zig_sha="${{vars.zig-sha256-aarch64}}" ;;
-        *) echo "elixos-toolchain: unsupported arch ${{build.arch}}" >&2; exit 1 ;;
-      esac
+      sha_for() {
+        case "$1" in
+          x86_64) echo "${{vars.zig-sha256-x86_64}}" ;;
+          aarch64) echo "${{vars.zig-sha256-aarch64}}" ;;
+          riscv64) echo "${{vars.zig-sha256-riscv64}}" ;;
+          *) echo "elixos-toolchain: unsupported arch $1" >&2; return 1 ;;
+        esac
+      }
 
-      curl -fsSL -o /tmp/zig.tar.xz \
-        "https://ziglang.org/builds/zig-${zig_arch}-linux-${zig_version}.tar.xz"
-      echo "${zig_sha}  /tmp/zig.tar.xz" | sha256sum -c -
-      mkdir -p /tmp/zig
-      tar -xJf /tmp/zig.tar.xz -C /tmp/zig --strip-components=1
+      # fetch <arch> <dir>: one pinned, verified Zig SDK, unpacked into <dir>.
+      # --cache-dir is mounted at /var/cache/melange, outside the workspace.
+      fetch() {
+        local arch="$1" dir="$2" sha tarball
+        sha="$(sha_for "$arch")"
+        tarball="/var/cache/melange/zig/tarballs/zig-${arch}-linux-${zig_version}.tar.xz"
+        mkdir -p "$(dirname "$tarball")" "$dir"
+        if ! echo "${sha}  $tarball" | sha256sum -c - >/dev/null 2>&1; then
+          curl -fsSL -o "$tarball.part" \
+            "https://ziglang.org/builds/zig-${arch}-linux-${zig_version}.tar.xz"
+          echo "${sha}  $tarball.part" | sha256sum -c -
+          mv "$tarball.part" "$tarball"
+        fi
+        tar -xJf "$tarball" -C "$dir" --strip-components=1
+      }
 
+      # The target's own Zig is what ships; nothing runs it here.
+      fetch "${{build.arch}}" /tmp/zig
       dest="${{targets.destdir}}/toolchain"
       install -d "$dest"
       cp -a /tmp/zig/zig /tmp/zig/lib "$dest/"
       chmod 0755 "$dest/zig"
 
       # zig is a C compiler only under the `cc` subcommand, so `cc` and `c++`
-      # are a bridge (toolchain/cc.zig) built here by the compiler itself.
+      # are a bridge (toolchain/cc.zig). The build host's Zig cross-compiles
+      # it: no compiler runs under emulation (ADR-094).
+      fetch "${ELIXOS_ZIG_HOST_ARCH:?build-image must supply the host compiler architecture}" /tmp/zig-host
       cd "$dest"
-      /tmp/zig/zig build-exe -O ReleaseSafe -target "${{build.arch}}-linux-musl" \
+      /tmp/zig-host/zig build-exe -O ReleaseSafe -target "${{build.arch}}-linux-musl" \
         --name cc \
         --cache-dir /tmp/cc-cache --global-cache-dir /tmp/cc-cache-global \
         /home/build/toolchain/cc.zig
-      rm -rf /tmp/cc-cache /tmp/cc-cache-global cc.o
+      rm -rf /tmp/cc-cache /tmp/cc-cache-global /tmp/zig-host cc.o
       ln -sfn cc "$dest/c++"
 
       test -x "$dest/zig" && test -x "$dest/cc" && test -L "$dest/c++"
@@ -94,6 +112,8 @@ pipeline:
       [target.x86_64-unknown-linux-musl]
       linker = "/priv/toolchain/cc"
       [target.aarch64-unknown-linux-musl]
+      linker = "/priv/toolchain/cc"
+      [target.riscv64gc-unknown-linux-musl]
       linker = "/priv/toolchain/cc"
       CONFIG
 

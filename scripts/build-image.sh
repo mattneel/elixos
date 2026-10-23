@@ -22,6 +22,7 @@
 # Outputs:
 #   x86_64:  build/bzImage, build/initramfs.cpio.gz   (where the tests look)
 #   aarch64: build/aarch64/Image, build/aarch64/initramfs.cpio.gz
+#   riscv64: build/riscv64/Image, build/riscv64/initramfs.cpio.gz
 #   both:    build/<arch>/rootfs.tar, sbom-<arch>.spdx.json, rootfs.digest
 #   both:    build/<arch>/system.squashfs, system/sbom-<arch>.spdx.json,
 #            system.digest (a second gzip SquashFS assembly must agree)
@@ -106,7 +107,7 @@ package_inputs() { # package_inputs <arch> <package>: hash of everything the rec
     # build staged is one of this package's inputs. The x86_64 build must not
     # see it: it is another architecture's binaries.
     otp)
-      if [ "$arch" = aarch64 ]; then
+      if foreign_arch "$arch"; then
         paths=(.tool-versions melange/otp.yaml prebuilt/otp prebuilt/otp.links)
       else
         paths=(.tool-versions melange/otp.yaml)
@@ -116,14 +117,14 @@ package_inputs() { # package_inputs <arch> <package>: hash of everything the rec
     factory|factory-eval)
       paths=(os coding spec MILESTONE hex .tool-versions melange/factory.yaml melange/factory-eval.yaml melange/coding-eval-python.yaml scripts/stage-coding.exs scripts/factory-coding-receipt.exs scripts/package-factory.sh scripts/build-coding-eval.exs scripts/coding-eval-native.py scripts/coding-eval scripts/build-image.sh)
       # The aarch64 factory is the tree the host cross build staged (ADR-094).
-      [ "$arch" = aarch64 ] && paths+=(prebuilt/factory prebuilt/factory.links)
+      foreign_arch "$arch" && paths+=(prebuilt/factory prebuilt/factory.links)
       ;;
     coding-eval-python) paths=(melange/coding-eval-python.yaml scripts/coding-eval-native.py scripts/coding-eval) ;;
     shim) paths=(shim spec .zig-version build.zig build.zig.zon melange/shim.yaml) ;;
     browser) paths=(melange/browser.yaml) ;;
     gui-renderer)
       paths=(melange/gui-renderer.yaml)
-      [ "$arch" = aarch64 ] && paths+=(prebuilt/gui-renderer prebuilt/gui-renderer.links)
+      foreign_arch "$arch" && paths+=(prebuilt/gui-renderer prebuilt/gui-renderer.links)
       ;;
     toolchain) paths=(toolchain .zig-version melange/toolchain.yaml) ;;
     *) paths=(melange) ;;
@@ -148,11 +149,32 @@ package_inputs() { # package_inputs <arch> <package>: hash of everything the rec
   } | sha256sum | cut -d' ' -f1
 }
 
-cross_inputs() { # cross_inputs <name> <recipe> <paths...>: everything that build reads
-  local name="$1" recipe="$2" path
-  shift 2
+# Architectures whose packages are compiled on the build host and staged
+# (ADR-060, ADR-094); their own melange environments only install the result.
+foreign_arch() { [ "$1" = aarch64 ] || [ "$1" = riscv64 ]; }
+
+# The service image's configuration. Lightpanda publishes no riscv64 build, so
+# riscv64 uses a copy of system.yaml without the browser (ADR-097), checked
+# here to differ by exactly that package and nothing else.
+system_config() { # system_config <arch>
+  if [ "$1" = riscv64 ]; then
+    local strip='^    - elixos-browser$|^  - (x86_64|aarch64|riscv64)$|^ *#'
+    if ! diff <(grep -Ev "$strip" "$ROOT/apko/system.yaml") \
+              <(grep -Ev "$strip" "$ROOT/apko/system-riscv64.yaml") >/dev/null; then
+      echo "build-image: apko/system-riscv64.yaml must equal system.yaml without elixos-browser" >&2
+      return 1
+    fi
+    echo "$ROOT/apko/system-riscv64.yaml"
+  else
+    echo "$ROOT/apko/system.yaml"
+  fi
+}
+
+cross_inputs() { # cross_inputs <arch> <name> <recipe> <paths...>: everything that build reads
+  local arch="$1" name="$2" recipe="$3" path
+  shift 3
   {
-    printf 'package=%s\n' "$name"
+    printf 'target=%s\npackage=%s\n' "$arch" "$name"
     sha256sum "$MELANGE" "$KEY.pub" "$recipe"
     (
       cd "$SRC"
@@ -174,14 +196,15 @@ cross_inputs() { # cross_inputs <name> <recipe> <paths...>: everything that buil
 # the target's artifacts, which the target's package installs. Each keeps its
 # APK in its own repository, keyed on its inputs, so nothing is rebuilt that
 # has not changed.
-cross_build() { # cross_build <name> <recipe> <paths...>
-  local name="$1" recipe="$2"
-  shift 2
-  # One repository per cross build: clearing a shared one to rebuild, say, OTP
-  # would throw away the kernel's cached APK and rebuild it for nothing.
-  local repo="$BUILD/apk-cross/$name" stamp="$BUILD/apk-cross/$name/.inputs" inputs apk
+cross_build() { # cross_build <arch> <name> <recipe> <paths...>
+  local arch="$1" name="$2" recipe="$3"
+  shift 3
+  # One repository per target and cross build: clearing a shared one to
+  # rebuild, say, OTP would throw away the kernel's cached APK, and two targets
+  # must never overwrite each other's.
+  local repo="$BUILD/apk-cross/$arch/$name" stamp="$BUILD/apk-cross/$arch/$name/.inputs" inputs apk
   local cached_inputs="" cached_sha="" cached_apk=""
-  inputs="$(cross_inputs "$name" "$recipe" "$@")"
+  inputs="$(cross_inputs "$arch" "$name" "$recipe" "$@")"
   if [ -f "$stamp" ]; then
     read -r cached_inputs cached_sha cached_apk < "$stamp" || true
   fi
@@ -189,21 +212,21 @@ cross_build() { # cross_build <name> <recipe> <paths...>
   apk="$repo/x86_64/$cached_apk"
   if [ -n "${FORCE:-}" ] || [ "$inputs" != "$cached_inputs" ] || [ ! -f "$apk" ] ||
      [ "$(sha256sum "$apk" 2>/dev/null | cut -d' ' -f1)" != "$cached_sha" ]; then
-    echo "build-image: melange $(basename "$recipe") (native cross)"
+    echo "build-image: melange $(basename "$recipe") (native cross, $arch)"
     rm -rf "$repo/x86_64" "$stamp"
     mkdir -p "$repo/x86_64"
     # The shared compiler cache and the host-arch variable: one pinned Zig SDK
     # for the shim and the kernel, outside melange's per-build workspace.
     mkdir -p "$ZIG_CACHE"
-    printf 'ELIXOS_ZIG_HOST_ARCH=%s\n' "$HOST_ARCH" > "$ZIG_CACHE/host.env"
+    printf 'ELIXOS_ZIG_HOST_ARCH=%s\nELIXOS_CROSS_ARCH=%s\n' "$HOST_ARCH" "$arch" > "$ZIG_CACHE/cross-$arch.env"
     "$MELANGE" build "$recipe" --arch x86_64 --source-dir "$SRC" \
       --out-dir "$repo" --signing-key "$KEY" -r "$BUILD/apk/$HOST_ARCH" -k "$KEY.pub" \
-      --cache-dir "$ZIG_CACHE" --env-file "$ZIG_CACHE/host.env" >/dev/null
+      --cache-dir "$ZIG_CACHE" --env-file "$ZIG_CACHE/cross-$arch.env" >/dev/null
     apk="$(ls "$repo/x86_64/elixos-$name-cross"-*.apk | head -n1)"
     [ -f "$apk" ] || { echo "build-image: no elixos-$name-cross APK was produced" >&2; return 1; }
     printf '%s %s %s\n' "$inputs" "$(sha256sum "$apk" | cut -d' ' -f1)" "$(basename "$apk")" > "$stamp"
   else
-    echo "build-image: elixos-$name-cross inputs unchanged (cache hit)"
+    echo "build-image: elixos-$name-cross inputs unchanged (cache hit, $arch)"
   fi
 
   stage_prebuilt "$name" "$apk"
@@ -265,7 +288,10 @@ build_packages() { # build_packages <arch>
   else
     packages+=(factory)
   fi
-  packages+=(shim browser toolchain)
+  packages+=(shim)
+  # Lightpanda ships x86_64 and aarch64 only (ADR-097).
+  [ "$arch" = riscv64 ] || packages+=(browser)
+  packages+=(toolchain)
   for pkg in "${packages[@]}"; do
     file="$SRC/melange/$pkg.yaml"
     [ -f "$file" ] || continue
@@ -290,9 +316,10 @@ build_packages() { # build_packages <arch>
     fi
 
     extra=()
-    if [ "$pkg" = shim ]; then
-      # Only the shim builds with Zig; its compiler and local/global caches
-      # live outside melange's per-build workspace (see docs/notes).
+    if [ "$pkg" = shim ] || [ "$pkg" = toolchain ]; then
+      # The shim and the toolchain's cc bridge build with the build host's
+      # Zig (ADR-094); its caches live outside melange's per-build workspace
+      # (see docs/notes).
       mkdir -p "$ZIG_CACHE"
       printf 'ELIXOS_ZIG_HOST_ARCH=%s\n' "$HOST_ARCH" > "$ZIG_CACHE/host.env"
       extra=(--cache-dir "$ZIG_CACHE" --env-file "$ZIG_CACHE/host.env")
@@ -344,7 +371,8 @@ assemble() { # assemble <arch> <output tar>
 }
 
 system_lock() { # system_lock <arch>: retain committed pins until config changes
-  local arch="$1" config="$ROOT/apko/system.yaml" lockfile="$LOCK_ROOT/system.lock.$1.json"
+  local arch="$1" config lockfile="$LOCK_ROOT/system.lock.$1.json"
+  config="$(system_config "$arch")"
   if [ "$EVAL_PROFILE" = 1 ]; then
     "$APKO" lock "$config" --arch "$arch" --cache-dir "$MIRROR" \
       -r "$BUILD/apk/$arch" -k "$KEY.pub" --output "$lockfile"
@@ -366,13 +394,14 @@ PY
 }
 
 assemble_system() { # assemble_system <arch> <work directory>
-  local arch="$1" work="$2" epoch
+  local arch="$1" work="$2" epoch config
   epoch="$(date -u -d "$BUILD_DATE" +%s)"
+  config="$(system_config "$arch")"
   mkdir -p "$work"
   "$APKO" build --lockfile "$LOCK_ROOT/system.lock.$arch.json" --arch "$arch" \
     --build-date "$BUILD_DATE" --sbom-path "$work" --cache-dir "$MIRROR" \
     -r "$BUILD/apk/$arch" -k "$KEY.pub" \
-    "$ROOT/apko/system.yaml" "elixos-system:$arch" "$work/rootfs.tar"
+    "$config" "elixos-system:$arch" "$work/rootfs.tar"
   rm -rf "$work/oci" "$work/rootfs"
   mkdir -p "$work/oci" "$work/rootfs"
   tar -xf "$work/rootfs.tar" -C "$work/oci"
@@ -393,7 +422,7 @@ build_system() { # build_system <arch>
   local arch="$1" work="$BUILD/$1" digest second
   system_lock "$arch"
   assemble_system "$arch" "$work/system"
-  check_sbom "$arch" "$work/system/sbom-$arch.spdx.json" "$ROOT/apko/system.yaml"
+  check_sbom "$arch" "$work/system/sbom-$arch.spdx.json" "$(system_config "$arch")"
   assemble_system "$arch" "$work/system-again" >/dev/null
   digest="$(sha256sum "$work/system/system.squashfs" | cut -d' ' -f1)"
   second="$(sha256sum "$work/system-again/system.squashfs" | cut -d' ' -f1)"
@@ -436,7 +465,7 @@ image_inputs() { # image_inputs <arch>: everything the assembled image is made o
   {
     printf 'arch=%s\nbuild_date=%s\n' "$arch" "$BUILD_DATE"
     sha256sum "$APKO" "$ROOTFS_CONFIG" "$LOCK_ROOT/apko.lock.$arch.json" \
-      "$ROOT/apko/system.yaml" "$LOCK_ROOT/system.lock.$arch.json" \
+      "$(system_config "$arch")" "$LOCK_ROOT/system.lock.$arch.json" \
       "$ROOT/scripts/mkinitramfs.sh" "$ROOT/scripts/build-image.sh"
     sha256sum "$BUILD/apk/$arch/$arch/APKINDEX.tar.gz"
     for apk in "$BUILD/apk/$arch/$arch"/elixos-*.apk; do sha256sum "$apk"; done
@@ -476,7 +505,7 @@ assemble_arch() { # assemble_arch <arch>: root filesystem, initramfs, kernel
   }
   case "$arch" in
     x86_64) tar -xzf "$kernel_apk" -O boot/bzImage > "$work/bzImage" ;;
-    aarch64) tar -xzf "$kernel_apk" -O boot/Image > "$work/Image" ;;
+    aarch64|riscv64) tar -xzf "$kernel_apk" -O boot/Image > "$work/Image" ;;
   esac
 
   check_sbom "$arch" "$work/sbom-$arch.spdx.json"
@@ -503,25 +532,25 @@ build_arch() { # build_arch <arch>
   # The packages first: each decides for itself whether its recipe's inputs
   # moved. The image key below must see the APKs this run would actually
   # install, so it cannot be checked before them.
-  if [ "$arch" = aarch64 ]; then
+  if foreign_arch "$arch"; then
     # Keyed on what the recipes read, not on whole directories: editing an
     # unrelated script must not rebuild a kernel.
-    cross_build kernel "$ROOT/melange/kernel-cross.yaml" kernel scripts/check-kernel-config.sh
+    cross_build "$arch" kernel "$ROOT/melange/kernel-cross.yaml" kernel scripts/check-kernel-config.sh
     # The ERTS is the one package that is pure compiled C, so a cross build
     # needs a real cross toolchain - and OTP has a native cross mode for it
     # (ADR-060). This runs on the build machine, in this architecture's own
-    # environment; the aarch64 elixos-otp package installs what it produces.
-    cross_build otp "$ROOT/melange/otp-cross.yaml" .tool-versions melange/otp.yaml
+    # environment; the target's elixos-otp package installs what it produces.
+    cross_build "$arch" otp "$ROOT/melange/otp-cross.yaml" .tool-versions melange/otp.yaml
     native_reuse
     # Nothing compiles under emulation (ADR-094): the renderer NIF (Rust and
-    # Skia, cross toolchain plus an aarch64 sysroot) and the factory (target-
+    # Skia, cross toolchain plus the target's sysroot) and the factory (target-
     # configured bytecode, compiled by the native BEAM) are built here too.
-    cross_build gui-renderer "$ROOT/melange/gui-renderer-cross.yaml" melange/gui-renderer.yaml
+    cross_build "$arch" gui-renderer "$ROOT/melange/gui-renderer-cross.yaml" melange/gui-renderer.yaml
     if [ "$EVAL_PROFILE" = 1 ]; then
-      echo "build-image: the aarch64 eval profile has no cross build yet; refusing an emulated compile" >&2
+      echo "build-image: the $arch eval profile has no cross build yet; refusing an emulated compile" >&2
       return 1
     fi
-    cross_build factory "$ROOT/melange/factory-cross.yaml" os coding spec MILESTONE hex .tool-versions \
+    cross_build "$arch" factory "$ROOT/melange/factory-cross.yaml" os coding spec MILESTONE hex .tool-versions \
       melange/factory.yaml scripts/stage-coding.exs scripts/factory-coding-receipt.exs scripts/package-factory.sh
   fi
   build_packages "$arch"

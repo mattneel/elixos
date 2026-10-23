@@ -30,6 +30,7 @@ still in progress.
 | `m19-oban.mp4` | M19 | a worker defined at the prompt runs a job now, and a job scheduled for later survives a power cycle and runs on the next boot |
 | `m25-browser.mp4` | M25 | the headless browser ships in the read-only image and returns page text, JavaScript results and a PNG over `cdp_ex` through the adapter-compatible `Elixos.Browser.CDP` interface |
 | `m26-system-deps.mp4` | M26 | installing a package installs its closure first, and the build that follows resolves the dependency where it is installed - the dependency's code is the installed copy, on a box with no network |
+| `m28-riscv64.mp4` | M28 | **RISC-V:** the riscv64 image boots on qemu-system-riscv64 virt, shows its target and the interpreter (no JIT), and keeps a module across a power cycle |
 | [`m27-gui.mp4`](m27-gui.mp4) | M27 (in progress) | boot to IEx without the GUI; Oh-My-Jido approvals (confirm, text, choice, multi) are opened with `Elixos.GUI.start/0` and answered with the real keyboard; the GUI hands the console back once nothing is pending |
 
 ## Play, record, check
@@ -76,7 +77,8 @@ go in `build/tools`:
   it. The check also requires the recording to end on
   `elixos-shim: shutdown poweroff` and to contain no kernel panic.
 * Each demo boots **its own sparse copy** of its architecture's freshly made
-  disk: `build/disk.img` for x86_64, `build/aarch64/disk.img` for aarch64.
+  disk: `build/disk.img` for x86_64, `build/aarch64/disk.img` for aarch64,
+  `build/riscv64/disk.img` for riscv64.
   A recording cannot drift the pristine disk, and demos that count attempts
   start from the pristine state. `-no-reboot` ends QEMU when the guest reboots,
   so a demo that needs two power-ons spawns QEMU twice inside one recording,

@@ -8,12 +8,17 @@ defmodule Elixos.Test.Disk do
   """
 
   @doc """
-  Copies the pristine disk into `dir`; `ELIXOS_QEMU_AARCH64=1` selects the
-  aarch64 disk and its native toolchain instead of the default x86_64 disk.
+  Copies the pristine disk into `dir`; `ELIXOS_QEMU_AARCH64=1` or
+  `ELIXOS_QEMU_RISCV64=1` selects that architecture's disk and its native
+  toolchain instead of the default x86_64 disk.
   """
   def fresh!(dir) do
     name =
-      if System.get_env("ELIXOS_QEMU_AARCH64") == "1", do: "aarch64/disk.img", else: "disk.img"
+      cond do
+        System.get_env("ELIXOS_QEMU_AARCH64") == "1" -> "aarch64/disk.img"
+        System.get_env("ELIXOS_QEMU_RISCV64") == "1" -> "riscv64/disk.img"
+        true -> "disk.img"
+      end
 
     pristine = Elixos.Test.Paths.build(name)
 

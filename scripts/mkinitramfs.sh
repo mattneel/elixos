@@ -40,7 +40,7 @@ if [ "${1:-}" = --live ]; then
   OUT="$3"
   ARCH="$4"
   case "$ARCH" in
-    x86_64|aarch64) ;;
+    x86_64|aarch64|riscv64) ;;
     *) echo "mkinitramfs: unsupported architecture $ARCH" >&2; exit 1 ;;
   esac
   # Use the same package and immutable service filesystem as mkdisk.sh, not

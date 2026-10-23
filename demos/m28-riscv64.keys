@@ -1,0 +1,21 @@
+# What the M28 demo must show, in order: the riscv64 image boots to IEx on
+# qemu-system-riscv64's virt machine, the box reports its architecture and the
+# interpreter, a module defined at the prompt survives a power cycle, and it
+# powers off.
+elixos-shim: pid 1, version
+iex(1)> IEx.configure(colors: [enabled: false])
+=== ELIXOS / RISC-V (riscv64) ===
+iex(3)> :erlang.system_info(:system_architecture)
+~c"riscv64-unknown-linux-musl"
+iex(4)> :erlang.system_info(:emu_flavor)
+:emu
+iex(5)> (defmodule Demo.Risc do
+:riscv_ok
+iex(6)> Elixos.save()
+{:ok,
+elixos-shim: shutdown poweroff
+iex(1)> IEx.configure(colors: [enabled: false])
+=== ELIXOS / RISC-V (riscv64) ===
+iex(3)> Demo.Risc.value()
+:riscv_ok
+elixos-shim: shutdown poweroff

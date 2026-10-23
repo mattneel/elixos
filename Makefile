@@ -11,7 +11,7 @@ MILESTONE := $(shell cat MILESTONE)
 BUILD ?= build
 export ELIXOS_BUILD := $(abspath $(BUILD))
 
-.PHONY: help check-tools test test-shim deps test-os test-qemu test-qemu-aarch64 check ci audit demo demos \
+.PHONY: help check-tools test test-shim deps test-os test-qemu test-qemu-aarch64 test-qemu-riscv64 image-riscv64 check ci audit demo demos \
         image images reproducible uefi-image disk qemu format clean distclean
 
 help: ## List targets
@@ -39,6 +39,10 @@ test-qemu-aarch64: images ## The aarch64 smoke set, on qemu-system-aarch64 (TCG:
 	cd os && ELIXOS_QEMU=1 ELIXOS_QEMU_AARCH64=1 ELIXOS_MILESTONE=$(MILESTONE) \
 	  mix test test/integration/m16_aarch64_test.exs
 
+test-qemu-riscv64: image-riscv64 ## The riscv64 smoke set, on qemu-system-riscv64 virt (TCG: slow, M28)
+	cd os && ELIXOS_QEMU=1 ELIXOS_QEMU_RISCV64=1 ELIXOS_MILESTONE=$(MILESTONE) \
+	  mix test test/integration/m28_riscv64_test.exs
+
 ci: test test-qemu images ## Everything for the current milestone, both architectures
 
 check: image ## While working on one milestone: host tests + its own integration tests, not the suite (M=26)
@@ -61,9 +65,13 @@ image: ## This machine's image, incrementally (M16: melange + apko, ADR-041)
 	scripts/build-image.sh
 	scripts/mkdisk.sh
 
-images: image ## Both architectures; aarch64 kernel and OTP are cross-built natively
+images: image image-riscv64 ## Every architecture; foreign ones are cross-built natively (ADR-094)
 	scripts/build-image.sh aarch64
 	scripts/mkdisk.sh aarch64
+
+image-riscv64: ## The riscv64 image (M28, ADR-097), cross-built on the build host
+	scripts/build-image.sh riscv64
+	scripts/mkdisk.sh riscv64
 
 reproducible: ## Assemble the x86_64 rootfs twice from the lockfile; print the one digest
 	scripts/build-image.sh x86_64

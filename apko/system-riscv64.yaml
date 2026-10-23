@@ -1,0 +1,38 @@
+# The riscv64 service image (M28, ADR-097): apko/system.yaml without the
+# headless browser. scripts/build-image.sh refuses any other difference.
+# Read-only PostgreSQL service image (M18, ADR-052/053).
+# Keep the server, client and extensions off the factory initramfs. Alpine's
+# v3.22 extensions were built for PG17; v3.24's default extensions target PG18.
+# The repository tag restricts only these extension packages, not their runtime
+# dependencies. Both indexes and APKs are verified with Alpine's signing key.
+contents:
+  keyring:
+    - apko/keys/alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub
+  repositories:
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+    - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+    - '@pg17 https://dl-cdn.alpinelinux.org/alpine/v3.22/community'
+  packages:
+    - alpine-release=3.24.3-r0
+    - postgresql17=17.11-r0
+    - postgresql17-client=17.11-r0
+    - postgresql-pgvector=0.6.2-r1@pg17
+    # Alpine's APKBUILD uses -DAPACHE_ONLY=ON; no Timescale License code.
+    - postgresql-timescaledb=2.17.2-r1@pg17
+    # No headless browser: Lightpanda publishes no riscv64 build (ADR-097).
+    # M27's raster NIF and private, target-correct musl ELF closure.
+    - elixos-gui-renderer
+
+accounts:
+  users:
+    - username: postgres
+      uid: 70
+      gid: 70
+      homedir: /priv/postgres
+      shell: /bin/false
+  groups:
+    - groupname: postgres
+      gid: 70
+
+archs:
+  - riscv64

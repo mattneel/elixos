@@ -2,6 +2,8 @@
 # OTP release tarball with the options the old factory used - the difference
 # is that it is built in the architecture's own environment instead of through
 # a hand-rolled musl cross toolchain (that is what supersedes ADR-008).
+# x86_64 still builds that way; aarch64 and riscv64 install the tree
+# melange/otp-cross.yaml cross-compiled on the build host (ADR-060, ADR-094).
 #
 # This package supplies the guest's runtime ERTS and OTP applications.
 # The factory's Mix release uses include_erts: false and boots this ERTS
@@ -36,26 +38,32 @@ environment:
 
 pipeline:
   - runs: |
-      # The aarch64 ERTS is cross-compiled on the build machine (ADR-060):
-      # scripts/build-image.sh runs melange/otp-cross.yaml in the host's own
-      # environment and stages the tree it produced at /home/build/prebuilt/otp,
-      # so this package installs that instead of compiling OTP under emulation.
-      # aarch64 only - the staged tree is aarch64 code.
-      if [ "${{build.arch}}" = aarch64 ] && [ -d /home/build/prebuilt/otp ]; then
-        cp -a /home/build/prebuilt/otp/. "${{targets.destdir}}/"
-        # Symlinks whose target lies outside the tree cannot survive melange's
-        # workspace copy, so scripts/build-image.sh records them next to the
-        # tree and they are replayed here.
-        if [ -f /home/build/prebuilt/otp.links ]; then
-          while IFS="$(printf '\t')" read -r link target; do
-            dest="${{targets.destdir}}/$link"
-            mkdir -p "$(dirname "$dest")"
-            ln -sfn "$target" "$dest"
-          done < /home/build/prebuilt/otp.links
-        fi
-        echo "otp: installed the cross-built aarch64 tree"
-        exit 0
-      fi
+      # The aarch64 and riscv64 ERTS are cross-compiled on the build machine
+      # (ADR-060, ADR-094): scripts/build-image.sh runs melange/otp-cross.yaml
+      # in the host's own environment and stages the tree it produced at
+      # /home/build/prebuilt/otp, so this package installs that. There is no
+      # emulated compile to fall back to - a missing tree is a build error.
+      case "${{build.arch}}" in
+        aarch64|riscv64)
+          if [ ! -d /home/build/prebuilt/otp ]; then
+            echo "otp: no cross-built ${{build.arch}} tree staged at /home/build/prebuilt/otp (build it with melange/otp-cross.yaml)" >&2
+            exit 1
+          fi
+          cp -a /home/build/prebuilt/otp/. "${{targets.destdir}}/"
+          # Symlinks whose target lies outside the tree cannot survive melange's
+          # workspace copy, so scripts/build-image.sh records them next to the
+          # tree and they are replayed here.
+          if [ -f /home/build/prebuilt/otp.links ]; then
+            while IFS="$(printf '\t')" read -r link target; do
+              dest="${{targets.destdir}}/$link"
+              mkdir -p "$(dirname "$dest")"
+              ln -sfn "$target" "$dest"
+            done < /home/build/prebuilt/otp.links
+          fi
+          echo "otp: installed the cross-built ${{build.arch}} tree"
+          exit 0
+          ;;
+      esac
 
       version="$(sed -n 's/^erlang //p' /home/build/.tool-versions)"
       if [ "$version" != "${{package.version}}" ]; then

@@ -36,14 +36,14 @@ MSG
 }
 
 
-# One demo boots the other architecture (m16-aarch64); everything else is the
+# Two demos boot another architecture (m16-aarch64, m28-riscv64); everything else is the
 # host's.
 case "$NAME" in
-  *-aarch64)
-    arch=aarch64
-    pristine="$BUILD/aarch64/disk.img"
-    export ELIXOS_DEMO_KERNEL="$BUILD/aarch64/Image"
-    export ELIXOS_DEMO_INITRAMFS="$BUILD/aarch64/initramfs.cpio.gz"
+  *-aarch64|*-riscv64)
+    arch="${NAME##*-}"
+    pristine="$BUILD/$arch/disk.img"
+    export ELIXOS_DEMO_KERNEL="$BUILD/$arch/Image"
+    export ELIXOS_DEMO_INITRAMFS="$BUILD/$arch/initramfs.cpio.gz"
     ;;
   *)
     export ELIXOS_DEMO_KERNEL="$BUILD/bzImage"

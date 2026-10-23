@@ -56,7 +56,7 @@ that every milestone up to it is complete.
 - **Each REPL session has its own working directory** (ADR-020), keyed by its
   group leader. Nothing changes the VM's cwd (ADR-016); native tools are exec'd
   with `cd:` set to the session's directory.
-- x86_64 and aarch64 (ADR-041). Single user (ADR-013). No runtime deps in `os/`
+- x86_64, aarch64 and riscv64 (ADR-041, ADR-097). Single user (ADR-013). No runtime deps in `os/`
   without an ADR.
 - Unresolved questions and proposed ADRs in docs/DECISIONS.md belong to the
   human. Follow the proposed default and keep going; mention it in your summary.
@@ -103,10 +103,11 @@ that every milestone up to it is complete.
 | `make test` | shim + Elixir unit tests for the current milestone |
 | `make check M=27` | host tests through M27 + its QEMU file(s), after building the host image |
 | `make test-qemu` | builds the host image and runs the non-aarch64 integration suite |
-| `make test-qemu-aarch64` | builds both images and runs the separate ARM64 smoke test |
-| `make ci` | host tests, the QEMU suite and both image builds; ARM64 smoke is separate |
+| `make test-qemu-aarch64` | builds the images and runs the separate ARM64 smoke test |
+| `make test-qemu-riscv64` | builds the riscv64 image and runs its smoke test (M28) |
+| `make ci` | host tests, the QEMU suite and every image build; ARM64 and riscv64 smoke are separate |
 | `make image` | the host architecture's packaged kernel, shim, initramfs, service image and disk |
-| `make images` | x86_64 and aarch64 images |
+| `make images` | x86_64, aarch64 and riscv64 images |
 | `make demo M=26` | record, render and check one milestone's demo |
 | `make qemu ARGS="..."` | boot interactively; Ctrl-A X quits |
 | `cd os && mix test path/to/test.exs:LINE` | one test (set `ELIXOS_MILESTONE` to override) |

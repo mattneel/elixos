@@ -1,0 +1,112 @@
+#!/usr/bin/expect -f
+# M28: the same Elixos on a third architecture. The riscv64 image boots on
+# qemu-system-riscv64's `virt` machine (QEMU's OpenSBI starts the kernel) under
+# TCG, reports what it is, shows the BEAM runs its interpreter (no JIT on
+# RISC-V), keeps a module across a power cycle and powers off.
+
+# Boots are slow under emulation; prompts and content afterwards are not. The
+# timeout is set per phase so a wedged boot is loud rather than fifteen minutes
+# of silence.
+set timeout 1800
+
+expect_after {
+    timeout {
+        puts stderr "\nDEMO ABORTED waiting for a pattern. Last output:\n$expect_out(buffer)"
+        exit 1
+    }
+}
+set send_human {.1 .3 10 .05 2}
+
+spawn -noecho qemu-system-riscv64 \
+    -machine virt -accel tcg -cpu rv64 -bios default -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+
+expect "iex(1)> "
+set timeout 120
+sleep 1
+
+# A recording is easier to read - and to drive - without colour: the escapes
+# land inside the very strings the script waits for.
+send {IEx.configure(colors: [enabled: false])}
+send "\r"
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+# Keep the guest's architecture visible, and show ERTS's native target too.
+send {IO.puts("=== ELIXOS / RISC-V (#{Elixos.info().arch}) ===")}
+send "\r"
+expect -exact {=== ELIXOS / RISC-V (riscv64) ===}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send ":erlang.system_info(:system_architecture)"
+send "\r"
+expect -re {riscv64[^\r\n]*linux}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+# No JIT on RISC-V: the BEAM runs its interpreter.
+send ":erlang.system_info(:emu_flavor)"
+send "\r"
+expect -exact {:emu}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+# A module defined at the prompt, one expression the way a defmodule is typed.
+send {(defmodule Demo.Risc do
+  def value, do: :riscv_ok
+end); Demo.Risc.value()}
+send "\r"
+expect -exact {:riscv_ok}
+expect -re {iex\([0-9]+\)> }
+sleep 1
+
+send "Elixos.save()"
+send "\r"
+expect -exact "{:ok,"
+expect -re {iex\([0-9]+\)> }
+sleep 2
+send "Elixos.poweroff()"
+send "\r"
+expect "elixos-shim: shutdown poweroff"
+expect "reboot: Power down"
+expect eof
+sleep 2
+
+# Power on again on the same disk: the module is part of the image now.
+set timeout 1800
+spawn -noecho qemu-system-riscv64 \
+    -machine virt -accel tcg -cpu rv64 -bios default -m 1024 -smp 2 \
+    -nographic -no-reboot \
+    -kernel $env(ELIXOS_DEMO_KERNEL) -initrd $env(ELIXOS_DEMO_INITRAMFS) \
+    -append "console=ttyS0 panic=-1 quiet elixos.commit_after=3600" \
+    -drive "file=$env(ELIXOS_DEMO_DISK),if=virtio,format=raw" \
+    -device virtio-rng-pci -nic none
+
+expect "iex(1)> "
+set timeout 120
+sleep 1
+send {IEx.configure(colors: [enabled: false])}
+send "\r"
+expect -re {iex\([0-9]+\)> }
+sleep 1
+send {IO.puts("=== ELIXOS / RISC-V (#{Elixos.info().arch}) ===")}
+send "\r"
+expect -exact {=== ELIXOS / RISC-V (riscv64) ===}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+send "Demo.Risc.value()"
+send "\r"
+expect {:riscv_ok}
+expect -re {iex\([0-9]+\)> }
+sleep 2
+
+send "Elixos.poweroff()"
+send "\r"
+expect "elixos-shim: shutdown poweroff"
+expect eof
+sleep 1

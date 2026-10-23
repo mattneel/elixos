@@ -2,7 +2,7 @@
   "version": "v1",
   "config": {
     "name": "/home/autark/src/elixos/apko/apko.yaml",
-    "checksum": "sha256-Wd7jN1JIzDeFhfZnxaV41JQpyb8IC4tSdO0Pd6UCA9Q="
+    "checksum": "sha256-ZiInD89l31lXY9zctidrRnUS1a0qe8/jWTFDaBNLqxg="
   },
   "contents": {
     "keyring": [
@@ -304,18 +304,18 @@
         "version": "29.1.1-r0",
         "architecture": "x86_64",
         "signature": {
-          "range": "bytes=0-686",
-          "checksum": "sha1-o7ljiNN54Xp0Z5m3QSjJIuOBd9g="
+          "range": "bytes=0-689",
+          "checksum": "sha1-QI71gviGPUBNDFsMHxPt8DaXF6k="
         },
         "control": {
-          "range": "bytes=687-2689",
-          "checksum": "sha1-m5T4JgiLUFAopnLYr//PjXFDAl4="
+          "range": "bytes=690-2755",
+          "checksum": "sha1-V8MG/lz5NAwm+kgUJXAZRQR1cCc="
         },
         "data": {
-          "range": "bytes=2690-67717811",
-          "checksum": "sha256-yqVCzXklZvuDx3lfIzgTJi6Ac27BkxLI/AoYavKLPVE="
+          "range": "bytes=2756-67717878",
+          "checksum": "sha256-VAnoWdZ2DvX1la3KQ3pD4LdedozkIcmKfugRemkRrRQ="
         },
-        "checksum": "Q1m5T4JgiLUFAopnLYr//PjXFDAl4="
+        "checksum": "Q1V8MG/lz5NAwm+kgUJXAZRQR1cCc="
       },
       {
         "name": "elixos-elixir",
@@ -456,18 +456,18 @@
         "version": "0.1.0-r0",
         "architecture": "x86_64",
         "signature": {
-          "range": "bytes=0-688",
-          "checksum": "sha1-dLOmI0GhqqnubwX58nJB260pzPs="
+          "range": "bytes=0-686",
+          "checksum": "sha1-skzMj2SNisrkrDxNbkwnfZ2tw8w="
         },
         "control": {
-          "range": "bytes=689-2188",
-          "checksum": "sha1-o5fzyNUoq7wgySggoX1G3cTHFq0="
+          "range": "bytes=687-2185",
+          "checksum": "sha1-k4pN6NmAoanXOWLCR1SxrTBux2g="
         },
         "data": {
-          "range": "bytes=2189-14328196",
-          "checksum": "sha256-/UDLVhLLS20eIH4LV67M02cFmxqWnYmnf9jVb8WDaYA="
+          "range": "bytes=2186-14327919",
+          "checksum": "sha256-x33vtEYi4LVkdgVeU7Q1wW9MhtYe24h8fRqg2KMNzZw="
         },
-        "checksum": "Q1o5fzyNUoq7wgySggoX1G3cTHFq0="
+        "checksum": "Q1k4pN6NmAoanXOWLCR1SxrTBux2g="
       },
       {
         "name": "elixos-kernel",
@@ -475,18 +475,18 @@
         "version": "7.2.9-r0",
         "architecture": "x86_64",
         "signature": {
-          "range": "bytes=0-686",
-          "checksum": "sha1-3ETzaXACPqKT+xrd1TkmFM0RUAU="
+          "range": "bytes=0-687",
+          "checksum": "sha1-6DHcEfzK3c2IsGkpDsnteyAtl7w="
         },
         "control": {
-          "range": "bytes=687-2727",
-          "checksum": "sha1-OcDe7kAg+vjtFFZXGytgXIEeD/4="
+          "range": "bytes=688-2763",
+          "checksum": "sha1-bXbC5EEuoaBrXfME1qd0wyvIxwM="
         },
         "data": {
-          "range": "bytes=2728-15087363",
-          "checksum": "sha256-1XjUCW/iQUd/M/TjWAWjEeVT2Iyebi73E4e6zXBxP+g="
+          "range": "bytes=2764-15087518",
+          "checksum": "sha256-IHaJOdgpEW7nyNscy26qLBjUc66OdlNcaaRqW2k/hmY="
         },
-        "checksum": "Q1OcDe7kAg+vjtFFZXGytgXIEeD/4="
+        "checksum": "Q1bXbC5EEuoaBrXfME1qd0wyvIxwM="
       },
       {
         "name": "elixos-shim",

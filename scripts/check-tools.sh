@@ -71,6 +71,13 @@ else
   echo "  MISSING  binfmt_misc          register qemu-aarch64 (sudo update-binfmts --enable qemu-aarch64)"
   status=1
 fi
+need qemu-system-riscv64 qemu-system-misc "the riscv64 image and its smoke tests (M28)"
+if [ -e /proc/sys/fs/binfmt_misc/qemu-riscv64 ]; then
+  echo "  ok       binfmt_misc          qemu-riscv64 is registered"
+else
+  echo "  MISSING  binfmt_misc          register qemu-riscv64 (sudo update-binfmts --enable qemu-riscv64)"
+  status=1
+fi
 if [ ! -e /lib/ld-musl-x86_64.so.1 ]; then
   echo "  MISSING  musl loader           the factory build runs target binaries on this host"
   echo "                                   install: sudo cp build/toolchain/x86_64-linux-musl-cross/x86_64-linux-musl/lib/libc.so /lib/ld-musl-x86_64.so.1"

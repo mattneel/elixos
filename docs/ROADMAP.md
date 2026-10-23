@@ -6,12 +6,13 @@ repo), notes on how to get there, and a done checklist. Work them in order;
 
 Fast tests: `make test`. Focused iteration: `make check M=27`.
 Full QEMU suite: `make test-qemu` (M3 onward); milestone gate: `make ci`.
-The ARM64 smoke test is separate: `make test-qemu-aarch64`.
+The ARM64 and riscv64 smoke tests are separate: `make test-qemu-aarch64` and
+`make test-qemu-riscv64`.
 
-**Current state:** M1–M19 and M25–M27 are delivered. M20 (the Ask queue) is
+**Current state:** M1–M19 and M25–M28 are delivered. M20 (the Ask question queue) is
 retired by ADR-093: Oh-My-Jido approvals are the only human-in-the-loop
 mechanism. M21–M24 are withdrawn by ADR-083, not deferred for another port
-attempt. The K230 cyberdeck track (M28–M33) is next.
+attempt. The K230 cyberdeck track continues with M29–M33.
 
 ---
 
@@ -934,9 +935,24 @@ interpreter flavour.
 passes, the emulator flavour and boot-to-IEx time and memory are recorded
 here, and the ADR is written.
 
-- [ ] ADR (to be written): riscv64 as the third architecture.
-- [ ] Emerge on riscv64 musl: built from source, or recorded as unavailable.
-- [ ] Demo recorded: `demos/m28-riscv64.mp4` (`make demo M=28`).
+**Results (2026-10-23).**
+- *Emulator flavour:* `:erlang.system_info(:emu_flavor)` is `:emu`; the ERTS
+  is built `--disable-jit` and reports `riscv64-unknown-linux-musl`.
+- *Boot to `iex(1)>`:* 22.7 s on `qemu-system-riscv64 -machine virt -cpu rv64`
+  under TCG on the x86_64 build host (1 GiB guest, 2 vCPUs).
+- *Memory at the prompt:* MemTotal 988,388 kB, MemFree 496,248 kB,
+  MemAvailable 560,496 kB. The root filesystem is the initramfs (86 MB
+  compressed), so it lives in RAM.
+- *Image:* rootfs and service image are reproducible (two assemblies agree);
+  the riscv64 service image has no browser (Lightpanda ships no riscv64
+  build, ADR-097). The whole riscv64 image builds in about 12 minutes with
+  every compiler running natively on the build host.
+
+- [x] ADR-097: riscv64 as the third architecture.
+- [x] Emerge on riscv64 musl: built from source by the host cross build
+  (`riscv64gc-unknown-linux-musl`, RISC-V `libemerge_skia.so` with its private
+  closure), shipped at `/system/gui/riscv64-unknown-linux-musl`.
+- [x] Demo recorded: `demos/m28-riscv64.mp4` (`make demo M=28`).
 
 ---
 

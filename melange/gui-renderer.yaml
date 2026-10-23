@@ -1,8 +1,8 @@
 # Emerge 0.4.2's raster NIF: musl only, never a GNU NIF in the musl BEAM.
-# x86_64 uses the upstream embedded CPU artifact. ARM64 installs the same
-# profile cross-compiled on the build host by gui-renderer-cross.yaml (from the
-# verified Hex source, its Cargo.lock and immutable rust-skia pin); no compiler
-# runs in this package's emulated aarch64 environment (ADR-060).
+# x86_64 uses the upstream embedded CPU artifact. ARM64 and riscv64 install
+# the same profile cross-compiled on the build host by gui-renderer-cross.yaml
+# (from the verified Hex source, its Cargo.lock and immutable rust-skia pin);
+# no compiler runs in this package's emulated environment (ADR-060, ADR-094).
 package:
   name: elixos-gui-renderer
   version: "0.4.2"
@@ -40,12 +40,12 @@ pipeline:
       set -eu
       arch="${{build.arch}}"
       case "$arch" in
-        x86_64|aarch64) ;;
+        x86_64|aarch64|riscv64) ;;
         *) echo "gui-renderer: unsupported architecture $arch" >&2; exit 1 ;;
       esac
       triple="$arch-unknown-linux-musl"
       dest="${{targets.destdir}}/gui/$triple"
-      if [ "$arch" = aarch64 ]; then
+      if [ "$arch" = aarch64 ] || [ "$arch" = riscv64 ]; then
         # The cross build's tree, closure and checksums included. Never an
         # emulated compile in its place.
         prebuilt="/home/build/prebuilt/gui-renderer/gui/$triple"

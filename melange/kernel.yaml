@@ -3,9 +3,9 @@
 # that is Alpine's configuration, not ours.
 #
 # The version here must match kernel/VERSION, which the pipeline re-checks; the
-# sha256 there is the one from kernel.org's signed sums. The build runs in the
-# architecture's own environment (aarch64 under emulation on an x86_64 host,
-# which is slow but needs no cross toolchain - the point of the switch).
+# sha256 there is the one from kernel.org's signed sums. x86_64 builds in its
+# own environment; aarch64 and riscv64 are cross-compiled on the build host
+# (melange/kernel-cross.yaml, ADR-060, ADR-094) and only installed here.
 package:
   name: elixos-kernel
   version: "7.2.9"
@@ -41,6 +41,22 @@ environment:
 
 pipeline:
   - runs: |
+      # scripts/build-image.sh compiles the arm64 and riscv64 Images on the
+      # build host (LLVM cross, melange/kernel-cross.yaml) and stages them
+      # here: this package only installs the staged Image. There is no
+      # emulated compile to fall back to - a missing Image is a build error.
+      case "${{build.arch}}" in
+        aarch64|riscv64)
+          if [ ! -f /home/build/prebuilt/kernel/boot/Image ]; then
+            echo "kernel: no cross-compiled ${{build.arch}} Image staged at /home/build/prebuilt/kernel/boot/Image (build it with melange/kernel-cross.yaml)" >&2
+            exit 1
+          fi
+          install -Dm0644 /home/build/prebuilt/kernel/boot/Image "${{targets.destdir}}/boot/Image"
+          echo "kernel: installed the cross-compiled ${{build.arch}} Image"
+          exit 0
+          ;;
+      esac
+
       version="$(sed -n 's/^KERNEL_VERSION=//p' /home/build/kernel/VERSION)"
       sha="$(sed -n 's/^KERNEL_SHA256=//p' /home/build/kernel/VERSION)"
       if [ "$version" != "${{package.version}}" ]; then
@@ -64,23 +80,6 @@ pipeline:
           target=bzImage
           payload=arch/x86/boot/bzImage
           name=bzImage
-          ;;
-        aarch64)
-          # scripts/build-image.sh compiles the arm64 Image on the build host
-          # (LLVM cross, melange/kernel-cross.yaml, ADR-060) and stages it
-          # here: this package then only installs it, instead of compiling
-          # the same kernel under emulation. Without the staged image the
-          # emulated build below still works, so this stays a fast path and
-          # not a second source of truth.
-          if [ -f /home/build/prebuilt/kernel/boot/Image ]; then
-            install -Dm0644 /home/build/prebuilt/kernel/boot/Image "${{targets.destdir}}/boot/Image"
-            echo "kernel: installed the cross-compiled arm64 Image"
-            exit 0
-          fi
-          make -s defconfig
-          target=Image
-          payload=arch/arm64/boot/Image
-          name=Image
           ;;
         *) echo "kernel: unsupported arch ${{build.arch}}" >&2; exit 1 ;;
       esac

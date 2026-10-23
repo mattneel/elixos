@@ -2661,3 +2661,46 @@ below follows an interface change; none weakens an assertion.
 
 **Consequences.** `make audit` covers these files through the commit that
 names this ADR.
+
+## ADR-097: riscv64 is the third architecture
+
+**Status:** accepted (2026-10-23), M28.
+
+**Context.** The K230 cyberdeck track (M28–M33) runs Elixos on the K230's
+1.6 GHz RISC-V core. Before the board, the image has to exist and boot on
+`qemu-system-riscv64 -machine virt`. Alpine has signed riscv64 indexes for
+v3.24 (key `60ac2099`), and every Alpine package the image and its build
+recipes pin resolves there at the same versions as on aarch64 and x86_64.
+
+**Decision.**
+- riscv64 joins x86_64 and aarch64 (ADR-041). Like aarch64 it is a foreign
+  architecture: the kernel (`LLVM=1 ARCH=riscv`), OTP, the factory and the
+  renderer attempt are built on the build host and staged (ADR-060, ADR-094);
+  the riscv64 recipes only install those trees. Cross builds are keyed by
+  target (`build/apk-cross/<arch>/<name>`) and get the target through
+  `ELIXOS_CROSS_ARCH`.
+- OTP's JIT covers only x86-64 and ARM64, so the riscv64 ERTS is built
+  `--disable-jit` and runs the interpreter (`:emu_flavor` is `:emu`).
+- The kernel stays mainline 7.2.9 with `kernel/config.riscv64` for QEMU virt
+  (8250 UART on `ttyS0`, virtio-mmio and gpex PCIe, Goldfish RTC, syscon
+  poweroff). QEMU loads its bundled OpenSBI, which starts the `-kernel` Image.
+- The on-box Zig toolchain ships the pinned riscv64 SDK, verified by sha256
+  and against ziglang.org's minisign key. Its `cc` bridge is now compiled by
+  the build host's Zig for every architecture, so no compiler runs under
+  emulation there either.
+- Lightpanda publishes no riscv64 build, so the riscv64 service image is
+  `apko/system-riscv64.yaml`: `system.yaml` without `elixos-browser`.
+  `scripts/build-image.sh` refuses any other difference between the two.
+  `Elixos.Browser` reports `{:error, :not_running}` there, as it does when the
+  adapter is missing anywhere else.
+- `make image-riscv64` builds the image and disk; `make test-qemu-riscv64`
+  runs the M28 smoke set (`:riscv64`, excluded from other runs).
+
+- The Emerge renderer builds for riscv64 musl from source on the build host
+  (`riscv64gc-unknown-linux-musl`, Alpine riscv64 sysroot) and ships at
+  `/system/gui/riscv64-unknown-linux-musl`.
+
+**Consequences.** riscv64 boots are TCG-only on this host: 22.7 s to
+`iex(1)>` with the interpreter (ROADMAP M28). The deck console (M33) still
+must not depend on Emerge: the renderer is built, but its framebuffer path is
+exercised only on x86_64 and the K230 panel is unknown until M30.

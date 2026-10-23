@@ -35,11 +35,11 @@ environment:
 
 pipeline:
   - runs: |
-      # aarch64 never compiles here (ADR-094): scripts/build-image.sh builds
+      # Foreign architectures never compile here (ADR-094): scripts/build-image.sh builds
       # the arm64 factory natively (melange/factory-cross.yaml) and stages it.
-      if [ "${{build.arch}}" = aarch64 ]; then
+      if [ "${{build.arch}}" != x86_64 ]; then
         [ -d /home/build/prebuilt/factory/factory ] || {
-          echo "factory: no cross-built aarch64 factory staged; build with scripts/build-image.sh" >&2
+          echo "factory: no cross-built ${{build.arch}} factory staged; build with scripts/build-image.sh" >&2
           exit 1; }
         cp -a /home/build/prebuilt/factory/. "${{targets.destdir}}/"
         if [ -f /home/build/prebuilt/factory.links ]; then
@@ -49,7 +49,7 @@ pipeline:
             ln -sfn "$target" "$dest"
           done < /home/build/prebuilt/factory.links
         fi
-        echo "factory: installed the cross-built aarch64 tree"
+        echo "factory: installed the cross-built ${{build.arch}} tree"
         exit 0
       fi
       export FACTORY_DEST="${{targets.destdir}}" FACTORY_ARCH="${{build.arch}}"

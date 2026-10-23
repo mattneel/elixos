@@ -26,6 +26,14 @@ environments still unpack under binfmt/QEMU, which compiles nothing.
   target for RustlerPrecompiled/Emerge, and `FACTORY_SYSTEM_ARCHITECTURE`
   makes the receipt name the target. ~80 s natively.
 - The aarch64 Eval profile has no cross recipe and is refused.
+- riscv64 (M28, ADR-097) uses the same recipes: `ELIXOS_CROSS_ARCH` in the
+  cross build's `--env-file` selects the target, and each target keeps its own
+  `build/apk-cross/<arch>/<name>`. The riscv64 Alpine key is `60ac2099`
+  (sha256 `db0b4916...2f278`); OTP is `--disable-jit`; Rust's triple is
+  `riscv64gc-unknown-linux-musl` while Alpine's is `riscv64-alpine-linux-musl`.
+  Pass melange `-r` as an absolute path, or apk in the build cannot read its
+  repository list. The pinned riscv64 Zig SDK was verified against
+  ziglang.org's minisign key with Python's Ed25519 (no minisign binary here).
 
 Each package has an input/checksum stamp, and assembly has its own cache.
 `make image` selects the host architecture; `make images` builds both.

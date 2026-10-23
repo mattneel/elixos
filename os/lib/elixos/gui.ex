@@ -449,6 +449,7 @@ defmodule Elixos.GUI do
           cond do
             String.starts_with?(arch, "x86_64") -> "x86_64-unknown-linux-musl"
             String.starts_with?(arch, "aarch64") -> "aarch64-unknown-linux-musl"
+            String.starts_with?(arch, "riscv64") -> "riscv64-unknown-linux-musl"
             true -> nil
           end
 

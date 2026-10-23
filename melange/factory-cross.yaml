@@ -1,4 +1,4 @@
-# The arm64 factory, built on the build host (ADR-094, extending ADR-060).
+# The arm64 and riscv64 factory, built on the build host (ADR-094, extending ADR-060).
 #
 # The factory is BEAM bytecode, Elixir's Mix/ExUnit and source copies: no
 # compiled native code (Emerge's NIF is a symlink into /system/gui, built by
@@ -14,7 +14,7 @@ package:
   name: elixos-factory-cross
   version: "0.1.0"
   epoch: 0
-  description: "The Elixos factory for arm64, built on the build host (build tool)"
+  description: "The Elixos factory for a foreign architecture, built on the build host (build tool)"
   copyright:
     - license: Apache-2.0
   dependencies:
@@ -37,7 +37,11 @@ pipeline:
   - runs: |
       # The OTP the bytecode targets is the same release on both machines: the
       # cross-built aarch64 ERTS and this native one are one version.
-      export FACTORY_DEST="${{targets.destdir}}" FACTORY_ARCH=aarch64
+      case "${ELIXOS_CROSS_ARCH:?build-image must supply the target architecture}" in
+        aarch64|riscv64) ;;
+        *) echo "factory-cross: unsupported target $ELIXOS_CROSS_ARCH" >&2; exit 1 ;;
+      esac
+      export FACTORY_DEST="${{targets.destdir}}" FACTORY_ARCH="$ELIXOS_CROSS_ARCH"
       export FACTORY_VERSION="${{package.version}}" FACTORY_EVAL=0
-      export FACTORY_SYSTEM_ARCHITECTURE=aarch64-unknown-linux-musl
+      export FACTORY_SYSTEM_ARCHITECTURE="$ELIXOS_CROSS_ARCH-unknown-linux-musl"
       bash /home/build/scripts/package-factory.sh
