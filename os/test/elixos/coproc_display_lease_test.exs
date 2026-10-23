@@ -24,11 +24,18 @@ defmodule Elixos.CoprocDisplayLeaseTest do
 
     start_supervised!(
       {Coproc,
-       [node: vm.node, port: vm.port, listen: {{127, 0, 0, 1}, AtomVM.free_port()},
-        cookie: cookie, reconnect_ms: 200]}
+       [
+         node: vm.node,
+         port: vm.port,
+         listen: {{127, 0, 0, 1}, AtomVM.free_port()},
+         cookie: cookie,
+         reconnect_ms: 200
+       ]}
     )
 
-    assert eventually(fn -> Coproc.status().connected end), "never connected: #{inspect(Coproc.status())}"
+    assert eventually(fn -> Coproc.status().connected end),
+           "never connected: #{inspect(Coproc.status())}"
+
     %{vm: vm}
   end
 
@@ -47,7 +54,10 @@ defmodule Elixos.CoprocDisplayLeaseTest do
     # included, and says so on its console.
     assert eventually(fn -> match?(%{lease: %{lapsed: true}}, Display.info()) end)
     assert %{status: "Elixos restarting, was gen 3 attempt 1"} = Display.info()
-    assert eventually(fn -> AtomVM.output(vm) =~ "display: status Elixos restarting, was gen 3 attempt 1\n" end)
+
+    assert eventually(fn ->
+             AtomVM.output(vm) =~ "display: status Elixos restarting, was gen 3 attempt 1\n"
+           end)
 
     # Elixos is back: the first renewal clears the status.
     assert Display.lease(300, "gen 3 attempt 2") == :ok
@@ -64,12 +74,21 @@ defmodule Elixos.CoprocDisplayLeaseTest do
 
     owner =
       spawn(fn ->
-        send(parent, {:renewer, Elixos.Deck.Lease.start_link(text: "gen 7 attempt 1", renew_ms: 100, ttl_ms: 400)})
+        send(
+          parent,
+          {:renewer,
+           Elixos.Deck.Lease.start_link(text: "gen 7 attempt 1", renew_ms: 100, ttl_ms: 400)}
+        )
+
         receive do: (:stop -> :ok)
       end)
 
     assert_receive {:renewer, renewer}, 5_000
-    assert eventually(fn -> match?(%{status: "", lease: %{text: "gen 7 attempt 1"}}, Display.info()) end)
+
+    assert eventually(fn ->
+             match?(%{status: "", lease: %{text: "gen 7 attempt 1"}}, Display.info())
+           end)
+
     Process.sleep(1_200)
     assert %{status: "", lease: %{lapsed: false}} = Display.info()
 
@@ -78,11 +97,17 @@ defmodule Elixos.CoprocDisplayLeaseTest do
     ref = Process.monitor(renewer)
     send(owner, :stop)
     assert_receive {:DOWN, ^ref, :process, ^renewer, _}, 2_000
-    assert eventually(fn -> match?(%{status: "Elixos restarting, was gen 7 attempt 1"}, Display.info()) end)
+
+    assert eventually(fn ->
+             match?(%{status: "Elixos restarting, was gen 7 attempt 1"}, Display.info())
+           end)
 
     # A new owner's renewer clears it.
     Elixos.Deck.Lease.start_link(text: "gen 7 attempt 2", renew_ms: 100, ttl_ms: 400)
-    assert eventually(fn -> match?(%{status: "", lease: %{text: "gen 7 attempt 2"}}, Display.info()) end)
+
+    assert eventually(fn ->
+             match?(%{status: "", lease: %{text: "gen 7 attempt 2"}}, Display.info())
+           end)
   end
 
   defp eventually(fun, deadline \\ System.monotonic_time(:millisecond) + 15_000) do

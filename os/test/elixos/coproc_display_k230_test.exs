@@ -29,7 +29,10 @@ defmodule Elixos.CoprocDisplayK230Test do
   describe "the bookkeeping" do
     test "header/1 accepts exactly the protocol's header" do
       header = header(7, {1, 2, 3, 4}, 6)
-      assert :coproc_deck_scanout.header(header) == {:ok, %{seq: 7, damage: {1, 2, 3, 4}, shown: 6}}
+
+      assert :coproc_deck_scanout.header(header) ==
+               {:ok, %{seq: 7, damage: {1, 2, 3, 4}, shown: 6}}
+
       <<a::binary-size(16), _stride::32, rest::binary>> = header
       assert :coproc_deck_scanout.header(a <> <<1137::32-little>> <> rest) == :invalid
       assert :coproc_deck_scanout.header(<<0::size(48 * 8)>>) == :invalid
@@ -57,7 +60,11 @@ defmodule Elixos.CoprocDisplayK230Test do
                [{0, 0, 568, 64}, {0, 64, 568, 64}, {0, 128, 568, 2}]
 
       assert :coproc_deck_scanout.rows({0, 3, 568, 2}) == [{@header + 3 * @stride, 2 * @stride}]
-      assert :coproc_deck_scanout.rows({5, 3, 2, 2}) == [{@header + 3 * @stride + 10, 4}, {@header + 4 * @stride + 10, 4}]
+
+      assert :coproc_deck_scanout.rows({5, 3, 2, 2}) == [
+               {@header + 3 * @stride + 10, 4},
+               {@header + 4 * @stride + 10, 4}
+             ]
     end
 
     test "the coprocessor's font is Elixos.Deck.Font for printable ASCII" do
@@ -101,7 +108,10 @@ defmodule Elixos.CoprocDisplayK230Test do
       region = Path.join(ctx.tmp_dir, "region")
       panel = Path.join(ctx.tmp_dir, "panel")
       # Elixos initialised the region and committed once (seq 1).
-      File.write!(region, header(1, {0, 0, @width, @height}, 0) <> :binary.copy(<<0>>, @header - 48) <> pattern(0))
+      File.write!(
+        region,
+        header(1, {0, 0, @width, @height}, 0) <> :binary.copy(<<0>>, @header - 48) <> pattern(0)
+      )
 
       cookie = :crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower)
 
@@ -116,8 +126,13 @@ defmodule Elixos.CoprocDisplayK230Test do
 
       start_supervised!(
         {Coproc,
-         [node: vm.node, port: vm.port, listen: {{127, 0, 0, 1}, AtomVM.free_port()},
-          cookie: cookie, reconnect_ms: 200]}
+         [
+           node: vm.node,
+           port: vm.port,
+           listen: {{127, 0, 0, 1}, AtomVM.free_port()},
+           cookie: cookie,
+           reconnect_ms: 200
+         ]}
       )
 
       assert eventually(fn -> Coproc.status().connected end)
@@ -125,7 +140,9 @@ defmodule Elixos.CoprocDisplayK230Test do
     end
 
     test "the first poll pushes the whole frame under the starting status", ctx do
-      assert %{backend: :coproc_display_k230} = Coproc.driver_call(:coproc_driver, :info, [:coproc_display])
+      assert %{backend: :coproc_display_k230} =
+               Coproc.driver_call(:coproc_driver, :info, [:coproc_display])
+
       assert %{region: :file, panel: :file, status: "Elixos starting"} = Display.info()
       assert eventually(fn -> shown(ctx.region) == 1 end)
       assert eventually(fn -> panel(ctx.panel) == expected(ctx.region, "Elixos starting") end)
@@ -133,7 +150,11 @@ defmodule Elixos.CoprocDisplayK230Test do
 
     test "commits are pushed by their damage, missed ones whole, and shown follows seq", ctx do
       assert Display.lease(10_000, "gen 1 attempt 1") == :ok
-      assert eventually(fn -> shown(ctx.region) == 1 and panel(ctx.panel) == expected(ctx.region, "") end)
+
+      assert eventually(fn ->
+               shown(ctx.region) == 1 and panel(ctx.panel) == expected(ctx.region, "")
+             end)
+
       pushes = Display.info().pushes
 
       # One commit: a rectangle changes.
@@ -173,13 +194,16 @@ defmodule Elixos.CoprocDisplayK230Test do
   ## Helpers
 
   defp header(seq, {x, y, w, h}, shown) do
-    <<0x44584C45::32-little, 1::32-little, @width::32-little, @height::32-little, @stride::32-little,
-      1::32-little, seq::32-little, x::32-little, y::32-little, w::32-little, h::32-little, shown::32-little>>
+    <<0x44584C45::32-little, 1::32-little, @width::32-little, @height::32-little,
+      @stride::32-little, 1::32-little, seq::32-little, x::32-little, y::32-little, w::32-little,
+      h::32-little, shown::32-little>>
   end
 
   # A frame whose every row differs.
   defp pattern(base) do
-    for y <- 0..(@height - 1), into: <<>>, do: :binary.copy(<<rem(base + y * 37, 65_536)::16-little>>, @width)
+    for y <- 0..(@height - 1),
+        into: <<>>,
+        do: :binary.copy(<<rem(base + y * 37, 65_536)::16-little>>, @width)
   end
 
   # Elixos's side of §12: pixels, damage, then seq.
@@ -187,7 +211,13 @@ defmodule Elixos.CoprocDisplayK230Test do
     {:ok, fd} = :file.open(region, [:read, :write, :binary, :raw])
 
     for row <- y..(y + h - 1),
-        do: :ok = :file.pwrite(fd, @header + row * @stride + 2 * x, :binary.copy(<<colour::16-little>>, w))
+        do:
+          :ok =
+            :file.pwrite(
+              fd,
+              @header + row * @stride + 2 * x,
+              :binary.copy(<<colour::16-little>>, w)
+            )
 
     unless opts[:write_only] do
       :ok = :file.pwrite(fd, 28, <<x::32-little, y::32-little, w::32-little, h::32-little>>)
