@@ -12,11 +12,13 @@
 #   qemu-virt  loads at 0x80000000, the virt 16550, ring at 0x81000000
 #
 # Before the cross builds, the ring code (coproc/src/ring.c) runs the shared
-# golden vectors (spec/ring.vectors) with the host compiler, and the panel
-# port (coproc/src/panel_k230.c) runs its unit tests and its register-trace
-# comparison with LilyGO's U-Boot bring-up (coproc/test/panel_trace/run.sh,
-# which fetches the vendor files it pins by sha256 into the download cache;
-# they are compiled for the test only, never into the firmware).
+# golden vectors (spec/ring.vectors) with the host compiler, the panel port
+# (coproc/src/panel_k230.c) runs its unit tests and its register-trace
+# comparison with LilyGO's U-Boot bring-up (coproc/test/panel_trace/run.sh),
+# and the touch, LoRa, power and UART3 drivers run theirs against device
+# models and LilyGO's RT-Smart and Linux code (coproc/test/board_trace/
+# run.sh). Both fetch the vendor files they pin by sha256 into the download
+# cache; those are compiled for the tests only, never into the firmware.
 #
 # Outputs, under /usr/share/elixos/coproc-firmware/ in the APK:
 # coproc-<target>.elf and .bin, mkpayload.py, licenses/, SOURCES.
@@ -115,6 +117,10 @@ pipeline:
       # The panel port: unit tests and the register trace against the
       # vendor's bring-up (coproc/test/panel_trace/run.sh).
       sh "$in/coproc/test/panel_trace/run.sh" "$in/coproc" "$dl" "$work/panel-trace"
+      # The touch (GT9895), LoRa (SX1262), PMU and UART3 drivers: unit tests
+      # and their protocol traces against LilyGO's code on device models
+      # (coproc/test/board_trace/run.sh).
+      sh "$in/coproc/test/board_trace/run.sh" "$in/coproc" "$dl" "$work/board-trace"
 
       for target in k230 qemu-virt; do
         cmake -S "$in/coproc" -B "$work/build-$target" -G Ninja \
@@ -147,6 +153,10 @@ pipeline:
           case "$sha" in '' | '#'*) continue ;; esac
           echo "test-only k230-panel $name $url sha256=$sha"
         done < "$in/coproc/test/panel_trace/vendor.lock"
+        while read -r sha name url; do
+          case "$sha" in '' | '#'*) continue ;; esac
+          echo "test-only k230-board $name $url sha256=$sha"
+        done < "$in/coproc/test/board_trace/vendor.lock"
       } > "$out/SOURCES"
 
       # Evidence in the build log: the images' sizes, entry points and the

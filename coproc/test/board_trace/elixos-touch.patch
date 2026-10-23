@@ -1,0 +1,29 @@
+The documented differences between the GT9895 I2C transfers of LilyGO's
+RT-Smart driver (gt9895.c, golden_touch.c) and ours
+(coproc/src/touch_k230.c) for one touch report. coproc/test/board_trace/
+run.sh applies this to the vendor's log with `patch --fuzz=0` and requires
+the result to be ours, byte for byte. Log lines: one I2C transfer each,
+"w <bytes>" written, "r <n>" bytes read after a repeated start. Both write
+the report address 00 01 03 08 (gt9895.c 99) and decode the same report
+(the vendor's decoding of the model's bytes is checked by golden_touch.c,
+ours by board_k230_test.c). Hunk 1:
+
+  a. At open, the device check of LilyGO's Linux driver (0034-gt9895-touch
+     .patch 1530-1560, 1490-1491): 8 x 0xAA written to 0x10000 and read
+     back. The RT-Smart driver never checks (nor powers or resets the
+     controller, which ours does first; GPIO, not I2C, so not in this log).
+  b. The report read is 26 bytes, the header and two points with their
+     checksum (Linux driver 2733-2735), more only for more than two fingers;
+     the RT-Smart driver reads point_num x 9 = 90 bytes every time
+     (gt9895.c 92, 195).
+  c. After a report, 0x00 is written to its status byte (Linux driver
+     2780-2790); the RT-Smart driver never clears it.
+
+--- golden.trace
++++ ours.trace
+@@ -1 +1,4 @@
+-w 00 01 03 08 r 90
++w 00 01 00 00 aa aa aa aa aa aa aa aa
++w 00 01 00 00 r 8
++w 00 01 03 08 r 26
++w 00 01 03 08 00

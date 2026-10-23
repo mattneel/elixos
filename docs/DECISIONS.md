@@ -3282,3 +3282,40 @@ with `coproc_font`, generated from the deck's Spleen font.
 **Consequences.** The panel's own initialisation and scan-out are one
 platform function, ported from the vendor sources and checked on the host
 against them (docs/notes/k230-panel.md); only the board proves them.
+
+## ADR-121: The coprocessor's board drivers are C, checked against the vendor's code on the build host
+
+**Status:** accepted (2026-10-23), M33.
+
+**Context.** On the deck the little core owns touch, LoRa, the power key and
+power-off, and UART3 (ADR-104, ADR-106, ADR-107, ADR-109). None of it can be
+exercised without the board, and LilyGO's own drivers are RT-Smart and Linux
+code.
+
+**Decision.**
+- Bare-metal C drivers in the coprocessor firmware (`coproc/src/`): DesignWare
+  I2C and SPI, pads and GPIO, UART3 with its clock read back from the PLL, the
+  GT9895 touch report, the SX1262 as LilyGO's RadioLib build configures it
+  (frequency per SKU, `ELIXOS_DECK_LORA_FREQUENCY` at image build time), and
+  the PMU power key and power-off. Thin AtomVM backends
+  (`coproc_<x>_k230`) poll them through NIFs; the deck image selects
+  `ELIXOS_COPROC_DRIVERS=k230`, QEMU and the host tests the simulations.
+- Every hardware constant comes from a pinned LilyGO or Canaan source with
+  file and line; values only the board knows (clocks, FIFO depth) are read at
+  run time the way the vendor code does.
+- Verification without hardware: device models (an SX1262 behind a
+  DesignWare SPI controller that drops chip select when its FIFO runs dry, a
+  GT9895 behind DesignWare I2C, the PMU) run our drivers and LilyGO's own code,
+  compiled for the build host and pinned by sha256, through the same
+  scenarios; the traces must be equal up to documented patches. The tests run
+  inside the firmware build.
+- Vendor code is compiled only into host test binaries; the firmware holds our
+  own code and data tables.
+
+**Consequences.** Two vendor sources are weak: LilyGO's power-key driver says
+it was written by an AI assistant and its claimed RT-Thread original is not
+published, and the pinned SX1262 settings come from a disabled branch of an
+LR2021 build. Both, and the board-only facts (clock gates at reset, the touch
+report address and X range, the SPI controller behind IO14-17, the TCXO
+voltage, whether power-off cuts the supply), are listed in
+docs/notes/coproc-firmware.md for the M33 checklist.

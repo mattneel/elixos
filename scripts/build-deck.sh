@@ -5,7 +5,8 @@
 #   p1  the little core's AtomVM firmware as coproc.bin (coproc-k230.bin, at
 #       0x7000000) and its payload as coproc-payload.bin (at 0x7400000):
 #       the coprocessor runtime, atomvmlib, the cookie, its node and address,
-#       ELIXOS_COPROC_DRIVERS=sim,display=k230 (docs/notes/coproc-firmware.md)
+#       ELIXOS_COPROC_DRIVERS=k230: the board backends of all five drivers
+#       (display, touch, LoRa, power, console; docs/notes/coproc-firmware.md)
 #   env the deck environment (boards/t-display-k230/uboot-env-deck.txt over
 #       the firmware's env.bin, scripts/k230-env.py): both files loaded before
 #       boot_baremetal, and the deck's kernel command line - the framebuffer
@@ -16,7 +17,9 @@
 #       so Elixos.Coproc dials the coprocessor from the first boot
 #
 # The cookie is random per build unless ELIXOS_DECK_COOKIE is set; it is on
-# both partitions of the card, which is the trust boundary.
+# both partitions of the card, which is the trust boundary. The LoRa frequency
+# is the board's SKU, in Hz: ELIXOS_DECK_LORA_FREQUENCY (default 915000000;
+# 433, 868 and 923 MHz boards set theirs).
 #
 # Inputs: scripts/build-image.sh riscv64, scripts/build-k230-firmware.sh and
 # scripts/build-coproc-firmware.sh (both run from here), and the os/ Mix
@@ -33,7 +36,11 @@ COPROC_OUT="$BUILD/coproc"
 COPROC_NODE=coproc@10.0.3.9
 COPROC_ADDRESS=10.0.3.9/24
 COPROC_PORT=4370
-COPROC_DRIVERS=sim,display=k230
+COPROC_DRIVERS=k230
+LORA_FREQUENCY="${ELIXOS_DECK_LORA_FREQUENCY:-915000000}"
+case "$LORA_FREQUENCY" in
+  '' | *[!0-9]*) echo "deck: ELIXOS_DECK_LORA_FREQUENCY must be a frequency in Hz" >&2; exit 1 ;;
+esac
 PAYLOAD_OFFSET=$((4 * MIB))
 PAYLOAD_MAX=$((2 * MIB))
 BEAM_UID=1000
@@ -71,6 +78,7 @@ python3 "$COPROC_OUT/mkpayload.py" -o "$WORK/boot/coproc-payload.bin" \
   --env "ELIXOS_COPROC_COOKIE_FILE=cookie" \
   --env "ELIXOS_COPROC_BUNDLE=bundle.avm" \
   --env "ELIXOS_COPROC_DRIVERS=$COPROC_DRIVERS" \
+  --env "ELIXOS_COPROC_LORA_FREQUENCY=$LORA_FREQUENCY" \
   --env "ELIXOS_COPROC_ADDRESS=$COPROC_ADDRESS" \
   --env "ELIXOS_COPROC_SEED=$seed" \
   --avm "$WORK/runtime.avm" --avm "$COPROC_OUT/atomvmlib.avm" \

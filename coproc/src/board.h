@@ -21,7 +21,11 @@
  *   COPROC_UART_BASE       16550-compatible UART register base
  *   COPROC_UART_SHIFT      register stride shift (DesignWare: 2, virt: 0)
  *   COPROC_UART_WORD       1: 32-bit register accesses, 0: byte accesses
- *   COPROC_UART_DIVISOR    baud divisor to program, 0: keep the loader's setup
+ *   COPROC_UART_K230       1: the console is K230 UART3, set up by uart_k230.c
+ *                          (clock, divisor, pads); 0: keep the loader's setup
+ *   COPROC_K230_DEVICES    1: the T-Display K230's touch (touch_k230.c), LoRa
+ *                          (lora_k230.c) and PMU (power_k230.c); 0: none
+ *                          (QEMU virt: their NIFs answer {error, no_device})
  *   COPROC_MTIME_ADDR      CLINT mtime register, 0: read the time CSR
  *   COPROC_MTIMECMP_ADDR   this hart's CLINT mtimecmp, 0: poll without wfi
  *   COPROC_TIMEBASE_HZ     mtime frequency

@@ -9,8 +9,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Sets the console UART up (K230 UART3: uart_k230.c; QEMU virt: as the
+ * loader left it). */
 void hw_console_init(void);
 void hw_console_write(const char *bytes, size_t len);
+/* Up to `max` bytes the UART has received; 0 when nothing is waiting. */
+size_t hw_console_read(char *bytes, size_t max);
 
 /* Microseconds since the first hw_clock_init (the mtime counter). */
 void hw_clock_init(void);

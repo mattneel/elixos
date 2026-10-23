@@ -46,11 +46,14 @@ if (COPROC_TARGET STREQUAL "k230")
     coproc_default(COPROC_FB_ADDR 0x08100000)
     # The RM69A10 panel on the VO/DSI block (src/panel_k230.c).
     coproc_default(COPROC_PANEL_K230 1)
+    # GT9895 touch, SX1262 LoRa, the PMU's power key and power-off
+    # (src/touch_k230.c, lora_k230.c, power_k230.c).
+    coproc_default(COPROC_K230_DEVICES 1)
     coproc_default(COPROC_UART_BASE 0x91403000)
     coproc_default(COPROC_UART_SHIFT 2)
     coproc_default(COPROC_UART_WORD 1)
-    # UART3 runs from a 50 MHz clock [INFERENCE]: 115200 baud = 50e6 / (16 * 27).
-    coproc_default(COPROC_UART_DIVISOR 27)
+    # UART3: clock, divisor and pads programmed by src/uart_k230.c.
+    coproc_default(COPROC_UART_K230 1)
     coproc_default(COPROC_MTIME_ADDR 0)
     coproc_default(COPROC_MTIMECMP_ADDR 0xF04004000)
     coproc_default(COPROC_TIMEBASE_HZ 27000000)
@@ -63,10 +66,12 @@ elseif (COPROC_TARGET STREQUAL "qemu-virt")
     coproc_default(COPROC_FB_ADDR 0x81100000)
     # No display block: panel_open/0 answers {error, no_panel}.
     coproc_default(COPROC_PANEL_K230 0)
+    # No board devices: their NIFs answer {error, no_device}.
+    coproc_default(COPROC_K230_DEVICES 0)
     coproc_default(COPROC_UART_BASE 0x10000000)
     coproc_default(COPROC_UART_SHIFT 0)
     coproc_default(COPROC_UART_WORD 0)
-    coproc_default(COPROC_UART_DIVISOR 0)
+    coproc_default(COPROC_UART_K230 0)
     coproc_default(COPROC_MTIME_ADDR 0)
     coproc_default(COPROC_MTIMECMP_ADDR 0x2004000)
     coproc_default(COPROC_TIMEBASE_HZ 10000000)
@@ -84,10 +89,11 @@ set(COPROC_DEFINITIONS
     COPROC_FB_ADDR=${COPROC_FB_ADDR}
     COPROC_FB_SIZE=${COPROC_FB_SIZE}
     COPROC_PANEL_K230=${COPROC_PANEL_K230}
+    COPROC_K230_DEVICES=${COPROC_K230_DEVICES}
     COPROC_UART_BASE=${COPROC_UART_BASE}
     COPROC_UART_SHIFT=${COPROC_UART_SHIFT}
     COPROC_UART_WORD=${COPROC_UART_WORD}
-    COPROC_UART_DIVISOR=${COPROC_UART_DIVISOR}
+    COPROC_UART_K230=${COPROC_UART_K230}
     COPROC_MTIME_ADDR=${COPROC_MTIME_ADDR}
     COPROC_MTIMECMP_ADDR=${COPROC_MTIMECMP_ADDR}
     COPROC_TIMEBASE_HZ=${COPROC_TIMEBASE_HZ}
@@ -142,7 +148,11 @@ configure_file(src/coproc.ld.in ${CMAKE_CURRENT_BINARY_DIR}/coproc.ld @ONLY)
 add_executable(${COPROC_ELF}
     src/start.S
     src/hw.c
+    src/k230_i2c.c
+    src/k230_io.c
     src/k230_mmio.c
+    src/k230_spi.c
+    src/lora_k230.c
     src/main.c
     src/net.c
     src/otp_net_lwip_raw.c
@@ -150,9 +160,12 @@ add_executable(${COPROC_ELF}
     src/panel_k230.c
     src/payload.c
     src/platform_nifs.c
+    src/power_k230.c
     src/ramfs.c
     src/ring.c
     src/sys.c
+    src/touch_k230.c
+    src/uart_k230.c
     ${ATOMVM_SRC}/src/libAtomVM/inet.c
     ${ATOMVM_SRC}/src/libAtomVM/otp_crypto.c
     ${ATOMVM_SRC}/src/libAtomVM/otp_socket.c

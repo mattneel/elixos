@@ -66,13 +66,14 @@ defmodule Elixos.Coproc do
   }
 
   # The runtime archive: the start module, the drivers and their simulated
-  # backends (ADR-098; M32).
+  # and board backends (ADR-098; M32, M33).
   @runtime [
     :elixos_coproc,
     :coproc_drivers,
     :coproc_driver,
     :coproc_console,
     :coproc_console_sim,
+    :coproc_console_k230,
     :coproc_display,
     :coproc_display_sim,
     :coproc_display_k230,
@@ -80,10 +81,13 @@ defmodule Elixos.Coproc do
     :coproc_font,
     :coproc_touch,
     :coproc_touch_sim,
+    :coproc_touch_k230,
     :coproc_lora,
     :coproc_lora_sim,
+    :coproc_lora_k230,
     :coproc_power,
-    :coproc_power_sim
+    :coproc_power_sim,
+    :coproc_power_k230
   ]
 
   @type bundle :: Bundle.t() | nil

@@ -80,7 +80,8 @@ for panel in 1 0; do
   $cc -std=gnu11 -O1 -g -Wall -Wextra -Werror -no-pie \
     -DCOPROC_PANEL_K230=$panel -DCOPROC_FB_ADDR=0x08100000 -DCOPROC_LOAD_ADDR=0x07000000 \
     -I"$coproc/src" -I"$coproc/test" -o "$work/panel_k230_test-$panel" \
-    "$coproc/test/panel_k230_test.c" "$coproc/src/panel_k230.c" "$coproc/test/k230_mmio_mock.c"
+    "$coproc/test/panel_k230_test.c" "$coproc/src/panel_k230.c" "$coproc/src/k230_io.c" \
+    "$coproc/test/k230_mmio_mock.c"
 done
 
 for scenario in nominal dphy-timeout; do

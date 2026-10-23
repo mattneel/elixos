@@ -12,16 +12,16 @@
 
 #include "board.h"
 #include "hw.h"
+#if COPROC_UART_K230
+#include "uart_k230.h"
+#endif
 
 /* ---- console: a 16550-compatible UART, polled ------------------------ */
 
 #define UART_THR 0
-#define UART_DLL 0
-#define UART_DLM 1
-#define UART_FCR 2
-#define UART_LCR 3
-#define UART_MCR 4
+#define UART_RBR 0
 #define UART_LSR 5
+#define LSR_DR 0x01
 #define LSR_THRE 0x20
 
 static inline void uart_out(unsigned reg, uint32_t value)
@@ -46,15 +46,9 @@ static inline uint32_t uart_in(unsigned reg)
 
 void hw_console_init(void)
 {
-#if COPROC_UART_DIVISOR
-    // 8N1 at the board's divisor: the loader never set this UART up (K230
-    // UART3). FIFOs on and cleared, DTR/RTS asserted.
-    uart_out(UART_LCR, 0x80);
-    uart_out(UART_DLL, (COPROC_UART_DIVISOR) &0xff);
-    uart_out(UART_DLM, ((COPROC_UART_DIVISOR) >> 8) & 0xff);
-    uart_out(UART_LCR, 0x03);
-    uart_out(UART_FCR, 0x07);
-    uart_out(UART_MCR, 0x03);
+#if COPROC_UART_K230
+    // U-Boot never sets UART3 up: its clock, divisor and pads from scratch.
+    (void) uart_k230_init();
 #endif
 }
 
@@ -73,6 +67,15 @@ void hw_console_write(const char *bytes, size_t len)
         }
         uart_putc(bytes[i]);
     }
+}
+
+size_t hw_console_read(char *bytes, size_t max)
+{
+    size_t n = 0;
+    while (n < max && (uart_in(UART_LSR) & LSR_DR)) {
+        bytes[n++] = (char) uart_in(UART_RBR);
+    }
+    return n;
 }
 
 static int stdio_put(char c, FILE *file)

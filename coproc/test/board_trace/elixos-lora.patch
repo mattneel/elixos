@@ -1,0 +1,73 @@
+The documented differences between the SX1262 command stream of LilyGO's
+RadioLib build, driven as LilyGO's phone app drives it (golden_lora.cc), and
+ours (coproc/src/lora_k230.c). coproc/test/board_trace/run.sh applies this
+to the vendor's trace with `patch --fuzz=0` and requires the result to be our
+trace, byte for byte. Trace lines: C <bytes> (one CS-framed command, MOSI),
+RESET (a pulse on NRESET). Hunk by hunk:
+
+Hunks 1 and 2, startReceive: LilyGO's app (Lora.cpp 286, 294-298) asks for a
+  10 s receive (SetRx 0x09C400 x 15.625 us) every 100 ms, maps RX_DONE,
+  TIMEOUT and HEADER_VALID to DIO1 (0x0212) and polls the IRQ register; ours
+  receives continuously (SetRx 0xFFFFFF, RadioLib's RX_TIMEOUT_INF) with the
+  receive IRQs RADIOLIB_SX126X_IRQ_RX_DEFAULT (RX_DONE, TIMEOUT, CRC_ERR,
+  HEADER_ERR = 0x0262) on DIO1 too, and reads DIO1 (IO20) before any SPI
+  traffic. The other commands of startReceive are the same.
+
+Hunk 3, before startTransmit: SetStandby, as RadioLib's own transmit()
+  does (SX126x.cpp 224-226); LilyGO's app calls startTransmit straight from
+  receiving.
+
+Hunk 4, after TX_DONE: ours clears the IRQs and goes to standby
+  (finishTransmit, SX126x.cpp 573-579) and receives again (the startReceive
+  of hunks 1-2); LilyGO's app only looks at the IRQ register (Lora.cpp
+  128-130) and re-arms receiving from its timer.
+
+Not visible in this trace: ours reads a packet from the start pointer
+  GetRxBufferStatus reports (byte 1 of `13 00 00 00`), as LilyGO's Linux
+  RadioLib does (LT-BSP RadioLib SX126x.cpp 556-565); LilyGO's RT-Smart
+  RadioLib reads from offset 0. The model reports offset 0, so both send
+  `1E 00 00 ...`.
+
+--- golden.trace
++++ ours.trace
+@@ -56,7 +56,7 @@
+ C C0 00 00
+ C 0D 07 36 0D
+ C 8C 00 10 00 FF 00 00
+-C 08 02 62 02 12 00 00 00 00
++C 08 02 62 02 62 00 00 00 00
+ C 8F 00 00
+ C 02 43 FF
+ C 11 00 00
+@@ -64,7 +64,7 @@
+ C C0 00 00
+ C 0D 07 36 0D
+ C 8C 00 10 00 FF 00 00
+-C 82 09 C4 00
++C 82 FF FF FF
+ C 12 00 00 00
+ C C0 00 00
+ C 12 00 00 00
+@@ -76,6 +76,7 @@
+ C 11 00 00
+ C 14 00 00 00 00
+ C 14 00 00 00 00
++C 80 00
+ C 11 00 00
+ C 1D 07 36 00 00
+ C C0 00 00
+@@ -91,3 +92,14 @@
+ C 0D 08 89 04
+ C 83 00 00 00
+ C 12 00 00 00
++C 02 43 FF
++C 80 00
++C 08 02 62 02 62 00 00 00 00
++C 8F 00 00
++C 02 43 FF
++C 11 00 00
++C 1D 07 36 00 00
++C C0 00 00
++C 0D 07 36 0D
++C 8C 00 10 00 FF 00 00
++C 82 FF FF FF

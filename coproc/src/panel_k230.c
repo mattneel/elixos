@@ -48,6 +48,7 @@
 #include <string.h>
 
 #include "board.h"
+#include "k230_io.h"
 #include "k230_mmio.h"
 #include "panel_k230.h"
 
@@ -60,7 +61,6 @@
 #define RST_BASE 0x91101000u
 #define PWR_BASE 0x91103000u
 #define IOMUX_BASE 0x91105000u
-#define GPIO_BASE 0x9140B000u
 #define VO_BASE 0x90840000u
 #define DSI_BASE 0x90850000u
 #define TXPHY_BASE 0x90850400u
@@ -249,40 +249,21 @@ static int power_display_domain(void)
     return (rd(PWR_BASE + 0x40) & (1u << 1)) ? PANEL_K230_OK : PANEL_K230_POWER_TIMEOUT;
 }
 
-static uintptr_t gpio_data(unsigned pin)
-{
-    return GPIO_BASE + (pin / 32) * 0x1000u;
-}
-
-static void gpio_set(unsigned pin, int level)
-{
-    uint32_t bit = 1u << (pin % 32);
-    uint32_t data = rd(gpio_data(pin));
-    wr(gpio_data(pin), level ? data | bit : data & ~bit);
-}
-
-static void gpio_output(unsigned pin, int level)
-{
-    uintptr_t direction = gpio_data(pin) + 4;
-    wr(direction, rd(direction) | (1u << (pin % 32)));
-    gpio_set(pin, level);
-}
-
 static void panel_power_and_reset(void)
 {
     wr(IOMUX_BASE + 4 * PIN_LCD_RST, PAD_GPIO_OUT(15));
     wr(IOMUX_BASE + 4 * PIN_LCD_EN, PAD_GPIO_OUT(7));
     wr(IOMUX_BASE + 4 * PIN_DISP_EN, PAD_GPIO_OUT(7));
-    gpio_output(PIN_DISP_EN, 1);
+    k230_gpio_output(PIN_DISP_EN, 1);
     delay_ms(10);
 
-    gpio_output(PIN_LCD_RST, 1);
+    k230_gpio_output(PIN_LCD_RST, 1);
     delay_ms(200);
-    gpio_set(PIN_LCD_RST, 0);
+    k230_gpio_set(PIN_LCD_RST, 0);
     delay_ms(200);
-    gpio_set(PIN_LCD_RST, 1);
+    k230_gpio_set(PIN_LCD_RST, 1);
     delay_ms(200);
-    gpio_output(PIN_LCD_EN, 1);
+    k230_gpio_output(PIN_LCD_EN, 1);
 }
 
 static void display_reset(void)

@@ -456,18 +456,18 @@
         "version": "0.1.0-r0",
         "architecture": "riscv64",
         "signature": {
-          "range": "bytes=0-686",
-          "checksum": "sha1-5+Bqfj3FklV+O9HaoeEN0+o1Kso="
+          "range": "bytes=0-683",
+          "checksum": "sha1-ZgjiGs8KETbdZvvmkRXUXc/ZhhA="
         },
         "control": {
-          "range": "bytes=687-2172",
-          "checksum": "sha1-QGylp8JVeAaeNIRljJ8ENVKoTJ0="
+          "range": "bytes=684-2169",
+          "checksum": "sha1-d2KSNvt66KESyRp4brkPBaNGeT8="
         },
         "data": {
-          "range": "bytes=2173-14470637",
-          "checksum": "sha256-ICr56e8GXBEvL82eEdsK/yELa+3gRIlig1VWwRXFaDg="
+          "range": "bytes=2170-14505728",
+          "checksum": "sha256-mz3SLdiHoq+6GwCs8p6CntUrZZV5MZ8BDRvySX6Wi6U="
         },
-        "checksum": "Q1QGylp8JVeAaeNIRljJ8ENVKoTJ0="
+        "checksum": "Q1d2KSNvt66KESyRp4brkPBaNGeT8="
       },
       {
         "name": "elixos-kernel",
@@ -476,17 +476,17 @@
         "architecture": "riscv64",
         "signature": {
           "range": "bytes=0-686",
-          "checksum": "sha1-sNTj7McQgYPGC1HqeByyASEkkmA="
+          "checksum": "sha1-8UMfKEwBtRGEb7NBWWLa5jS3KDc="
         },
         "control": {
-          "range": "bytes=687-2789",
-          "checksum": "sha1-ipdKOhLpnXsLPQkqpV3cP+KAEyU="
+          "range": "bytes=687-2786",
+          "checksum": "sha1-nkZfe2d6XOS9L5T1ECfLqzWLK0E="
         },
         "data": {
-          "range": "bytes=2790-10113267",
-          "checksum": "sha256-BpZAbZF0oIqNhyf814VTjvuKRU0bFaqWyVySq2iifZY="
+          "range": "bytes=2787-10132920",
+          "checksum": "sha256-1Si6x/+9zWFCELWTpj0J3cKvPdenJPcuKIgKoKeBVVg="
         },
-        "checksum": "Q1ipdKOhLpnXsLPQkqpV3cP+KAEyU="
+        "checksum": "Q1nkZfe2d6XOS9L5T1ECfLqzWLK0E="
       },
       {
         "name": "elixos-shim",
@@ -494,18 +494,18 @@
         "version": "0.0.0-r0",
         "architecture": "riscv64",
         "signature": {
-          "range": "bytes=0-688",
-          "checksum": "sha1-YvUmuvSN3Kq5CuLc1ZKtNgWLI3U="
+          "range": "bytes=0-695",
+          "checksum": "sha1-j7QeoOeEVKGDywwAg49XELNUSag="
         },
         "control": {
-          "range": "bytes=689-2553",
-          "checksum": "sha1-jm2h6Wv3ecm4TheipIcSAWcw7/A="
+          "range": "bytes=696-2583",
+          "checksum": "sha1-kNthm7JXV/CCA5MKUKqFiUEqcj0="
         },
         "data": {
-          "range": "bytes=2554-6423995",
-          "checksum": "sha256-tBKe4ADJNzt8Qk6oEVI/qbcmfIhbyoOru5nNyHNk1zI="
+          "range": "bytes=2584-7697472",
+          "checksum": "sha256-tpAcp8F2s6kqAdNCofJdXd13gfjrFsNaz4KeV1xoHXo="
         },
-        "checksum": "Q1jm2h6Wv3ecm4TheipIcSAWcw7/A="
+        "checksum": "Q1kNthm7JXV/CCA5MKUKqFiUEqcj0="
       }
     ]
   }

@@ -26,6 +26,7 @@ const struct mock_config *mock_scenario(const char *name)
 }
 
 #define SLOTS 4096
+#define DEVICES 16
 
 static struct {
     struct mock_config config;
@@ -37,7 +38,34 @@ static struct {
     struct mock_event *events;
     size_t count;
     size_t capacity;
+    struct mock_device devices[DEVICES];
+    size_t device_count;
+    uint64_t now_us;
 } mock;
+
+void mock_attach(const struct mock_device *device)
+{
+    if (mock.device_count == DEVICES) {
+        fprintf(stderr, "k230_mmio_mock: too many devices\n");
+        exit(2);
+    }
+    mock.devices[mock.device_count++] = *device;
+}
+
+static const struct mock_device *device_at(uint64_t addr)
+{
+    for (size_t i = 0; i < mock.device_count; i++) {
+        if (addr >= mock.devices[i].base && addr - mock.devices[i].base < mock.devices[i].size) {
+            return &mock.devices[i];
+        }
+    }
+    return NULL;
+}
+
+uint64_t mock_now_us(void)
+{
+    return mock.now_us;
+}
 
 void mock_reset(const struct mock_config *config)
 {
@@ -97,6 +125,10 @@ void k230_mmio_write32(uintptr_t addr, uint32_t value)
     }
     mock.value[slot(addr)] = value;
     record(MOCK_WRITE, addr, value);
+    const struct mock_device *device = device_at(addr);
+    if (device != NULL && device->write != NULL) {
+        device->write(device->ctx, addr - device->base, value);
+    }
 }
 
 uint32_t k230_mmio_read32(uintptr_t addr)
@@ -113,13 +145,23 @@ uint32_t k230_mmio_read32(uintptr_t addr)
     } else if (addr == DISP_LPI_STATE) {
         value = mock.config.power_fails ? (value & ~2u) : (value | 2u);
     }
+    const struct mock_device *device = device_at(addr);
+    if (device != NULL && device->read != NULL) {
+        value = device->read(device->ctx, addr - device->base, value);
+    }
     record(MOCK_READ, addr, value);
     return value;
 }
 
 void k230_delay_us(uint32_t us)
 {
+    mock.now_us += us;
     record(MOCK_DELAY, 0, us);
+}
+
+void mock_poke(uint64_t addr, uint32_t value)
+{
+    mock.value[slot(addr)] = value;
 }
 
 size_t mock_event_count(void)

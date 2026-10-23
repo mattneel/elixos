@@ -34,8 +34,12 @@ make k230-bringup      # build/k230/elixos-k230-bringup.img, the M30 gate image
 
 `make deck-image` needs an x86_64 build host with the tools of
 `make check-tools` (melange, the riscv64 image, the Canaan firmware and the
-coprocessor firmware are built or taken from cache). Write the image to the
-card - double-check the device, this overwrites it:
+coprocessor firmware are built or taken from cache). Boards sold for 433, 868
+or 923 MHz need their LoRa frequency in Hz, for example
+`ELIXOS_DECK_LORA_FREQUENCY=868000000 make deck-image`; the default is
+915 MHz.
+
+Write the image to the card - double-check the device, this overwrites it:
 
 ```
 lsblk                                   # find the card, e.g. /dev/sdX
@@ -89,9 +93,9 @@ in [docs/notes/k230.md](../notes/k230.md#support-matrix)):
 | UART0 console | `8250_dw` | works |
 | SD card | `sdhci-of-dwcmshc` since v7.1; no mainline DT node | works with our DT node |
 | USB0, USB1 + RTL8152B Ethernet | K230 USB PHY v7.1, generic `dwc2`; no K230 DT node | via our DT |
-| Display (VO, MIPI DSI), RM69A10, GT9895, LT9611 | absent | owned by the little core (ADR-106); the panel bring-up and VO scan-out are ported but unverified on the board (below); touch and HDMI not yet |
-| LoRa (SX1262) | no SX126x driver | owned by the little core (ADR-107); simulated backend so far |
-| Power key, power-off (K230 PMU) | absent | owned by the little core (ADR-109); simulated backend so far |
+| Display (VO, MIPI DSI), RM69A10, GT9895, LT9611 | absent | owned by the little core (ADR-106); the panel bring-up, VO scan-out and GT9895 touch driver are ported but unverified on the board (below); HDMI not yet |
+| LoRa (SX1262) | no SX126x driver | owned by the little core (ADR-107); SX1262 driver ported (LilyGO's configuration, frequency `ELIXOS_COPROC_LORA_FREQUENCY`, default 915 MHz), unverified on the board |
+| Power key, power-off (K230 PMU) | absent | owned by the little core (ADR-109); PMU driver ported, unverified on the board |
 | Wi-Fi (RTL8189FTV) | absent (out of tree) | off (ADR-108) |
 | Mailbox, remoteproc | absent | not needed: the inter-core link is a polled ring (ADR-112), the little core is started by U-Boot |
 | Camera, audio, KPU, GPU, VPU | absent | out of scope (ADR-110) |
@@ -106,9 +110,12 @@ RM69A10 up as LilyGO's U-Boot does (its register trace is checked against
 the vendor code's on the build host) and has the K230's VO scan the region
 out by itself, RGB565 at 41.8 Hz, with the status band as a second VO layer;
 it has never run on a board ([docs/notes/k230-panel.md](../notes/k230-panel.md)
-lists what only the board can tell). Not yet: the board backends for touch,
-LoRa, the power key and UART3 (they run their simulations). Everything below
-"needs the board" was written without one; the checklists find out.
+lists what only the board can tell). The touch (GT9895), LoRa (SX1262),
+power key/power-off (PMU) and UART3 backends are the board drivers of
+[docs/notes/coproc-firmware.md](../notes/coproc-firmware.md#board-drivers-m33),
+checked on the build host against device models and LilyGO's code; they too
+have never run on a board. Everything below "needs the board" was written
+without one; the checklists find out.
 
 ## Hardware checklists
 
