@@ -6,6 +6,9 @@ defmodule Elixos.Package.MixTargetTest do
 
   @moduletag milestone: 10
   @moduletag timeout: 300_000
+  # This launches a second Mix build and provisions host dependency sources.
+  # The isolated candidate suite exercises runtime behavior, not recursive builds.
+  @moduletag :host_orchestration
 
   @fixture Elixos.Test.Paths.fixture("sample_app")
   @os Path.expand("../../..", @fixture)

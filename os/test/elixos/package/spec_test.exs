@@ -1,5 +1,5 @@
 defmodule Elixos.Package.SpecTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   @moduletag milestone: 10
 
@@ -79,11 +79,16 @@ defmodule Elixos.Package.SpecTest do
 
     assert Spec.read_project(dir) ==
              {:ok,
-              %Spec{
-                services: [SampleApp.Worker],
-                persist: ["data"],
-                min_os: "~> 0.1",
-                boot: :auto
+              %{
+                app: :sample_app,
+                version: "0.1.0",
+                deps: %{elixos: ">= 0.0.0"},
+                spec: %Spec{
+                  services: [SampleApp.Worker],
+                  persist: ["data"],
+                  min_os: "~> 0.1",
+                  boot: :auto
+                }
               }}
   end
 
@@ -94,7 +99,7 @@ defmodule Elixos.Package.SpecTest do
     test = self()
     watcher = spawn_link(fn -> watch_cwd(cwd, test, 0) end)
 
-    for _ <- 1..5, do: {:ok, %Spec{}} = Spec.read_project(Elixos.Test.Paths.fixture("sample_app"))
+    for _ <- 1..5, do: {:ok, %{spec: %Spec{}}} = Spec.read_project(Elixos.Test.Paths.fixture("sample_app"))
 
     send(watcher, :stop)
     assert_receive {:cwd_changes, 0}, 1_000

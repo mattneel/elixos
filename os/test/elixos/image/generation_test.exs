@@ -71,6 +71,17 @@ defmodule Elixos.Image.GenerationTest do
              dir |> Generation.path(3) |> File.read!() |> :erlang.binary_to_term()
   end
 
+  test "provenance is optional for version-one manifests and round-trips when supplied", %{dir: dir} do
+    provenance = %{session: "session", model: "fixture", tools: %{"edit" => %{revision: "abc"}}, parent: 0}
+    generation = %{gen(1, %{}) | provenance: provenance}
+    assert :ok = Generation.write(dir, generation)
+    assert {:ok, ^generation} = Generation.read(dir, 1)
+
+    legacy = Map.from_struct(gen(2, %{})) |> Map.delete(:provenance)
+    File.write!(Generation.path(dir, 2), :erlang.term_to_binary({:elixos_generation, 1, legacy}))
+    assert {:ok, %Generation{number: 2, provenance: nil}} = Generation.read(dir, 2)
+  end
+
   test "no temporary files are left behind", %{dir: dir} do
     for n <- 1..5, do: :ok = Generation.write(dir, gen(n, %{}))
     assert dir |> File.ls!() |> Enum.sort() == Enum.map(1..5, &"#{&1}.gen")
