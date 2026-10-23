@@ -1,5 +1,5 @@
-%% GENERATED from os/priv/deck/spleen-12x24.txt (printable ASCII only); do
-%% not edit. Regenerate with the snippet in os/test/elixos/coproc_font_test.exs.
+%% GENERATED from os/priv/deck/spleen-12x24.txt (printable ASCII only) by
+%% scripts/gen-coproc-font.exs; do not edit.
 %%
 %% Spleen 12x24 by Frederic Cambus, version 2.1.0, BSD 2-Clause licence
 %% (os/priv/deck/LICENSE.spleen; the copyright notice travels with the data).
