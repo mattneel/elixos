@@ -23,7 +23,8 @@
 %%   ELIXOS_COPROC_PORT         the fixed distribution port to listen on
 %%   ELIXOS_COPROC_COOKIE_FILE  file holding the shared cookie
 %%   ELIXOS_COPROC_BUNDLE       the bundle file (absent means no bundle)
-%%   ELIXOS_COPROC_DRIVERS      the drivers' backend set (default sim)
+%%   ELIXOS_COPROC_DRIVERS      the drivers' backend set (default sim), or
+%%                              per subsystem: sim,display=k230
 %%
 %% AtomVM's distribution always registers with an epmd on 127.0.0.1:4369 and
 %% binds 0.0.0.0, so the runtime starts AtomVM's own Erlang epmd first. Elixos
@@ -104,10 +105,24 @@ loop(#{path := Path, digest := Digest} = State) ->
             end
     end.
 
+%% "sim", or "sim,display=k230": a default set and per-subsystem ones
+%% (coproc_drivers).
 driver_set() ->
     case os:getenv("ELIXOS_COPROC_DRIVERS") of
         false -> sim;
-        Set -> list_to_atom(Set)
+        Value -> driver_sets(string:split(Value, ",", all), #{})
+    end.
+
+driver_sets([], #{default := Default} = Sets) when map_size(Sets) =:= 1 ->
+    Default;
+driver_sets([], Sets) ->
+    Sets;
+driver_sets([Item | Rest], Sets) ->
+    case string:split(Item, "=") of
+        [Subsystem, Set] ->
+            driver_sets(Rest, Sets#{list_to_atom("coproc_" ++ Subsystem) => list_to_atom(Set)});
+        [Set] ->
+            driver_sets(Rest, Sets#{default => list_to_atom(Set)})
     end.
 
 %% The drivers' state for the next VM, next to the bundle. A failure costs the

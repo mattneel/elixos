@@ -27,7 +27,9 @@ defmodule Elixos.Test.AtomVM do
   @doc """
   Starts AtomVM in `dir`. Options: `cookie:` (required), `node:` (default
   `coproc@127.0.0.1`), `port:` (default: a free one), `bundle:` the initial
-  bundle (default none). Stopped when the test exits.
+  bundle (default none), `drivers:` the drivers' backend set (default
+  `"sim"`), `env:` more `{name, value}` strings for the runtime. Stopped when
+  the test exits.
   """
   @spec start(Path.t(), keyword()) :: t()
   def start(dir, opts) do
@@ -55,8 +57,8 @@ defmodule Elixos.Test.AtomVM do
       {~c"ELIXOS_COPROC_PORT", Integer.to_charlist(port)},
       {~c"ELIXOS_COPROC_COOKIE_FILE", String.to_charlist(cookie_file)},
       {~c"ELIXOS_COPROC_BUNDLE", String.to_charlist(bundle_file)},
-      {~c"ELIXOS_COPROC_DRIVERS", ~c"sim"}
-    ]
+      {~c"ELIXOS_COPROC_DRIVERS", String.to_charlist(Keyword.get(opts, :drivers, "sim"))}
+    ] ++ for({name, value} <- Keyword.get(opts, :env, []), do: {String.to_charlist(name), String.to_charlist(value)})
 
     args = [runtime_file, artifact("atomvmlib.avm")]
     {:ok, pid} = GenServer.start(__MODULE__, {artifact("AtomVM"), args, env, dir})

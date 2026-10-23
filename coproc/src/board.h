@@ -13,6 +13,9 @@
  *   COPROC_RING_ADDR       the §11 ring region, shared with the big core
  *                          (K230: 0x08000000, the board DT's no-map region)
  *   COPROC_RING_SIZE       its size S (K230: 0x21000, 2 x 64 KiB + 4096)
+ *   COPROC_FB_ADDR         the §12 deck framebuffer region (K230: 0x08100000,
+ *                          the board DT's `deck-fb`)
+ *   COPROC_FB_SIZE         its size (K230: 0x180000, 1.5 MiB)
  *   COPROC_UART_BASE       16550-compatible UART register base
  *   COPROC_UART_SHIFT      register stride shift (DesignWare: 2, virt: 0)
  *   COPROC_UART_WORD       1: 32-bit register accesses, 0: byte accesses

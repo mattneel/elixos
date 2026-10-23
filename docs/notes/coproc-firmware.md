@@ -17,6 +17,8 @@ where `os/test/integration/m32_coproc_firmware_test.exs` checks it.
 | `coproc/src/ring.c` | §11 ring, little side; `coproc/test/ring_vectors_test.c` runs `spec/ring.vectors` on the host |
 | `coproc/src/net.c` | lwIP 2.2.1 (raw API, NO_SYS) netif over the ring: reads A, writes B, bare IPv4, no link layer |
 | `coproc/src/sys.c`, `otp_socket_platform.c`, `otp_net_lwip_raw.c`, `platform_nifs.c` | AtomVM's `sys_*` contract; the lwIP event queue; `net:getaddrinfo`; `atomvm:platform/0` = `elixos_coproc`; Mbed TLS entropy |
+| `coproc/src/platform_nifs.c` (M33) | `coproc_k230:fb_read/2`, `fb_write32/2` on the §12 region at `COPROC_FB_ADDR`; `panel_open/0`, `panel_write/5` |
+| `coproc/src/panel_k230.c` (M33) | the RM69A10/DSI scan-out: **not ported**, fails with `{error, dsi_not_ported}` and one UART line (sources: docs/notes/k230-panel.md) |
 | `coproc/src/main.c` | boot, then runs the VM again whenever the start module returns (a deploy ends the VM, ADR-099) |
 
 libc is picolibc (Alpine `picolibc-riscv-none-elf`, lp64d multilib, medany).
@@ -33,6 +35,7 @@ the same patches.
 | `+ [4 MiB, 6 MiB)` | same | payload (≈ 500 KiB: runtime + atomvmlib + config) |
 | `+ [6 MiB, 16 MiB)` | same | malloc arena (10 MiB) |
 | `0x08000000`, `0x21000` bytes | `0x81000000` | §11 ring (2 × 64 KiB capacity), the board DT's no-map shared region |
+| `0x08100000`, `0x180000` bytes | `0x81100000` | §12 deck framebuffer (M33), the board DT's `deck-fb` region |
 
 Every address is a build parameter (`-DCOPROC_…`, `coproc/CMakeLists.txt`,
 documented in `coproc/src/board.h`), defaulting per `COPROC_TARGET`.
@@ -53,7 +56,9 @@ On the board, U-Boot must load both files: `coproc-k230.bin` at
 | `ELIXOS_COPROC_PORT` | `4370` |
 | `ELIXOS_COPROC_COOKIE_FILE` | `cookie` (a ramfs file from `--file`) |
 | `ELIXOS_COPROC_BUNDLE` | `bundle.avm` (absent: no bundle) |
-| `ELIXOS_COPROC_DRIVERS` | `sim` |
+| `ELIXOS_COPROC_DRIVERS` | `sim`, or per subsystem `sim,display=k230` (the deck image) |
+| `ELIXOS_COPROC_DECK_REGION` | unset on the board (the region at `COPROC_FB_ADDR`); a file path in host tests |
+| `ELIXOS_COPROC_DECK_PANEL` | unset on the board (`panel_k230.c`); a mirror file path in host tests |
 | `ELIXOS_COPROC_ADDRESS` | `10.0.3.9/24` (the firmware's own, read by C) |
 | `ELIXOS_COPROC_SEED` | hex, mixed into the entropy pool |
 
@@ -100,4 +105,7 @@ On the board, U-Boot must load both files: `coproc-k230.bin` at
    cached; neither is set up yet.
 4. Entropy: no hardware RNG is used; the pool is counter jitter plus the
    payload seed. Weak; the K230 TRNG is the fix.
-5. U-Boot environment: load the payload at `0x7400000`.
+5. U-Boot environment: load the payload at `0x7400000` (done by the deck
+   image, M33: `boards/t-display-k230/uboot-env-deck.txt`).
+6. The panel scan-out (`coproc/src/panel_k230.c`) is not ported; the
+   framebuffer region must also be uncached on the little core.

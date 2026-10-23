@@ -658,10 +658,22 @@ rectangle covering the whole panel is always correct. Elixos may commit again
 before the coprocessor catches up; the coprocessor then pushes the union of
 what it missed, or the whole frame.
 
-**When Elixos is away.** While the BEAM restarts, or before the first
-commit, the coprocessor's display driver draws its own status line (the
-`coproc_display` status, ADR-113) over the last frame; the next commit
-replaces it.
+**When Elixos is away.** `Elixos.Deck` renews a lease on the coprocessor's
+display driver every 2 s (`coproc_display:lease(6000, Text)`, `Text` = mode,
+generation and boot attempt, e.g. `gen 3 attempt 1`). When the lease lapses
+- the BEAM crashed, hangs or restarts - the driver draws its own status line,
+`Elixos restarting, was <Text>`, over the last frame (and over frames
+committed meanwhile); the next renewal clears it. Before the first lease the
+board backend shows `Elixos starting`. The status is laid over the pixels on
+their way to the panel, in the status band (`y 0-27`); the region is never
+written by the coprocessor except `shown`.
+
+**The coprocessor's scan-out.** It polls the header (every 20 ms on the
+board, `os/src/coproc_display_k230.erl`); after a (re)start, or when `seq`
+moved by more than one since `shown`, or when the damage rectangle is not
+inside the panel, it pushes the whole frame, otherwise the damage
+rectangle; then it stores `shown = seq`. A panel that cannot be driven is
+never reported as shown.
 
 ### The helper: `elixos-deck-fb`
 

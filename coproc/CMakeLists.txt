@@ -37,10 +37,13 @@ coproc_default(COPROC_PAYLOAD_OFFSET 0x00400000)
 coproc_default(COPROC_HEAP_OFFSET 0x00600000)
 coproc_default(COPROC_STACK_SIZE 0x00040000)
 coproc_default(COPROC_RING_SIZE 0x21000)
+coproc_default(COPROC_FB_SIZE 0x180000)
 if (COPROC_TARGET STREQUAL "k230")
     coproc_default(COPROC_BOARD "T-Display K230 little core")
     coproc_default(COPROC_LOAD_ADDR 0x07000000)
     coproc_default(COPROC_RING_ADDR 0x08000000)
+    # The deck framebuffer (PROTOCOL §12), the board DT's `deck-fb` region.
+    coproc_default(COPROC_FB_ADDR 0x08100000)
     coproc_default(COPROC_UART_BASE 0x91403000)
     coproc_default(COPROC_UART_SHIFT 2)
     coproc_default(COPROC_UART_WORD 1)
@@ -54,6 +57,8 @@ elseif (COPROC_TARGET STREQUAL "qemu-virt")
     coproc_default(COPROC_LOAD_ADDR 0x80000000)
     # Right after the 16 MiB image region, as on the K230.
     coproc_default(COPROC_RING_ADDR 0x81000000)
+    # As on the K230: 1 MiB after the ring.
+    coproc_default(COPROC_FB_ADDR 0x81100000)
     coproc_default(COPROC_UART_BASE 0x10000000)
     coproc_default(COPROC_UART_SHIFT 0)
     coproc_default(COPROC_UART_WORD 0)
@@ -72,6 +77,8 @@ set(COPROC_DEFINITIONS
     COPROC_REGION_SIZE=${COPROC_REGION_SIZE}
     COPROC_RING_ADDR=${COPROC_RING_ADDR}
     COPROC_RING_SIZE=${COPROC_RING_SIZE}
+    COPROC_FB_ADDR=${COPROC_FB_ADDR}
+    COPROC_FB_SIZE=${COPROC_FB_SIZE}
     COPROC_UART_BASE=${COPROC_UART_BASE}
     COPROC_UART_SHIFT=${COPROC_UART_SHIFT}
     COPROC_UART_WORD=${COPROC_UART_WORD}
@@ -134,6 +141,7 @@ add_executable(${COPROC_ELF}
     src/net.c
     src/otp_net_lwip_raw.c
     src/otp_socket_platform.c
+    src/panel_k230.c
     src/payload.c
     src/platform_nifs.c
     src/ramfs.c

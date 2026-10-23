@@ -6,6 +6,9 @@
 %% The backend set picks the implementation of every driver: the backend of
 %% subsystem coproc_X in set S is the module coproc_X_S. AtomVM's Unix build
 %% on the host runs set sim; the board's set replaces it (M32 board work).
+%% A set is an atom for every subsystem, or a map from subsystem name to set
+%% with a `default` (ELIXOS_COPROC_DRIVERS=sim,display=k230: the board's
+%% display backend, the others simulated until their board backends exist).
 -module(coproc_drivers).
 
 -behaviour(supervisor).
@@ -15,7 +18,7 @@
 
 -define(NAMES, [coproc_console, coproc_display, coproc_touch, coproc_lora, coproc_power]).
 
-start_link(Set) when is_atom(Set) ->
+start_link(Set) when is_atom(Set); is_map(Set) ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, Set).
 
 names() ->
@@ -56,5 +59,7 @@ init(Set) ->
     ],
     {ok, {#{strategy => one_for_one, intensity => 5, period => 10}, Children}}.
 
+backend(Name, Sets) when is_map(Sets) ->
+    backend(Name, maps:get(Name, Sets, maps:get(default, Sets, sim)));
 backend(Name, Set) ->
     list_to_atom(atom_to_list(Name) ++ "_" ++ atom_to_list(Set)).
