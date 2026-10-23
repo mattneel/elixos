@@ -1,5 +1,7 @@
 #!/usr/bin/expect -f
-# M27: the packaged framebuffer and real evdev keyboard, not GUI.input/1.
+# M27: Oh-My-Jido approvals on the packaged framebuffer with a real evdev
+# keyboard (ADR-093). The machine boots to IEx; the GUI opens only on request
+# and hands the screen back once nothing is pending.
 set timeout 300
 set qmp "/tmp/exdemo-[pid].sock"
 set frames "$env(ELIXOS_DEMO_FRAMES)"
@@ -47,7 +49,8 @@ spawn -noecho elixir demos/gui-capture.exs $qmp $frames
 set helper $spawn_id
 expect "CAPTURE READY"
 set spawn_id $vm
-command {IO.puts("M27 GUI " <> inspect(Elixos.GUI.status()))}
+command {IO.puts("M27 GUI " <> inspect(Elixos.GUI.status()) <> " " <> inspect(Elixos.GUI.start()))}
+command {{:ok, session} = OhMyJido.start_session(Elixos.Approvals.runtime(), workspace: "/priv/home", tools: [OhMyJido.Tools.Question], permissions: [:ask, :exec])}
 proc key {qcode} {
     global spawn_id helper vm
     set spawn_id $helper
@@ -56,25 +59,27 @@ proc key {qcode} {
     sleep 0.2
     set spawn_id $vm
 }
-proc question {kind opts expected keys} {
+proc question {name ask expected keys} {
     global spawn_id vm
-    command "spawn(fn -> File.write!(\"/priv/m27-$kind.answer\", inspect(Elixos.Ask.ask(:$kind, $opts))) end)"
-    sleep 2
-    command {IO.puts("M27 PENDING " <> inspect(Enum.map(Elixos.Ask.pending(), & &1.kind)))}
+    command "spawn(fn -> File.write!(\"/priv/m27-$name.answer\", inspect($ask)) end)"
+    # The waiting tool registers its request asynchronously; wait for it.
+    command {IO.puts("M27 PENDING " <> inspect(Enum.reduce_while(1..80, [], fn _, _ -> case Elixos.Approvals.pending() do [] -> Process.sleep(250); {:cont, []}; requests -> {:halt, Enum.map(requests, & &1.kind)} end end)))}
+    command {IO.puts("M27 OPEN " <> inspect(Elixos.GUI.start()))}
     sleep 2
     foreach qcode $keys { key $qcode }
-    # Wait on the real asking process's result, never on a synthetic GUI answer.
+    # Wait on the real waiting tool's result, never on a synthetic GUI answer.
     set spawn_id $vm
-    set expr "Enum.reduce_while(1..120, nil, fn _, _ -> if File.exists?(\"/priv/m27-$kind.answer\"), do: {:halt, File.read!(\"/priv/m27-$kind.answer\")}, else: (Process.sleep(250); {:cont, nil}) end) |> then(fn answer -> IO.puts(\"M27 ANSWER $kind \" <> to_string(answer)) end)"
+    set expr "Enum.reduce_while(1..120, nil, fn _, _ -> if File.exists?(\"/priv/m27-$name.answer\"), do: {:halt, File.read!(\"/priv/m27-$name.answer\")}, else: (Process.sleep(250); {:cont, nil}) end) |> then(fn answer -> IO.puts(\"M27 ANSWER $name \" <> to_string(answer)) end)"
     send -- "$expr\r"
-    expect -exact "\nM27 ANSWER $kind $expected"
+    expect -exact "\nM27 ANSWER $name $expected"
     expect -re {iex\([0-9]+\)> }
     sleep 2
+    command {IO.puts("M27 HANDED BACK " <> inspect(Elixos.GUI.status()))}
 }
-question confirm {prompt: "Boot the cyberdeck?"} {{:ok, true}} {y}
-question text {prompt: "Name this machine"} {{:ok, "hello"}} {h e l l o ret}
-question choice {prompt: "Choose a color", options: ["Blue", "Green"]} {{:ok, "Green"}} {down ret}
-question multi {prompt: "Enable services", options: ["Network", "Audio"]} {{:ok, ["Network", "Audio"]}} {spc down spc ret}
+question approve {({:ok, context} = OhMyJido.Session.call(session, :context); OhMyJido.Tool.authorize(context, :exec, %{sensitive: true, operation: "boot the cyberdeck"}))} {:ok} {y}
+question text {OhMyJido.execute_tool(session, "question", %{question: "Name this machine"})} {{:ok, %{answer: "hello"}}} {h e l l o ret}
+question choice {OhMyJido.execute_tool(session, "question", %{question: "Choose a color", options: [%{label: "Blue"}, %{label: "Green"}]})} {{:ok, %{answer: %{label: "Green"}}}} {down ret}
+question multi {OhMyJido.execute_tool(session, "question", %{question: "Enable services", options: [%{label: "Network"}, %{label: "Audio"}], multi: true})} {{:ok, %{answer: [%{label: "Network"}, %{label: "Audio"}]}}} {spc down spc ret}
 command {IO.puts("M27 STOP " <> inspect(Elixos.GUI.stop()))}
 sleep 2
 command {IO.puts("M27 CONSOLE " <> inspect(40 + 2))}

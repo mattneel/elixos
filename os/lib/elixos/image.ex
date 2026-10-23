@@ -69,11 +69,22 @@ defmodule Elixos.Image do
   @doc """
   Writes the working set as generation `Generation.next_number/1`, with parent
   the previous highest generation (0 if none), and journals `{:generation, n}`.
-  Options: `boot: [{module, function, args}]`.
+  Options: `boot: [{module, function, args}]`, optional `provenance: map`.
   """
   @spec save(t(), keyword()) :: {:ok, pos_integer()} | {:error, term()}
   def save(image, opts \\ []) do
     GenServer.call(image, {:save, opts})
+  end
+
+  @doc """
+  Saves a verified candidate overlay against its declared parent without
+  recording or loading its modules into the active working set. The Image
+  server owns generation numbering and journal ordering just as for `save/2`.
+  This does not send NEXT or COMMIT.
+  """
+  @spec stage(t(), Generation.t()) :: {:ok, pos_integer()} | {:error, term()}
+  def stage(image, %Generation{} = manifest) do
+    GenServer.call(image, {:stage, manifest}, :infinity)
   end
 
   @doc "Loads every module of generation `n` into the VM."
@@ -125,21 +136,11 @@ defmodule Elixos.Image do
   @impl true
   def handle_call(:apps, _from, state), do: {:reply, state.apps, state}
 
-  def handle_call({:record_app, app, version, services, deps, oban}, _from, state) do
-    # One journal entry: an app's services, requirements and scheduler
-    # declaration are one install, and a replay must never see half of it.
-    with {:ok, _seq} <- Journal.append(state.journal, {:app, app, version, services, deps, oban}) do
-      {:reply, :ok,
-       %{
-         state
-         | apps:
-             Map.put(state.apps, app, %{
-               version: version,
-               services: services,
-               deps: deps,
-               oban: oban
-             })
-       }}
+  def handle_call({:record_app, app, entry}, _from, state) do
+    # One entry contains the entire install, including target config and boot
+    # policy. A replay must never observe services without their prerequisites.
+    with {:ok, _seq} <- Journal.append(state.journal, {:app, app, entry}) do
+      {:reply, :ok, %{state | apps: Map.put(state.apps, app, entry)}}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -220,11 +221,16 @@ defmodule Elixos.Image do
       number: Generation.next_number(dir),
       parent: if(saved == [], do: 0, else: Enum.max(saved)),
       modules: state.modules,
-      # The scheduler declarations and services of every installed app boot
-      # with this generation: that is what makes an install survive a power
-      # cycle (M11, M19).
-      boot: Enum.uniq(Keyword.get(opts, :boot, []) ++ oban_boot(state.apps) ++ service_boot(state.apps)),
-      created_at: DateTime.utc_now()
+      # Preparation carries the complete app metadata in ordinary v1 boot
+      # MFAs, so old generations stay readable and candidate overlays inherit
+      # these policies with their existing boot-list merge.
+      boot:
+        Enum.uniq(
+          restore_boot(state.apps) ++ Keyword.get(opts, :boot, []) ++
+            oban_boot(state.apps) ++ service_boot(state.apps)
+        ),
+      created_at: DateTime.utc_now(),
+      provenance: Keyword.get(opts, :provenance)
     }
 
     with :ok <- Generation.write(dir, generation),
@@ -233,6 +239,33 @@ defmodule Elixos.Image do
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
+  end
+
+  def handle_call({:stage, %Generation{} = manifest}, _from, state) do
+    dir = generations_dir(state.root)
+
+    result =
+      with :ok <- verify_candidate_modules(state.store, manifest.modules),
+           {:ok, parent} <- candidate_parent(dir, manifest.parent),
+           number when number <= 4_294_967_295 <- Generation.next_number(dir) do
+        generation = %Generation{
+          manifest
+          | number: number,
+            modules: Map.merge(parent.modules, manifest.modules),
+            boot: Enum.uniq(parent.boot ++ manifest.boot),
+            created_at: DateTime.utc_now()
+        }
+
+        with :ok <- Generation.write(dir, generation),
+             {:ok, _seq} <- Journal.append(state.journal, {:generation, number}) do
+          {:ok, number}
+        end
+      else
+        number when is_integer(number) -> {:error, :generation_limit}
+        error -> error
+      end
+
+    {:reply, result, state}
   end
 
   def handle_call({:restore, number}, _from, state) do
@@ -279,15 +312,19 @@ defmodule Elixos.Image do
   end
 
   @doc """
-  Records that `app` (at `version`) is installed with `services` from its
-  `elixos:` key, the `deps` it requires (ADR-015) and its `oban:`
-  declaration: journaled as one entry, so the whole install replays at boot.
-  (M11, M15, M19)
+  Records a complete installation: its `elixos:` spec, actual target-effective
+  requirements and target config. The journal writes `{:app, app, metadata}`
+  atomically. Saved generations carry the same metadata in preparation MFAs
+  before any scheduler declaration or automatic service.
+
+  Historical app tuples are migrated on journal read with `boot: :auto`,
+  `persist: []`, `config: []` and no minimum OS declaration.
   """
-  @spec record_app(t(), atom(), String.t(), [term()], %{atom() => String.t()}, keyword()) ::
+  @spec record_app(t(), atom(), String.t(), Elixos.Package.Spec.t(), %{atom() => String.t()}, keyword()) ::
           :ok | {:error, term()}
-  def record_app(image, app, version, services, deps, oban) do
-    GenServer.call(image, {:record_app, app, version, services, deps, oban}, :infinity)
+  def record_app(image, app, version, %Elixos.Package.Spec{} = spec, deps, config) do
+    entry = app_entry(version, spec, deps, config)
+    GenServer.call(image, {:record_app, app, entry}, :infinity)
   end
 
   @doc """
@@ -331,25 +368,33 @@ defmodule Elixos.Image do
     GenServer.call(image, {:forget_agent, id}, :infinity)
   end
 
-  # What an install did, replayed: the newest entry for each app wins, and it
-  # carries the services that app's elixos: key asked for.
+  # Record-read migration: older journals remain intact on disk. Defaults are
+  # explicit here, not scattered through boot consumers or compatibility APIs.
+  defp app_entry(version, spec, deps, config) do
+    Map.merge(Map.from_struct(spec), %{version: version, deps: deps, config: config})
+  end
+
   defp apps_of(entries) do
+    defaults = app_entry(nil, %Elixos.Package.Spec{}, %{}, [])
+
     Enum.reduce(entries, %{}, fn {_seq, entry}, apps ->
       case entry do
-        # The whole install in one entry (M19).
-        {:app, app, version, services, deps, oban} ->
-          Map.put(apps, app, %{version: version, services: services, deps: deps, oban: oban})
+        {:app, app, metadata} when is_map(metadata) ->
+          Map.put(apps, app, Map.merge(defaults, metadata))
 
-        # Historical entries: M11 wrote services, M15 added requirements
-        # separately. They replay as an install that declared no scheduler.
+        {:app, app, version, services, deps, oban} ->
+          spec = %Elixos.Package.Spec{services: services, oban: oban}
+          Map.put(apps, app, app_entry(version, spec, deps, []))
+
         {:app, app, version, services} ->
-          Map.put(apps, app, %{version: version, services: services})
+          spec = %Elixos.Package.Spec{services: services}
+          Map.put(apps, app, app_entry(version, spec, %{}, []))
 
         {:uninstall, app} ->
           Map.delete(apps, app)
 
         {:app_deps, app, deps} ->
-          Map.update(apps, app, %{deps: deps}, &Map.put(&1, :deps, deps))
+          if Map.has_key?(apps, app), do: Map.update!(apps, app, &Map.put(&1, :deps, deps)), else: apps
 
         _other ->
           apps
@@ -368,11 +413,21 @@ defmodule Elixos.Image do
     end)
   end
 
+  # A preparation MFA carries the app's complete metadata, including manual
+  # policy, even when there are no auto-start MFAs for that app. Plain packages
+  # with no declarations/config need no boot action.
+  defp restore_boot(apps) do
+    for {app, entry} <- Enum.sort(apps),
+        entry.services != [] or entry.oban != [] or entry.persist != [] or
+          entry.config != [] or entry.boot != :auto or entry.min_os != nil,
+        do: {Elixos.Package, :restore_app!, [app, entry]}
+  end
+
   # The services every installed app asked to have started under the system
   # tree. Each is a boot MFA: the generation's boot list runs it, so a service
   # comes back the same way at boot as it started at install time.
   defp service_boot(apps) do
-    for {_app, %{services: services}} <- apps,
+    for {_app, %{services: services, boot: :auto}} <- Enum.sort(apps),
         service <- services,
         do: {Elixos.Package, :start_service, [service]}
   end
@@ -382,7 +437,7 @@ defmodule Elixos.Image do
   # configure_app!/2 raises on a refused declaration, which fails the boot
   # (a generation does not boot half-configured).
   defp oban_boot(apps) do
-    for {app, %{oban: oban}} <- apps,
+    for {app, %{oban: oban, boot: :auto}} <- Enum.sort(apps),
         oban != [],
         do: {Elixos.Oban, :configure_app!, [app, oban]}
   end
@@ -396,6 +451,40 @@ defmodule Elixos.Image do
         _other -> modules
       end
     end)
+  end
+
+  defp candidate_parent(_dir, 0), do: {:ok, %Generation{number: 0}}
+  defp candidate_parent(dir, number), do: Generation.read(dir, number)
+
+  defp verify_candidate_modules(store, modules) do
+    protected = modules |> Map.keys() |> Enum.filter(&protected_module?/1) |> Enum.sort()
+
+    if protected != [] do
+      {:error, {:protected_modules, protected}}
+    else
+      Enum.reduce_while(modules, :ok, fn {module, hash}, :ok ->
+        with {:ok, bytes} <- Store.get(store, hash),
+             info when is_list(info) <- :beam_lib.info(bytes),
+             ^module <- Keyword.get(info, :module) do
+          {:cont, :ok}
+        else
+          _ -> {:halt, {:error, {:invalid_candidate_blob, module}}}
+        end
+      end)
+    end
+  end
+
+  defp protected_module?(module) do
+    factory = Application.get_env(:elixos, :factory_dir, "/factory")
+    roots = [Path.join(factory, "lib"), Path.join(to_string(:code.root_dir()), "lib"),
+             to_string(:code.lib_dir(:elixir))]
+
+    :code.is_sticky(module) or
+      case :code.which(module) do
+        path when is_list(path) ->
+          Enum.any?(roots, fn root -> String.starts_with?(to_string(path), root <> "/") end)
+        _ -> false
+      end
   end
 
   # Verify the entire generation before loading anything: an earlier @on_load

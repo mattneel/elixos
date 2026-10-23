@@ -1,8 +1,10 @@
 # Emerge on this box (M27)
 
-M27 remains in progress. The four dialog kinds, framebuffer output, evdev
-input and console handover are implemented and exercised on x86_64; ARM64
-renderer packaging and the full milestone gate are not yet complete.
+M27 remains in progress. The dialogs now show Oh-My-Jido approvals from
+`Elixos.Approvals` (ADR-093), not the retired Ask queue. The four request
+kinds, framebuffer output, evdev input and console handover are implemented
+and exercised on x86_64. ARM64 renderer packaging and the full milestone gate
+are not yet complete.
 
 ## The artifact
 

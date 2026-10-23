@@ -25,6 +25,74 @@ UEFI firmware (hardware)            QEMU -kernel/-initrd (development)
 There is no bootloader. In QEMU the kernel is loaded with `-kernel`; on
 hardware UEFI runs the kernel image itself through its EFI stub (ADR-014).
 
+### Native OCI is a different kernel boundary
+
+Bare-metal EFI, QEMU and direct Firecracker boot the packaged kernel and the
+machine build of the shim. A native OCI image instead uses the container
+runtime's Linux kernel and supplied `/proc`, `/sys`, `/dev` and network.
+There is no bundled kernel, initramfs, data-disk image, QEMU or nested VMM.
+Docker Desktop's kernel belongs to its Linux VM, not the client workstation.
+Fly likewise owns the outer Machine kernel and init.
+
+`-Dcontainer=true` selects explicit boundaries in the same shim, not another
+service or application runtime. It can supervise as namespace PID 1 or as a
+provider init's child; in the latter case it becomes a child subreaper. It
+requires root, the baked root-owned `/etc/elixos/runtime` marker and
+`container=oci`, validates its procfs PID view, and refuses initial-namespace
+PID 1. An accidental machine boot idles rather than exiting PID 1 and
+panicking the kernel.
+
+The BEAM still runs as uid/gid 1000, PostgreSQL as uid/gid 70, with the same
+control pipes, helper allow-list, heartbeats, sealed generations and restore
+machinery. The OCI branch never mounts filesystems, changes host networking,
+reads host boot parameters, broadcasts signals to unrelated processes or
+calls kernel reboot. It signals/reaps only its own children, including
+reparented descendants. Hardware/mount helpers are refused.
+
+OCI supplies writable `/priv` explicitly; the root can be read-only, with
+runtime-provided tmpfs at `/run` and `/tmp`. `/system` is a baked read-only
+service tree; ICU and timezone paths are exact symlinks rather than bind
+mounts. The SDK adds immutable `/toolchain`; the runtime image omits it.
+Default startup is headless. `ELIXOS_CONSOLE=1` enables IEx on the supplied
+stdio; `ELIXOS_SAFE=1` selects rescue without consulting `/proc/cmdline`.
+The GUI does not autostart. `Elixos.runtime/0` reports `:container`,
+`:machine` or `:host` without changing the existing `Elixos.info/0` shape.
+
+SIGTERM and `Elixos.poweroff/0` stop the BEAM, shut down PostgreSQL and exit
+the supervisor with status 0. `Elixos.reboot/0` preserves ordinary next-boot
+state and exits 75: restarting the container is the orchestrator's decision,
+not an attempt to reboot its kernel. Keep `/priv` on a retained volume for
+state across container replacement. No drive discovery or disk formatting
+is part of this profile.
+
+### Native application images
+
+`mix elixos.image` source-packages an ordinary SDK project on the host, then
+uses a matching-architecture native SDK container to install dependencies,
+compile, save and cold-restore its generation. The existing default health
+gate must pass and the shim must commit the running generation before
+`Elixos.Container.Image.export/1` can produce a seed. Build receipts and
+process exit status determine success; logs are not a substitute.
+
+The seed contains verified installed code, resources, saved generation and
+ordinary restore metadata, plus explicitly trusted public repository
+resources. It excludes runtime application data, PostgreSQL files, SSH
+identities, source trees and build caches. Recognized private filenames and
+PEM private keys are refused, but arbitrary secrets embedded in app code or
+configuration cannot be detected: keep them out of source packages and
+supply secrets at runtime. The build does not forward caller application
+secrets. The final image uses the native runtime base and stores this seed
+read-only at `/usr/share/elixos/seed`.
+
+On a pristine `/priv`, the shim validates the seed and destination, marks an
+initialization transaction, copies only permitted trees, syncs owned files
+and publishes `boot.state` last. Interrupted or unsafe initialization fails
+closed. Existing `boot.state` always wins: replacing an image never silently
+overwrites a retained volume or upgrades its application generation. Use
+normal package/generation operations for an existing deployment; use a new
+volume for a separate installation. Durable storage, backups, migrations
+and orchestrator restart policy remain explicit deployment responsibilities.
+
 ## §2 Filesystems
 
 **initramfs** (M16, ADR-041: melange builds our packages, apko assembles the
@@ -59,39 +127,48 @@ digest agreement and carries an SBOM.
 /etc/elixos/helpers           root-owned named-helper allow-list (M17)
 /usr/bin/elixos-postgres-init  libc-free guard which directly execs initdb (M18)
 /proc /sys /dev /dev/shm /run /tmp  mount points, declared in the apko config
-/priv                          mount point for the persistent disk
+/priv                          persistent mount point, or RAM-backed Live state
 ```
 
-The initramfs is the immutable base: the factory image cannot be broken by
-anything done at runtime, so rescue mode always has something to boot.
+The packaged initramfs is the factory base, recreated on each kernel boot.
+Runtime state lives under `/priv`.
 
-**/priv** is the persistent ext4 disk (layout in PROTOCOL.md §7). Everything
-the user creates lives there.
+**/priv** is normally the persistent ext4 disk (layout in PROTOCOL.md §7).
+With `elixos.live`, it stays on the RAM-backed initramfs root instead:
+PID 1 never mounts or waits for the data device. The Live archive embeds the
+packaged `/priv/system/system.squashfs` and `/priv/toolchain` seeds without
+covering them with another tmpfs or copying them at boot (ADR-085).
+Normal services, uid separation, generation sealing and recovery still work;
+files, saved generations and database changes disappear on a kernel reboot.
+Live leaves the framebuffer GUI opt-in so the local IEx console stays usable.
 
 **/system** is a separate, read-only gzip SquashFS containing PostgreSQL 17,
 its client, pgvector, TimescaleDB and their Alpine library closure (M18,
 ADR-052), plus Lightpanda and its private glibc under `/system/browser`
 (M25, ADR-064), and the target-specific Emerge raster NIF with its private
 musl library closure under `/system/gui` (M27, ADR-069).
-PID 1 mounts `/priv/system/system.squashfs` only in normal mode. ICU and
+Machine PID 1 mounts `/priv/system/system.squashfs` only in normal mode. ICU and
 timezone data are exported through read-only bind mounts at
 their compiled-in `/usr/share/icu` and `/usr/share/zoneinfo` paths; the
 factory declares only empty mount points. Rescue needs neither the service
 image nor its binaries.
 
-## §3 The shim (PID 1, Zig)
+## §3 The shim (Zig: machine PID 1 or native OCI supervisor)
 
 Source: `shim/src/`. Pure logic (`decimal`, `protocol`, `statefile`,
 `cmdline`, `recovery`, `helpers` and the sealing parser) is unit tested on the
 host; `main.zig` and the sealing filesystem syscalls are syscall glue
 tested in QEMU.
 
+The duties below describe the machine profile. Native OCI uses the explicit
+filesystem, process-ownership and exit boundaries in §1 instead.
+
 ### §3.1 Duties
 
 1. Mount `/proc`, `/sys`, `/dev` (devtmpfs), `/dev/shm`, `/run`, `/tmp`; recreate
-   `/dev/shm` after devtmpfs hides the initramfs directory. Then mount `/priv`,
-   waiting up to `elixos.data_wait` seconds for that device to appear (the
-   kernel does not wait for USB or SD storage before running `/init`).
+   `/dev/shm` after devtmpfs hides the initramfs directory. Keep RAM-backed
+   `/priv` for Live; otherwise mount the selected data device, waiting up to
+   `elixos.data_wait` seconds (the kernel does not wait for USB or SD storage).
 2. Parse `/proc/cmdline`, read the fixed helper list, prepare root-owned sticky
    store/generation directories and the private sealing workspace, then read
    `/priv/boot.state`, plan, persist and log.
@@ -199,6 +276,84 @@ its content hash before loading any, load the verified bytes, run G's boot
 spec, then start the login REPL. Boot never replays the journal tail:
 unsaved work is recoverable on request, never applied by surprise.
 
+#### Isolated candidates and health-gated promotion
+
+The independently approved Candidate/Health host integration does not revive
+ADR-083's withdrawn OMP runtime or M21–M24 contract. `Elixos.Candidate.checkout/1`
+copies the current candidate's retained source, or the factory source, into
+`<destination>/os`. `build/2` requires durable session/model/tool/parent
+provenance, snapshots the inputs, and invokes installed Mix in a child ERTS.
+`test/1` runs the trusted OS's full portable system and selected-tool suites
+in fresh non-distributed child ERTS workers, plus the candidate's own suite
+when it is a separate project. Ordinary Ports carry bounded JSON receipts
+and opaque logs only: no worker ETF decoder, arbitrary origin-message
+forwarding, host PID/MFA dispatch, or executable fun transfer exists.
+Candidate modules and project/config files are never evaluated in the
+active host VM; its cwd and environment never change.
+Receipts have an explicit version/operation/result schema and byte limits;
+successful identities are bound to the OS PID observed from the owning Port.
+Each child gets private HOME and a fresh distribution cookie, rather than the
+host's ambient home/cookie. Worker output remains opaque byte data even when
+it contains a valid-looking OTP peer frame or a serialized executable fun.
+
+
+After successful suites, `propose/1` verifies the unchanged snapshot and asks
+`Image.stage/2` to save an overlay against the declared parent. The Image
+service serializes normal generation numbering and journals the generation
+without changing its active working set. NEXT is then written through the
+existing Control service. A successful write is **not** a shim promotion
+acknowledgment. The caller still owns consent and any reboot. Protected
+factory, OTP, and Elixir module proposals are refused; changing the sticky
+base remains a separately authorized factory-image operation.
+
+Generation's version-one envelope accepts optional `provenance`; legacy
+manifests read with `nil`. Candidate source, bytecode, logs, suite receipts
+and provenance persist under `/priv/evidence/candidates/<id>/`; each proposed
+generation's `/priv/evidence/<n>/proposal.term` retains that identity.
+Nothing in candidate validation, generation restore or fallback removes
+failed-generation evidence.
+`Candidate.open(id, image: ..., control: ...)` reconstructs an opaque handle
+for a library adapter; service PIDs are never persisted in candidate metadata.
+Raw Image generations without retained/provisioned textual source cannot be
+checked out and return `:generation_source_unavailable`.
+Rechecks keep append-only receipt history and atomically update the latest
+`test.term` or `health.term` link, so a later success cannot erase a failure.
+Each build/test child writes any bounded crash dump in its own evidence
+directory, never to the active generation's inherited crash-dump path. The
+shim's existing separate `/priv/crash/gen<n>-attempt<a>.dump` retention policy
+is unchanged.
+
+
+`Elixos.Health.run/0` evaluates every named check and retains all failures.
+Its defaults are liveness plus the same system/selected-tool suites in child ERTS workers,
+using the generation's verified stored bytes, never a new source build.
+AutoCommit defaults to `Elixos.Health.boot/0` (ADR-095): liveness, the
+running-generation identity check, and for a proposed candidate its unchanged,
+successful suite evidence; the full suites gate candidates before NEXT and
+image export, not every boot. An error tuple, exception, missing evidence or
+evidence-write failure cannot authorize COMMIT. A COMMIT write
+failure is retained and is not automatically retried or called a promotion.
+Rescue still never auto-commits.
+Child stdin EOF closes its ERTS when the owning Port disappears; output and
+receipt reads are capped and execution has a deadline. This is not an OS
+sandbox or proof of containment/reaping for arbitrary escaped native
+descendants. Hosts allowing such builds need their process-group/cgroup
+policy separately; VM/data-channel isolation must not be called OS isolation.
+
+
+The factory recipe includes `/factory/source/os`, its test fixtures and shared
+vectors, and ExUnit alongside existing Mix. `:candidate_source` and
+`:health_source` select explicitly provisioned source when appropriate;
+`:candidate_system_source` (or trusted build option `:system_source`) selects
+the independent OS suite baseline, defaulting to the factory/current source.
+`:candidate_tool_tests` selects the host's tool suite (defaults include the
+Approvals, Session and browser contract tests and `test/tools/`). These are trusted host
+settings, not model authority. Peers isolate VM state, not arbitrary OS or
+network capabilities. A disposable guest with rebuilt architecture-matched
+factory assets and separate human consent is still required to demonstrate
+real NEXT → boot → COMMIT/sealing or fault-induced fallback.
+
+
 ### §4.5 Recovery tools
 
 - `Elixos.unsaved(n)` / `Elixos.recover(modules)`: Smalltalk's "recover lost
@@ -230,11 +385,14 @@ restored apps can register their `Elixos.Oban.configure_app!/2` declarations
 without starting queues prematurely.
 
 Restore is followed by the recorder, agent supervisor and agent manager,
-Ask's question queue, the browser manager, SSH, console login and auto-commit.
+the approval index (`Elixos.Approvals`, which also starts the OS's
+`Elixos.Coding` Oh-My-Jido runtime), the browser manager, SSH, console login
+and auto-commit. The GUI never starts at boot.
 `Elixos.Oban.activate/0` runs only after the whole tree, restore included, is
 up. Auto-commit runs only in normal mode. A boot-critical restore failure
 exits the VM non-zero so the shim counts the attempt (ADR-007); database,
-scheduler, browser and SSH startup failures remain non-critical.
+scheduler, approvals, browser and SSH startup failures remain non-critical.
+Rescue starts neither the approval index nor the coding runtime.
 
 ## §6 REPLs are the shells (ADR-012)
 
@@ -258,17 +416,24 @@ evaluation environment, erl through `user_default`), relative paths resolve
 against the session's directory, and native tools run with `cd:` set to it.
 The VM's working directory never moves (ADR-016).
 
-**The question queue (ADR-059).** Questions are data in `Elixos.Ask`, one queue
-in the OS supervision tree: an id, a kind, the prompt, the options and the
-asking process, with `ask/2` blocking the asker until the question is resolved.
-Every front-end is only a view over that queue. The console REPL is the first
-one and prints a notice line per new question — `elixos-ask: question <id>
-(<kind>): <prompt>`, PROTOCOL.md §6 — so a watching human sees an agent's
-question the moment it exists (M27 adds the framebuffer view). An answer is
-validated against the question that asked it before it is accepted, so a
-front-end cannot hand back a value the question never allowed.
-`Elixos.Ask.Action` (`ask_human`) is the Jido action an agent uses to ask and
-to carry the answer back into its state.
+**Human approvals (ADR-093).** Oh-My-Jido sessions own every approval and
+question: a waiting effect or question keeps its session, run, capability and
+effect, and fails closed on timeout, cancellation or any non-approving answer.
+A session belongs to its runtime, not to the REPL that started it. As a
+result, agents in the background, in Oban jobs or resumed after a reboot ask
+the same way. `Elixos.Approvals.Host` is the OS's `OhMyJido.Host`: it leaves
+every question pending and registers it with `Elixos.Approvals`.
+
+`Elixos.Approvals` subscribes to each such session and indexes its open
+requests under small OS-local ids. It drops a request when the session
+answers, withdraws or expires it, or when the session exits. A restore never
+revives an old question. Every login REPL imports `approvals/0`, `approve/1`,
+`deny/1` and `answer/2`; answers go unchanged to `OhMyJido.answer/3`, after a
+check against the request (PROTOCOL.md §10). The index logs a `Logger` notice
+per new request. Nothing in the OS answers on its own, and an approval grants
+no privilege beyond the unprivileged BEAM. The OS's `Elixos.Coding` runtime
+keeps session checkpoints in `/priv/coding/sessions` and expires questions
+after one hour (`:approval_timeout_ms`).
 
 ## §7 Apps on Elixos (ADR-010, ADR-011, ADR-015)
 
@@ -276,14 +441,14 @@ to carry the answer back into its state.
   An app adds one line to `config/config.exs`:
   `if config_target() == :elixos, do: import_config("elixos.exs")`.
   Builds land in `_build/elixos_<env>`.
-- **Install metadata in `mix.exs`.** The `elixos:` project key (services,
-  oban, persist, min_os, boot); plain Mix ignores it. Validated by
-  `Elixos.Package.Spec`. The `oban:` declaration (`queues:`, `cron:`) is
-  persisted with the app and becomes part of the generation's boot spec, so an
-  installed app's queues and cron come back with the image (ADR-057).
+- **Install metadata in `mix.exs`.** `elixos: os()` calls an ordinary helper
+  returning services, oban, persist, min_os and boot; plain Mix ignores the
+  key. The installer reads app identity, requirements and the spec under
+  prod/Elixos settings without changing the VM's cwd/OS environment.
 - **The OS provides the API.** Apps depend on
-  `{:elixos, "~> 0.1", targets: :elixos}`; the installer satisfies it with the
-  running OS and refuses a bundled copy.
+  `{:elixos, "~> 0.1", targets: :elixos}`. Both dependency resolution and the
+  native Mix SCM bind this to the running OS's actual application resource,
+  never a fetched, bundled or alternate path/Git copy.
 - **One namespace, one version.** All apps share the VM's module namespace, so
   `Elixos.Package.Resolver` keeps one version of each package system-wide and
   refuses installs that would break an installed app.
@@ -291,13 +456,28 @@ to carry the answer back into its state.
   builds (`Mix.Project.in_project/4` cd's), and on Elixos that would move it
   for every program (ADR-016). `Elixos.Package.install/1` therefore execs a
   second ERTS (erlexec directly, no shell) to compile, then loads the result.
+  The child starts clean, with real OS/Mix/installed ebins available but no
+  second OS application startup. Its exact declared app/version is checked;
+  a stale `.app` version is regenerated without forcing all native compilers.
 - **Installed packages are Mix dependencies (M26, ADR-068).** The build child
   starts Mix and prepends `Elixos.Package.SCM` before dependency loading.
   It resolves an installed dependency to `/priv/apps/<name>` after checking
-  its `.app` version against the requirement. Explicit path/git sources,
-  missing packages and incompatible installed versions fall through to the
-  normal SCMs. Installed ebins are also on the child's code path; the project
-  sources are not rewritten.
+  its `.app` version against the requirement. Ordinary explicit path/git
+  sources, missing packages and incompatible installed versions fall through
+  to the normal SCMs; the running OS is the deliberate exception. Installed
+  ebins are also on the child's code path; sources are not rewritten.
+- **Separate state and boot policy.** `Elixos.Package.data_dir/1` is
+  `/priv/data/<app>`, outside replaceable runtime trees. Relative `persist`
+  directories are prepared without following symlinks. Config and the full
+  spec are journalled atomically and restored before services/queues.
+  Explicit installation starts declared services; saved boot starts only
+  automatic declarations. App removal leaves state. A returned boot-MFA
+  `{:error, reason}` fails the boot, like an exception, rather than silently
+  starting a half-working system.
+- **SDK is host build tooling.** `elixos_sdk` generates ordinary projects and
+  packages target-effective source through Hex, without target compilation,
+  dependency fetching, OS facade modules or an application runtime. Native
+  compilation happens in the real OS. See [the SDK guide](../hex/README.md#native-application-sdk).
 
 ## §7a Packages by name (ADR-019, M14)
 
@@ -395,14 +575,16 @@ OS dependency: ADR-065 records why it and `light_cdp` were rejected.
 `screenshot/0` returns PNG bytes, and `stop/0` closes the adapter.
 The browser does not run in rescue and cannot block console startup.
 
-## §12 Framebuffer GUI (M27, in progress)
+## §12 Framebuffer GUI (M27)
 
-`Elixos.GUI` starts asynchronously after the Ask queue in normal mode, and
-only when `/dev/fb0` exists. Rescue remains console-only. The GUI renders
-text, choice, multi-choice and confirmation dialogs from the existing Ask
-queue; resolving a dialog uses `Elixos.Ask.answer/2` or `dismiss/1`, not a
-second question store. Ask subscriptions provide an atomic initial snapshot
-and subsequent queue changes.
+`Elixos.GUI` is an optional view of `Elixos.Approvals` (§6, ADR-093). It never
+starts at boot: Elixos boots to `iex(1)>`. `Elixos.GUI.start/0` opens it from
+IEx under the installed-service supervisor, only in normal mode and only when
+`/dev/fb0` exists. With nothing pending it returns `{:error, :nothing_pending}`
+and does not take the screen or keyboard. The GUI renders confirm, text,
+choice and multi-choice dialogs for the open requests, and every answer goes
+through `Elixos.Approvals`. Escape, F12 or the last request being resolved
+hands the console back. Escape never answers or denies.
 
 Emerge 0.4.2 runs a headless CPU raster renderer. It delivers RGBA8888
 `VideoInterop.Frame` binaries to the GUI owner process, which validates the
@@ -412,7 +594,7 @@ each presented frame. One frame is in flight; newer pending frames replace
 older pending frames rather than building an unbounded queue.
 
 The same helper reads evdev keyboard and pointer events. Elixir owns focus,
-text editing, selections and Ask validation. A root-owned console-handover
+text editing, selections and answer validation. A root-owned console-handover
 broker grants a single lease to uid 1000, unbinds the framebuffer console
 while the GUI owns it, and rebinds it before acknowledging a graceful stop
 or admitting another lease. Closing the lease also restores the console
@@ -428,7 +610,74 @@ GUI startup failures are non-critical and the login REPL still starts. The
 renderer is a NIF inside the BEAM, however: a native crash can still terminate
 the VM. Input-device hotplug currently requires restarting the GUI.
 
-The host suite, four off-screen raster dialogs and the x86_64 GPU acceptance
-have passed. The [development recording](../demos/m27-gui.mp4) exercises real
-evdev keys and console handback. ARM64 packaging and the full milestone gate
-are not yet complete; the roadmap checklist remains unticked.
+The host suite, the off-screen raster dialogs and the x86_64 QEMU acceptance
+pass with approval requests. ARM64 renderer packaging and the full milestone
+gate are not yet complete. The [recording](../demos/m27-gui.mp4) answers all four
+request kinds on the framebuffer and shows the automatic console handback.
+
+## §13 Source-pinned coding library and generation-only deployment (ADR-084)
+
+The approved native coding package is the separately maintained Oh-My-Jido
+Mix library, not the withdrawn OMP port. The factory stages verbatim sources
+under an explicit reviewed SHA256 pin and builds them using its own pinned
+OTP/Elixir. Existing Jido wiring stays in place; its source is the canonical
+licensed patched snapshot, and ReqLLM retains the library's exact patched
+source override. The OS lock remains authoritative and cannot change during
+factory dependency resolution. Optional QuickBEAM/Python backends are not
+selected as OS runtime dependencies for this demonstration.
+
+The real `ElixosHost` adapter builds separately against the complete OS and
+ships as an ordinary `/factory/lib/elixos_host-0.1.0` OTP app. Its reduced
+host-test OS application is never the guest OS. Factory startup makes packages
+loadable by its existing path convention. In normal mode `Elixos.Approvals`
+starts the OS's `Elixos.Coding` runtime (§6); no account or deployment
+authority is granted implicitly. Sources and target BEAM/app
+receipts live in `/factory/source/oh_my_jido` and `/factory/coding`.
+
+Candidate snapshots and builds a non-protected userland Mix project in a
+direct child ERTS, persists its source/BEAM/manifest/provenance/policy
+fingerprint and actual suite receipts, then stages only validated overlays
+through Image and NEXT. The host adapter checks durable session ownership.
+Execution and proposal each wait for an Oh-My-Jido approval, which
+`Elixos.Approvals` lists for every login session. No agent tool
+reboots or commits. Normal boot restores generation code; Health tests
+SHA256-verified generation bytes and compares the actual loaded VM module
+identities, and AutoCommit alone requests promotion. The shim's sealing,
+attempt accounting, last-good fallback and rescue policy are unchanged.
+
+The packaged `ElixosHost.T10` entrypoints exercise real sessions with an
+explicit native scripted ReAct model boundary in a disposable no-NIC guest.
+They retain actual file edits, tests, provenance, NEXT and cross-reboot
+checkpoint/resume receipts. A deliberate benign userland boot-MFA exception
+exercises normal fallback without corrupting bytes or touching protected
+modules. See the canonical `examples/elixos/README.md` for exact commands and
+evidence paths. This implementation description is not guest verification,
+live-provider potency, or completion of F05/T9 native backend target packaging.
+
+## §14 Optional native Eval factory profile (ADR-092)
+
+The default factory remains the pure-BEAM ADR-084 selection. The explicit
+`ELIXOS_EVAL_PROFILE=1` profile selects a separate factory APK/configuration
+and output/lock directory, never a protected-module runtime overlay. Native
+Mix post-configuration selects the canonical optional dependency branches
+before target OTP compilation while preserving OS source and committed lock.
+QuickBEAM 0.11.3's musl native archive is upstream-checksummed; its OXC NIF
+closure builds from the actual locked upstream crates with the target
+toolchain. Snakepit is the canonical licensed 0.14.0 private-diagnostics
+snapshot, with unchanged SDK/stubs and a package-built CPython 3.14 venv.
+
+No backend runs at boot. The explicit `Elixos.CodingEval` IEx frontend verifies
+the immutable source/BEAM/native/link receipts and reuses native Jido/OTP,
+the real host adapter and Snakepit's existing prerequisites. It never starts
+the general-purpose provisioning application. Elixir/JavaScript use existing
+JSON-only separate ERTS workers; Python stays exclusively Snakepit-managed.
+No host VM cwd/environment or global Python path changes are introduced.
+This is trusted-code crash separation, not an OS sandbox.
+
+The package build derives target artifact/ELF/link/ERTS-export receipts from
+actual bytes and fails closed on missing, empty, foreign or unresolved native
+outputs. The compiled finite guest smoke is a separate explicit operation,
+requiring normal no-NIC boot and real state/tool/quota/cancel/crash/cleanup
+behavior for all three languages. No package receipt claims either target
+verified. See [the exact operations/evidence procedure](notes/coding-eval.md).
+

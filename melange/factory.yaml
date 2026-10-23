@@ -20,16 +20,12 @@ package:
       - libstdc++
       - zlib
 
-vars:
-  # Hex builds the release; pinned so two builds resolve the same deps.
-  hex: "2.5.1"
-
 environment:
   contents:
     repositories:
       - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
     packages:
-      - alpine-release=3.24.2-r0
+      - alpine-release=3.24.3-r0
       - elixos-otp
       - elixos-elixir
       - bash
@@ -39,85 +35,23 @@ environment:
 
 pipeline:
   - runs: |
-
-      version="$(sed -n 's/^  @version "\(.*\)"$/\1/p' /home/build/os/mix.exs)"
-      if [ "$version" != "${{package.version}}" ]; then
-        echo "factory: os/mix.exs says $version, this package says ${{package.version}}" >&2
-        exit 1
+      # aarch64 never compiles here (ADR-094): scripts/build-image.sh builds
+      # the arm64 factory natively (melange/factory-cross.yaml) and stages it.
+      if [ "${{build.arch}}" = aarch64 ]; then
+        [ -d /home/build/prebuilt/factory/factory ] || {
+          echo "factory: no cross-built aarch64 factory staged; build with scripts/build-image.sh" >&2
+          exit 1; }
+        cp -a /home/build/prebuilt/factory/. "${{targets.destdir}}/"
+        if [ -f /home/build/prebuilt/factory.links ]; then
+          while IFS="$(printf '\t')" read -r link target; do
+            dest="${{targets.destdir}}/$link"
+            mkdir -p "$(dirname "$dest")"
+            ln -sfn "$target" "$dest"
+          done < /home/build/prebuilt/factory.links
+        fi
+        echo "factory: installed the cross-built aarch64 tree"
+        exit 0
       fi
-
-      export MIX_ENV=prod HEX_HOME=/tmp/hex MIX_HOME=/tmp/mix
-      export ELIXOS_GUI_PACKAGED=1 EMERGE_SKIA_BUILD=1
-      export TARGET_ARCH="${{build.arch}}" TARGET_OS=linux TARGET_ABI=musl TARGET_VENDOR=unknown
-      mix local.hex "${{vars.hex}}" --force >/dev/null
-
-      cd /home/build/os
-      mix deps.get
-
-      lib=/usr/local/lib/erlang
-      erts="$(ls -d "$lib"/erts-* | head -n1)"
-      # OTP is the image's own package (elixos-otp): the release points at that
-      # install instead of carrying a second copy of the same ERTS.
-      ELIXOS_ERTS="$erts" ELIXOS_INCLUDE_ERTS=0 mix release --overwrite --path /tmp/rel
-
-      # The layout the shim's CLI expects: /factory/erts and erts-<vsn> where
-      # the ERTS itself looks, /factory/lib, /factory/releases/current - and no
-      # bin/ scripts (ADR-012).
-      dest="${{targets.destdir}}/factory"
-      mkdir -p "$dest"
-      cp -a /tmp/rel/. "$dest/"
-      rm -rf "$dest/bin"
-      # The factory carries target-compiled loader BEAM, never native code.
-      # Use one real library name, not RustlerPrecompiled's versioned aliases.
-      # The directory symlink makes Rustler's app-relative load path explicit.
-      for emerge in "$dest"/lib/emerge-*; do
-        [ -d "$emerge/priv" ] || { echo "factory: Emerge priv missing" >&2; exit 1; }
-        rm -rf "$emerge/priv/native"
-        ln -s "/system/gui/${{build.arch}}-unknown-linux-musl" "$emerge/priv/native"
-        # Native code embeds the fonts; a release does not copy native/ or
-        # top-level notices. Keep redistribution texts with the Emerge app.
-        licenses="$emerge/priv/licenses"
-        mkdir -p "$licenses"
-        cp /home/build/os/deps/emerge/LICENSE /home/build/os/deps/emerge/NOTICE "$licenses/"
-        cp -a /home/build/os/deps/emerge/licenses/. "$licenses/"
-        for font in inter jetbrains-mono; do
-          install -m 0644 "/home/build/os/deps/emerge/native/emerge_skia/src/fonts/$font/OFL.txt" \
-            "$licenses/$font-OFL.txt"
-        done
-      done
-
-      # The release carries this project and its Hex dependencies; the OTP
-      # applications themselves live in the machine's own OTP install
-      # (elixos-otp), so the release points at them - same versions, same
-      # install - instead of copying them.
-      for app in "$lib"/lib/*; do
-        name="$(basename "$app")"
-        [ -e "$dest/lib/$name" ] || ln -sfn "$app" "$dest/lib/$name"
-      done
-
-      ln -sfn "$erts" "$dest/$(basename "$erts")"
-      ln -sfn "$(basename "$erts")" "$dest/erts"
-      ln -sfn "$version" "$dest/releases/current"
-
-      # The box builds Mix projects itself (M11), and `mix release` leaves the
-      # mix application out.
-      cp -a /usr/local/lib/elixir/lib/mix "$dest/lib/"
-
-      # No shell scripts (ADR-012), but *escript* starts its erl with
-      # `-boot no_dot_erlang`, which ERTS looks up under $ROOTDIR/bin: that
-      # compiled boot script is the one file an escript needs from the removed
-      # bin/. It lives in the OTP install.
-      mkdir -p "$dest/bin"
-      ln -sfn "$lib/bin/no_dot_erlang.boot" "$dest/bin/no_dot_erlang.boot"
-
-      # The official Hex repository: the factory ships its public key and the
-      # preconfigured entry, so a box trusts it without anyone adding a
-      # repository first (ADR-019). /priv/hex/ is the box's own copy and wins
-      # once it exists.
-      mkdir -p "$dest/hex/keys"
-      cp /home/build/hex/keys/elixos.pub "$dest/hex/keys/elixos.pub"
-      {
-        printf '[\n  elixos: [\n    url: "https://mattneel.github.io/elixos",\n    key: """\n'
-        cat /home/build/hex/keys/elixos.pub
-        printf '"""\n  ]\n]\n'
-      } > "$dest/hex/repos.exs"
+      export FACTORY_DEST="${{targets.destdir}}" FACTORY_ARCH="${{build.arch}}"
+      export FACTORY_VERSION="${{package.version}}" FACTORY_EVAL=0
+      bash /home/build/scripts/package-factory.sh

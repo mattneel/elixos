@@ -28,10 +28,16 @@ pub fn build(b: *std.Build) void {
         "test-hooks",
         "Honor elixos.test.* kernel command line hooks. QEMU test images only, never releases.",
     ) orelse false;
+    const container = b.option(
+        bool,
+        "container",
+        "Run the native OCI userland supervisor; the runtime supplies mounts, networking and /priv.",
+    ) orelse false;
 
     const options = b.addOptions();
     options.addOption(u32, "milestone", milestone);
     options.addOption(bool, "test_hooks", test_hooks);
+    options.addOption(bool, "container", container);
 
     const shim = b.addExecutable(.{
         .name = "init",

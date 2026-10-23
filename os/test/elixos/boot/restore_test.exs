@@ -1,8 +1,8 @@
 defmodule Elixos.Boot.RestoreTest do
   @moduledoc """
-  The two things a boot spec must not be able to do: hang, or throw its way
-  into a half-started system (M6). Both end as a failed child, which stops the
-  tree and makes the shim count the attempt and fall back (ADR-007).
+  Boot specifications must not hang, throw, or return an ignored service
+  startup error into a half-started system (M6). Failure stops the child and
+  makes the shim count the attempt and fall back (ADR-007).
   """
   use ExUnit.Case, async: false
 
@@ -12,6 +12,20 @@ defmodule Elixos.Boot.RestoreTest do
   alias Elixos.Boot.{Env, Restore}
   alias Elixos.Image
   alias Elixos.Image.Generation
+
+  defmodule NeedsState do
+    use GenServer
+
+    def start_link(path), do: GenServer.start_link(__MODULE__, path)
+
+    @impl true
+    def init(path) do
+      case File.read(path) do
+        {:ok, contents} -> {:ok, contents}
+        {:error, reason} -> {:stop, {:state_unavailable, reason}}
+      end
+    end
+  end
 
   setup %{tmp_dir: tmp_dir} do
     root = Path.join(tmp_dir, "image")
@@ -43,6 +57,26 @@ defmodule Elixos.Boot.RestoreTest do
 
     assert {:error, {:boot_spec_failed, 1, {:throw, :ignore}}} =
              Restore.start_link({image, env()})
+  end
+
+  test "an automatic service that cannot open its state fails boot before later actions", %{
+    image: image,
+    root: root
+  } do
+    start_supervised!({DynamicSupervisor, name: Elixos.Package.Services, strategy: :one_for_one})
+    missing = Path.join(root, "missing-service-state")
+    later = Path.join(root, "later-boot-action")
+
+    :ok =
+      write_generation(root, [
+        {Elixos.Package, :start_service, [{NeedsState, missing}]},
+        {File, :write, [later, "must not run"]}
+      ])
+
+    Process.flag(:trap_exit, true)
+
+    assert {:error, {:boot_spec_failed, 1, _reason}} = Restore.start_link({image, env()})
+    refute File.exists?(later)
   end
 
   test "rescue mode loads no user code, so it can fix a bad generation", %{

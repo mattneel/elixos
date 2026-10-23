@@ -1,0 +1,46 @@
+# ADR-092: a separate factory profile, never a runtime overlay on the base OS.
+package:
+  name: elixos-factory-eval
+  version: "0.1.0"
+  epoch: 0
+  description: "Elixos factory with explicitly loaded optional native Eval backends"
+  copyright:
+    - license: Apache-2.0 AND MIT
+  dependencies:
+    runtime:
+      - elixos-otp
+      - elixos-coding-eval-python=0.1.0-r0
+      - util-linux-misc=2.42.3-r1
+      - openssl
+      - ncurses-libs
+      - libstdc++
+      - libgcc
+      - zlib
+
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+    packages:
+      - alpine-release=3.24.3-r0
+      - elixos-otp
+      - elixos-elixir
+      - elixos-coding-eval-python=0.1.0-r0
+      - bash
+      - ca-certificates
+      - curl
+      - openssl
+      - build-base=0.5-r4
+      - rust=1.96.1-r0
+      - cargo=1.96.1-r0
+      - git
+      - binutils
+
+pipeline:
+  - runs: |
+      export FACTORY_DEST="${{targets.destdir}}" FACTORY_ARCH="${{build.arch}}"
+      export FACTORY_VERSION="${{package.version}}" FACTORY_EVAL=1
+      export ELIXOS_FACTORY=1 ELIXOS_SOURCE=/home/build/os ELIXOS_FACTORY_DEPS=/home/build/os/deps
+      export ZIGLER_PRECOMPILED_GLOBAL_CACHE_PATH=/tmp/eval-nif-cache
+      bash /home/build/scripts/package-factory.sh

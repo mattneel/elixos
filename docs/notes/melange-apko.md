@@ -6,13 +6,26 @@ apko v1.4.10, both by sha256).
 
 ## Current build path
 
-`scripts/build-image.sh` is the implementation. On an x86_64 host, the
-aarch64 kernel and OTP are built natively by `melange/kernel-cross.yaml`
-and `melange/otp-cross.yaml` (ADR-060); OTP no longer takes the emulated
-configure/make path. Remaining target-environment commands can still use
-binfmt/QEMU. Elixir bytecode is reusable, but factory reuse is valid only
-without target-native NIFs: M27's Emerge dependency needs target-aware
-packaging before the GUI can ship (ADR-066).
+`scripts/build-image.sh` is the implementation. On an x86_64 host, nothing
+for aarch64 compiles under emulation (ADR-060, ADR-094): the kernel, OTP, the
+Emerge renderer NIF and the factory are built natively by
+`melange/{kernel,otp,gui-renderer,factory}-cross.yaml` and staged into
+`prebuilt/`; the aarch64 recipes only install those trees and fail if one is
+missing. Elixir bytecode is reused from the host build. The target
+environments still unpack under binfmt/QEMU, which compiles nothing.
+
+- The renderer cross build uses upstream Rust 1.96.1 plus the aarch64
+  `rust-std` (Alpine's rust has no aarch64 std), Alpine clang21/lld21, host
+  `gn`, and an aarch64 sysroot installed with `apk --root --arch aarch64
+  --no-scripts`. `qemu-aarch64` is registered on this host, so an aarch64
+  program would run silently instead of failing: the recipe asserts every
+  `build-script-build` is x86_64. Skia's zlib needs `linux-headers` in the
+  sysroot (`<asm/hwcap.h>`). Cached run: ~4 min; first run downloads most of
+  rust-skia's dependencies.
+- The factory has no native code; `TARGET_ARCH`/`TARGET_ABI` select the
+  target for RustlerPrecompiled/Emerge, and `FACTORY_SYSTEM_ARCHITECTURE`
+  makes the receipt name the target. ~80 s natively.
+- The aarch64 Eval profile has no cross recipe and is refused.
 
 Each package has an input/checksum stamp, and assembly has its own cache.
 `make image` selects the host architecture; `make images` builds both.
@@ -94,7 +107,7 @@ measurements from the earlier emulated pipeline.
   instead of `--arch`; use `apko build` and take the layer.
 - Keys can be committed: the config's keyring may name a repo-local path
   (`apko/keys/...`), and the lockfile embeds the key material too.
-- Include `alpine-release=3.24.2-r0` in every melange build environment and
+- Include `alpine-release=3.24.3-r0` in every melange build environment and
   the service image, as the factory already does. The package supplies real
   `/etc/os-release`; omitting it makes apko warn about missing release metadata.
   Do not suppress the warning or invent a distro file outside the package
@@ -417,7 +430,7 @@ environment:
       - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
       - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
     packages:
-      - alpine-release=3.24.2-r0
+      - alpine-release=3.24.3-r0
       - alpine-keys
       # The bootstrap ERTS: same version, built by the x86_64 recipe. OTP's
       # cross build runs *this* `erl` to compile the target's Erlang sources.

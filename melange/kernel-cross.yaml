@@ -30,7 +30,7 @@ environment:
       - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
       - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
     packages:
-      - alpine-release=3.24.2-r0
+      - alpine-release=3.24.3-r0
       - bash
       - bc
       - binutils

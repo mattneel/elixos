@@ -1212,7 +1212,7 @@ fallback away.
 
 ## ADR-047: The OMP toolset keeps OMP's contract and runs in a peer node
 
-**Status:** accepted (M21)
+**Status:** withdrawn by ADR-083 (2026-10-13); historical proposal only
 
 **Context.** An agent on the box needs the coding-agent toolset, and prompts
 written for OMP should work unchanged. OMP's tools are TypeScript on Bun.
@@ -1226,7 +1226,6 @@ the heartbeat the shim watches.
   outputs and error behaviour. The pinned OMP is the reference; the pin and
   the inventory live in `os/test/fixtures/omp/inventory.exs`, and moving the
   pin is a note here plus re-recorded fixtures.
-  ADR-071 advances the current scope/pin to the complete 56-ID 18.10.1 surface.
 - The first implementation is OMP's TypeScript in QuickBEAM, inside a peer
   node (`:peer`) that the main VM supervises - never inside the main VM - run
   with `apis: false`, memory limits, reduction limits and per-call timeouts
@@ -1259,7 +1258,7 @@ that isolation, and the measurement M24 starts from.
 
 ## ADR-048: The agent's prompt and tools are generation content
 
-**Status:** accepted (M22)
+**Status:** withdrawn by ADR-083 (2026-10-13); historical proposal only
 
 **Context.** The on-box agent's system prompt and tool selection decide what
 it does. If they lived outside the image, a change to them would be the one
@@ -1280,7 +1279,7 @@ a manifest that says who made it (ADR-049).
 
 ## ADR-049: Self-modification goes through generations only
 
-**Status:** accepted (M23)
+**Status:** withdrawn by ADR-083 (2026-10-13); historical proposal only
 
 **Context.** The agent can change Elixos itself: OS code, its own tools, its
 own prompt. Hot code loading would let such a change reach the running system
@@ -1314,7 +1313,7 @@ costs an attempt, not the machine; factory rescue runs the factory's agent.
 
 ## ADR-050: Native code is promoted on evidence, one hot path at a time
 
-**Status:** accepted (M24)
+**Status:** withdrawn by ADR-083 (2026-10-13); historical proposal only
 
 **Context.** Some toolset paths will be hot, and Zig through Zigler can make
 them faster. A native function also runs inside whichever VM loads it: one
@@ -1723,7 +1722,7 @@ M20 acceptances were re-run against it.
 
 ## ADR-063: The agent arc (M21-M24) is deferred; the list resumes at M25
 
-**Status:** superseded by ADR-071 (human resumed the agent arc)
+**Status:** superseded by ADR-083 (2026-10-13); the arc is withdrawn, not deferred
 
 **Context.** M21 pins the OMP toolset: an inventory taken from
 `@oh-my-pi/pi-coding-agent`, with fixtures that assert our implementation
@@ -2071,50 +2070,6 @@ The shim's `refAllDecls` test now includes both helper modules, strengthening
 lazy-analysis coverage. No shipped acceptance assertion, timeout or vector
 is removed or relaxed.
 
-## ADR-071: Resume the agent arc against a pinned upstream OMP surface
-
-**Status:** accepted (human decision, 2026-10-12)
-
-**Context.** ADR-063 deferred M21–M24 until the human's `clanklet` work
-provided the reference toolset. The human has removed that dependency and
-directed Elixos to port upstream Oh-My-Pi onto Jido Agents and Actions/Tools,
-mechanically: tool by tool, prompt by prompt, skill by skill.
-Safe self-modification does not need to wait for a separate OMP integration.
-
-**Decision.** Resume M21–M24 in order. The new source reference is canonical
-`https://github.com/can1357/oh-my-pi`, coding-agent version **18.10.1** at
-commit **90701813e5fba6919067848989378b4ee6239c13**. An isolated checkout
-under `build/upstream/oh-my-pi` leaves the human's existing repositories
-untouched. Inventory the complete factory and runtime tool surface,
-production prompts and their assembly, and bundled skills plus skill
-discovery/invocation before translating them.
-The complete file/schema/runtime inventory and per-entry Jido targets are in
-`docs/OMP_INVENTORY.md` and `docs/omp-inventory.json`; those distinguish
-source-present capabilities from implementation/parity claims.
-
-Jido owns agent orchestration and the callable Action/Tool interface.
-Preserve upstream names, schemas, conditional availability, result/error
-envelopes, cancellation and session state rather than substituting a smaller
-familiar toolset. Preserve the existing peer isolation and resource-budget
-contracts in ADR-047; a Jido interface is not permission to put unproven
-native code, a JavaScript runtime or arbitrary working-tree modules into
-the main VM. ADR-049's generation-only cutover and ADR-050's measured native
-promotion remain unchanged.
-
-The reference advances from 18.8.7 to 18.10.1 at the recorded canonical
-revision. The first filesystem/core fixtures are actual upstream calls;
-unrecorded tools continue to fail coverage. Expected results never come from
-the Elixos port. The M21 start
-commit removes the deferral tags as ADR-063 already permits and selects M21.
-All acceptance assertions and timeouts remain unchanged.
-The separately tested M25/M26 features and M27 development GUI remain
-implemented while their milestone numbers are above that active test gate.
-
-**Consequences.** No `clanklet` prerequisite remains. Each tool, prompt and
-skill has a revision-pinned source entry and a Jido target; completion still
-requires the original behavioral, recovery and generation acceptance.
-The MIT copyright and permission notices accompany copied upstream material.
-
 ## ADR-072: Hardware-accelerated live_gpui ships in vendor image profiles
 
 **Status:** accepted requirement; implementation pending
@@ -2142,144 +2097,275 @@ Linux (ADR-001); driver availability is a configuration/package concern.
 already-shipped Elixos backend. The AMD and NVIDIA variants are separate
 deliverables, not labels on an unverified generic image.
 
-## ADR-073: Differential fixtures restore input mtimes, not normalized output
+## ADR-083: Elixos is the OS; the bundled OMP port is withdrawn
 
-**Status:** accepted (M21)
+**Status:** accepted (human decision, 2026-10-13)
 
-**Context.** OMP 18.10.1's `glob` ranks matches by modification time before
-applying the result limit (`crates/pi-natives/src/glob.rs:93–97`,
-`packages/coding-agent/src/tools/glob.ts:610–623`). Recreating files without
-their input mtimes changes that order. Recording only one-match workspaces
-would leave newest-first ranking and real truncation untested.
+**Context.** The human rejected the OMP port and the parallel LLM, provider,
+tool-host and agent infrastructure built for it. They will pursue a
+capability-oriented Oh-My-Jido project separately. Leaving M21–M24 deferred
+would retain a commitment they explicitly withdrew.
 
-**Decision.** Fixtures may declare `file_times.workspace` and
-`file_times.session_dir`: initial file paths mapped to whole POSIX seconds.
-The real upstream recorder and the Elixos replay restore these times before
-calling a tool. Every entry must identify an existing initial file. Record
-multi-match and over-limit cases with distinct mtimes.
+**Decision.**
+- Restore the OS source checkpoint `d757f7e` (M27 Ask dialogs and framebuffer
+  handover), preserving the independent HTTPS hostname-verification fix
+  `5398cd9`, GitHub funding metadata, MIT license and README badges.
+- Withdraw M21–M24 and ADR-047 through ADR-050; supersede ADR-063's deferral.
+  Remove their unimplemented `Toolset`, `Coder`, `Candidate`, `Health` and
+  `Native` scaffolds, the OMP inventory, and the five host/four QEMU acceptance
+  suites for that rejected contract. Remove its obsolete deferral filter.
+  This is an explicit scope withdrawal, not weaker tests or a delivered
+  milestone; retained OS tests, vectors and timeouts are not relaxed.
+- Preserve existing Jido agents, Ask, browser, GUI, native toolchains,
+  generation recovery/sealing and OS build fixes. Retain ADR-072's independent
+  AMD/NVIDIA graphics requirement without touching `~/src/live_gpui`. Keep
+  `MILESTONE=27`; the known ARM64 renderer issue still blocks its full gate.
+- Preserve the port's committed history and verified snapshot of tracked,
+  uncommitted and untracked work in a private recovery archive outside
+  `build/`. Do not rewrite Git history or touch other projects or OS caches.
+  The detour's ADR-071 and ADR-073 through ADR-082 remain in archived history;
+  their numbers are not reused. ADR-072 remains an independent OS requirement.
 
-The strict output/error and complete final file-content comparisons remain
-unchanged. No field is dropped, no output is sorted, and no acceptance
-assertion or timeout is weakened. The replay-driver extension is committed
-separately with this decision, as the protected-test rule requires.
+**Consequences.** Oh-My-Jido has no implementation or runtime dependency here.
+M21–M24 stay reserved to preserve later milestone/test identities. The
+rejected acceptance material is retired in its own ADR-carrying commit;
+the OS rollback follows separately. M27 remains unfinished, not reclassified
+as complete by this rollback.
 
-**Consequences.** Ranking and limit boundaries become repeatable input-driven
-behavior, not a race between filesystem timestamp granularity and file
-creation order. Runtime output fidelity is still the acceptance criterion.
+## ADR-084: Source-pinned Oh-My-Jido is an opt-in native factory library
 
-## ADR-074: Pure OMP constructors and wire results retain their real semantics
+**Status:** accepted for the human-approved Candidate/Health and disposable
+T10 factory refresh (2026-10-13); guest acceptance is not yet verified.
 
-**Status:** accepted (M21)
+**Context.** ADR-083 withdrew the OMP port, not the independently maintained
+Oh-My-Jido library. The human subsequently approved this library's real Elixos
+host adapter, isolated Candidate/Health implementation, and an actual no-NIC
+disposable guest healthy/fallback demonstration. The library needs the licensed
+Jido 2.4.0 and ReqLLM 1.28.0 source snapshots with their recorded private-
+diagnostic patches. Substituting the unmodified Hex releases is incorrect.
+Factory, OTP and Elixir modules remain protected from candidate overlays.
 
-**Context.** OMP's schema engine initializes WHATWG URL, File and FormData
-constructors even for a private scratchpad. Enabling QuickBEAM's Node or
-browser API bundle would also grant VM-global environment and unscoped
-effects. QuickBEAM's value conversion maps JavaScript `undefined` members to
-Elixir `nil`, which differs from OMP's JSON wire form.
+**Decision.** Add the canonical `oh_my_jido` Mix project as a pure-BEAM OS
+dependency, with its licensed `vendor/jido` and `vendor/req_llm` source trees.
+The existing OS Jido dependency changes source in place; ReqLLM retains the
+canonical library's transitive path override. These are staged verbatim from
+the separately maintained checkout, not a copied implementation or another
+runtime. `scripts/stage-coding.exs`
+requires a human-selected SHA256 content pin before staging; it records every
+selected source byte, including both upstream inventories, local notices,
+licenses, fixture source, and lockfiles. Source symlinks and generated build
+trees are not accepted as package inputs.
 
-**Decision.** Bundle the real in-memory constructors: **core-js-pure 3.50.0**
-(MIT, integrity recorded in `os/priv/toolset/core-source.json`) supplies URL;
-the pinned QuickBEAM 0.11.3 source supplies File and FormData. This is an
-explicit additional runtime source dependency, not a grant of Node, Bun,
-network or filesystem APIs. Ship their copyright and permission notices.
-Serialize each original result/error envelope once with `JSON.stringify`
-inside the peer, then decode it in Elixir. This preserves legitimate nulls
-and naturally omits undefined properties exactly like the reference recorder;
-it does not filter, rewrite or manufacture tool output.
+The factory builds all code with its installed OTP 29.1.1 and Elixir 1.20.4.
+The real `examples/elixos` adapter is compiled as an ordinary Mix application
+against the full `os/` project, sharing that build and lock. Its independent
+host-test `host_source/` application is never used in the factory. The adapter
+is installed in the ordinary `/factory/lib/elixos_host-0.1.0/{ebin,priv}` layout.
+It is not an OS startup callback and does not replace existing services.
+The library application starts no runtime/session implicitly; the human
+explicitly starts the example under the existing package service supervisor.
+This avoids an OS-to-adapter-to-OS dependency cycle.
 
-The complete Todo state machine remains upstream code. OXC extracts only
-the unrelated `/todo` filesystem-path helper and its import from that pure
-bundle, by AST declaration spans; source digests and exclusions are recorded.
-The original helper remains in the pinned reference for the command surface.
-Todo state belongs to its session context; persistence belongs to the owning
-session lifecycle. Raw malformed arguments reach upstream validation without
-Jido key conversion or retries.
+`/factory/coding/source.json` and `beams.json` bind the selected canonical and
+copied OS/test/vector/assembly sources, resolved lock, compiler/runtime
+identity, application metadata, emitted BEAM bytes and preserved redistribution
+notices. Application notices use native `priv/licenses` directories.
+Dependency resolution must leave the committed OS lock unchanged; native image
+assembly regenerates its apko lock against the resulting factory APK.
+The portable system tests, fixture/vector inputs, Mix and ExUnit remain factory
+assets; validation copies them into private evidence workspaces. Candidate and
+Health keep using direct, non-distributed child ERTS workers and bounded JSON,
+not unrestricted RPC, peers, hot-loading frameworks or a custom VM build.
 
-**Consequences.** All 44 recorded Todo outcomes and three Think outcomes
-match through the real peer and Jido boundary, including Unicode, lenient
-repair, failed-operation atomicity and the large payload. These are two
-ported tools, not evidence that the remaining M21 toolset is delivered.
+The no-NIC T10 scenario uses actual public library sessions and tools under
+the real host adapter. It performs deterministic read/edit/build/test/propose
+operations, not a fabricated model response or browser service. Build, test
+and proposal each retain the existing Ask consent boundary. NEXT is not a
+promotion acknowledgment. A human separately reboots; only normal boot's
+verified Health and AutoCommit may send COMMIT. A deliberate fallback uses
+an approved, non-protected user module's boot-MFA exception, never corrupt
+bytes, protected-module replacement, un-sticking, or host-root helpers.
 
-## ADR-075: Peer-only engines are absent from main-VM application discovery
+**Alternatives.** A separate coding VM/transport, vendoring another fork into
+Elixos, rebuilding ERTS, changing dependency source at runtime, bypassing
+protected-module checks, and treating host fixtures as a guest gate are
+rejected. Shipping optional QuickBEAM or Python/Snakepit solely for this
+scenario would add native/runtime closure unrelated to the approved T10
+effects; they are not selected as OS core dependencies.
 
-**Status:** accepted (M21)
+**Consequences.** This is a new OS runtime dependency, explicitly authorized
+by this ADR. Its closure is resolved once with the OS lock; existing OS
+services keep their native behavior. New source bytes require a new explicit
+pin and factory rebuild. The target-native F05/T9 QuickBEAM and Python backend
+packaging/acceptance requirements remain open; T10 does not waive or satisfy
+them. No source, host test, receipt, or NEXT write claims the guest gate green:
+the actual disposable-disk boot/health/seal/fallback transcript is required.
 
-**Context.** Jido 2.4.0 discovery enumerates loaded application specifications
-and calls `Code.ensure_loaded?/1` on their modules. Leaving QuickBEAM and OXC
-stopped is insufficient: discovery still loads their NIFs in the main VM.
-This occurred in a real multi-case Jido smoke run.
+## ADR-085: Normal Live boots keep all writable state in RAM
 
-**Decision.** Ship both engine applications with release mode `:none`, not
-`:load`. Before application startup, `config/runtime.exs` removes dependency
-specifications that Mix loaded for host runs. An already-active engine is a
-startup error, not something stopped or silently purged. The supervised
-peer alone loads and starts the engines. Do not fork Jido or disable its
-otherwise useful discovery.
+**Status:** accepted (2026-10-15).
 
-`apis: false` also leaves QuickBEAM's default Beam callbacks present.
-The tool host denies those unscoped RPC/spawn and other default callbacks;
-only explicitly session-bound effect handlers may be registered.
+**Context.** The first real laptop boot reached IEx in diskless rescue mode.
+The human wants the normal OS services without an installer, automatic SSD
+mounts, partition changes or formatting. Manual mounts and save/restore are
+separate work; native recording is deferred.
 
-**Consequences.** A real discovery refresh and the 47-case tool smoke leave
-both main-VM NIFs unloaded; actual tool execution still uses QuickBEAM in the
-peer. Production release/image acceptance remains required for M21.
+**Decision.** Add `elixos.live[=1|0]`, default off. Live keeps `/priv` on the
+RAM-backed initramfs root and never calls the physical data-device mount or
+wait path, even when `elixos.data` or `elixos.safe` is also present. Existing
+`normal|rescue` launch values, uid boundaries, sealing, recovery accounting
+and shim-panic handoff remain unchanged. Safe still selects rescue.
 
-## ADR-076: Malformed fixture input preserves OMP's in-band error results
+The Live packer extends a pristine packaged initramfs with a second gzip/newc
+archive containing the existing service SquashFS and toolchain APK payload.
+It accepts only the pristine account-home directories under `/priv`, not a
+captured session. It normalizes PostgreSQL's parent to root ownership before
+the unchanged service-directory checks; no privileged check is relaxed.
+Neither another tmpfs mount nor a boot-time tree copy hides these seeds.
 
-**Status:** accepted correction to the protected M21 replay contract
+`build-uefi-image.sh --live` embeds that archive and hard-locks the panel
+console and Live command line with `CONFIG_CMDLINE_OVERRIDE`. x86_64 kernel
+RAID autodetection is disabled so an existing array is not activated before
+PID 1 selects storage. The framebuffer GUI is opt-in in Live, preserving
+the only local IEx keyboard and screen.
 
-**Context.** The original replay driver assumed malformed arguments always
-throw and that every recorded argument value is an object. Actual OMP
-18.10.1 Todo sets `lenientArgValidation`: malformed object and array inputs
-reach `execute`, which can return an `AgentToolResult` with `isError: true`
-instead of throwing. Recording a synthetic exception would change the API.
+**Consequences.** The full toolchain costs RAM and image size; this profile
+is exercised with 4 GiB guest RAM. `Elixos.save/1`, files, database rows,
+installed packages and keys remain in RAM and disappear on a kernel reboot
+or power loss. This is not durable persistence or a BEAM heap snapshot.
+The Nerves immutable-firmware/separate-application-data model is the storage
+precedent, not its automatic application-partition formatting behavior.
+No Nerves runtime, recorder, new mount service or parallel application
+runtime is added. Docker, Firecracker, Fly deployment and the public SDK
+are subsequent, separately verified targets.
 
-**Decision.** Recorded inputs may be any JSON value. Nominal cases must
-return a non-error result; malformed cases must either throw a recorded
-kind/message or return the original `isError: true` result. Replay still
-compares the entire outcome exactly, including error text, flags and details,
-plus complete final file effects. The session-file input is restored before
-construction; recorded Todo state is checked after replay using its pure
-view operation. No timeout or output assertion is loosened.
+## ADR-086: Docker distributes a real Live VM, not another userland port
 
-Commit this driver correction separately with its real-reference fixtures
-and this ADR, and call it out in the delivery summary. Missing tools still
-fail coverage. Fixture recorders retain existing cases instead of deleting
-acceptance evidence when a recorder case is removed.
+**Status:** superseded by ADR-091 (2026-10-15). Historical VM proof only;
+the Docker/QEMU wrapper is removed and is not a deployment recommendation.
 
-**Consequences.** The suite checks actual upstream failure semantics rather
-than requiring the port to turn valid error results into invented exceptions.
+**Decision.** Package upstream QEMU on Alpine 3.24.2 with the existing
+x86_64 kernel and RAM-backed Live initramfs. The Docker build sees only its
+launcher and the two boot artifacts, not repository sources or credentials.
+The entrypoint execs QEMU so Docker signals reach the owned VMM directly.
 
-## ADR-077: Reuse OMP's portable Rust effect engines without the Bun addon
+Guest PID 1 remains the Zig shim and the guest runs its own pinned Linux
+kernel. Defaults are serial IEx, 4 GiB RAM, two CPUs and user-mode DHCP
+networking. No host disk, host networking, host PID namespace, privileged
+container, GUI or listening management socket is required.
+`QEMU_ACCEL=kvm` fails without KVM; `tcg` explicitly selects emulation;
+`auto` reports its initialization/fallback choice.
 
-**Status:** accepted implementation boundary (M21); image integration pending
+**Verification.** Two fresh Docker Desktop guests under forced KVM booted
+normal Elixos, reported Linux 7.2.9 and init as PID 1, obtained DHCP
+addresses and answered PostgreSQL queries. The same two-boot scenario passed
+under explicit TCG without host devices. File/database changes vanished on
+the next guest boot. This is not cloud deployment, a production jailer,
+or a claim that Fly accepts arbitrary guest kernels.
 
-**Context.** The pinned OMP native addon couples portable engines to N-API and
-the Bun host. Rewriting its walker, ignore/glob policy or shell interpreter
-would establish a second implementation of the algorithms being ported.
-Elixos already packages a Rust toolchain (ADR-066).
+## ADR-087: Firecracker reuses the packaged kernel and RAM Live root
 
-**Decision.** `toolhost/` uses the unchanged pinned `pi-walker`, `pi-vfs` and
-`pi-shell` crates, plus their real vendored brush interpreter/parser.
-The helper's JSON-lines transport replaces N-API, not the engines. Its
-Cargo lock and **nightly-2026-10-06** compiler pin are explicit; the copied
-transport-boundary code retains upstream's MIT notice. It is a direct
-executable effect handler, never a NIF in the main VM or a Bun host fallback.
-Bound each session's Tokio runtime rather than creating one worker per host
-CPU. Keep model-facing formatting/validation in the original pure tool core.
+**Status:** accepted (2026-10-15).
 
-These source dependencies extend ADR-047's Elixir/Zig effect options with a
-source-preserving Rust implementation. Native provider transport, caller
-confinement, cancellation/ownership, architecture packaging and full tool
-differential acceptance remain required before exposing the complete tools.
-An unregistered URL filesystem is rejected, not silently treated as local.
+**Decision.** Pin upstream Firecracker 1.17.0 and its published archive
+SHA256, install it locally under `build/`, and launch it with the existing
+x86_64 `bzImage` and Live initramfs. Upstream added bzImage support in this
+release; no kernel patch, alternate kernel build or copied OS is necessary.
+The launcher supplies explicit empty drives, serial console and RAM Live
+configuration, requires KVM, exposes no API socket, and forwards termination
+to its owned VMM. It changes no host routes, firewall, disk or TAP devices.
 
-**Consequences.** Eight real native-glob outcomes and four real shell
-outcomes match the pinned addon in independent roots, including retained
-exports, pipelines, errors, timeout and one append effect. An `execve`
-trace shows the helper invoking `/usr/bin/printf` directly; no `/bin/sh`
-launcher is involved. This is effect-engine verification, not an M21
-delivery claim or an M24 promotion/benchmark result.
+**Verification.** Two Firecracker KVM boots reached normal IEx, reported
+Linux 7.2.9/init, queried PostgreSQL and lost a file/database row on the next
+launch. Guest reboot cleanly shut down services and ended the owned VMM.
+This verifies serial and loopback operation only, not external networking,
+PCIe passthrough, production isolation or a hosted Fly deployment. Production
+uses the upstream jailer and an explicitly provisioned network/storage policy.
+
+**Source:** [Firecracker 1.17.0 release](https://github.com/firecracker-microvm/firecracker/releases/tag/v1.17.0).
+
+## ADR-088: The application SDK packages source; the real OS compiles it
+
+**Status:** accepted (2026-10-15).
+
+**Decision.** Use an ordinary dependency-free Mix archive, `elixos_sdk`,
+for project generation and target-effective Hex source packaging. Keep
+`MIX_TARGET=elixos` separate from dev/test/prod. The human selected native
+compilation inside Elixos, not a host cross-SDK, copied OS or fake API.
+`elixos: os()` is an ordinary Mix project helper returning the existing
+services/oban/persist/min_os/boot schema.
+
+Packaging evaluates a fresh prod/Elixos project and filters both dependency
+environment and target. It never fetches or compiles target applications.
+Native contracts retain a required versioned `:elixos` requirement; portable
+libraries need none. Existing Hex tarballs, RSA-signed static registries and
+explicit public-key trust remain the distribution protocol. Build-time
+config must remain host-evaluable; runtime OS calls belong in native code.
+No new guest dependency or application runtime is introduced.
+
+The installer checks real target app identity, OS requirements and the
+system-wide dependency plan before compilation/replacement. A clean child
+ERTS sees real OS/Mix/installed ebins but does not start another OS
+application. Its exact target output is verified; an externally changed
+version refreshes only a stale application resource, not all native code.
+The native SCM binds `:elixos` to the executing OS's own resource, including
+when a source project supplies an alternate path.
+
+State lives under `/priv/data/<app>`, not replaceable app code. Relative
+persist directories reject traversal and symlink components; reinstall,
+upgrade and removal retain state. One journal record carries full spec,
+actual requirements and target config. Ordinary v1 generation preparation
+MFAs restore metadata before scheduler/services; historical journal tuples
+and generation files remain readable. Explicit installs start declarations;
+saved boots start only automatic services/queues, not manual ones.
+
+**Failure policy.** A boot MFA returning `{:error, reason}` stops boot before
+later actions, as a throw/exception does; a refused service is not a healthy
+half-started generation. Existing boot deadlines and shim recovery policy
+are unchanged. Durable application decoders must load their own schema
+before safe ETF decoding on a fresh VM; service-only restarts do not prove
+cold-boot recovery.
+
+**Consequences.** Host tests remain useful without an OS facade. Native code,
+shared dependencies, configuration and data must also be exercised in a
+real guest/device. `persist` is filesystem policy, not manual Live export:
+all Live state still disappears on kernel reboot. This does not add disk
+formatting, automatic mounting, terminal recording or Fly persistence.
+
+## ADR-089: Fly runs the packaged application as a nested guest
+
+**Status:** superseded by ADR-091 (2026-10-15). The authorized historical
+trial is recorded below; nested-QEMU Fly deployment is withdrawn.
+
+**Decision.** Use Fly's documented OCI image path, retaining its own Machine
+boot boundary. The container runs QEMU TCG with the actual Elixos kernel,
+Zig PID 1, BEAM and natively installed SDK application. This is not a claim
+that Fly's Machines API accepts an arbitrary kernel/initrd or nested KVM.
+
+Build in the full real OS first; a separate deployment disk may omit its
+build toolchain while retaining installed runtime code, saved metadata,
+application data and normal services. The verified full SDK/Live image is
+unchanged. Every attached guest disk is an explicit baked regular file,
+never a discovered host device. Container-layer writes are ephemeral, not
+Fly persistence.
+
+**Verification.** A single isolated personal-org Machine in `iad`, with
+4096 MiB RAM and two shared CPUs, booted a 2048 MiB Elixos guest. Its SDK
+client reported Linux 7.2.9/init, normal mode, real OS/data-directory APIs,
+prod/Elixos config, restored counter 7 and measurement mean 21.75. No
+public service or Volume was configured. The trial manifest, scoped token,
+app and Machine were removed; temporary credentials were deleted.
+
+**Limits.** TCG is slow. Public ingress, durable Fly storage/recovery and
+health promotion are unverified. Registry transfer used a short-lived
+app-scoped token; the current account capped Machines at 4096 MiB.
+The temporary verifier initially mishandled Fly's multi-line JSON logs;
+correct decoding of the already captured event proved the boot without
+redeployment. The failed driver result was preserved rather than rewritten
+as success.
+
+**Sources:** [Fly image registry/deployment](https://docs.fly.io/blueprints/using-the-fly-docker-registry/),
+[scoped access tokens](https://docs.fly.io/security/tokens/).
 
 ## ADR-090: Verify Cargo with a real build instead of an environment echo
 
@@ -2300,3 +2386,278 @@ writes the computed result there, and verify the VM's cwd and environment
 remain unchanged. Compiler, linker, execution and session-path failures must
 fail that scenario. No health check is skipped, loosened or given a larger
 deadline; the default health gate remains mandatory for image export.
+
+## ADR-091: Native OCI shares the provider kernel and reuses the real OS
+
+**Status:** accepted (2026-10-15), following the human's rejection of VM wrappers.
+
+**Decision.** Remove QEMU-in-Docker and nested-QEMU Fly deployment. An OCI
+image is the native Elixos userland on the runtime/provider's Linux kernel,
+not a claim that Docker boots the packaged kernel or that Fly accepts an
+arbitrary customer kernel. Bare-metal EFI/Live and direct KVM Firecracker
+retain the existing machine profile and packaged kernel.
+
+Compile explicit OCI boundaries into the existing Zig shim. Keep the same
+BEAM application, PostgreSQL, Oban, package/generation machinery, control
+protocol, helper identities and health gate. Support namespace PID 1 and a
+provider init's child through subreaping. Validate explicit image/runtime
+markers and procfs; refuse initial-namespace PID 1 without exiting it.
+Native shutdown signals only owned children and exits the supervisor:
+poweroff/halt/SIGTERM mean 0; reboot means 75 for orchestrator restart.
+No native mount/unmount, host-network setup, kernel reboot or global kill.
+
+Bake the service tree read-only, add immutable `/toolchain` only to the SDK,
+and require runtime-supplied writable `/priv`. Default headless; explicit
+console and rescue switches are environment policy, never host cmdline.
+Forward ordinary runtime application environment while replacing reserved
+launch values and excluding ERTS/loader overrides. No VM cwd or environment
+mutation is introduced.
+
+`mix elixos.image` source-packages on the host, installs/compiles natively,
+saves, cold-restores and requires the ordinary default health gate and shim
+commit before exporting verified deployment metadata/code. The runtime image
+contains a read-only seed, not a cloned writable disk or database. Seed only
+a pristine volume, with an interruption marker and `boot.state` published
+last. Existing state always wins. App data and runtime secrets are supplied
+separately; unknown secrets embedded in app code/config remain the author's
+responsibility.
+
+Factory repository presets are imported explicitly during application
+initialization, not as a side effect of reading an empty trust store.
+`/priv/hex/repos.exs` remains the complete trust decision. Native CLI paths
+include `/usr/local/bin` so the packaged Elixir/OTP tools actually execute.
+PostgreSQL treats both `ENOENT` and `ESRCH` procfs races as process
+disappearance while still requiring real SQL readiness.
+
+**Deployment limits.** A matching-architecture OCI daemon/host is required;
+there is no implicit emulator. Hardware GUI, physical mounts and network
+administration belong to machine deployments. Fly owns its Machine kernel
+and init; `/priv` uses an explicit per-Machine Fly Volume. A single local
+volume is not replicated or highly available; backups, migrations, resource
+limits, application ingress/readiness and restart policy remain explicit.
+The public guides record exercised proof separately from these contracts.
+
+**Sources:** [Fly application/lifecycle configuration](https://docs.fly.io/reference/configuration/),
+[Fly Volume durability and redundancy](https://docs.fly.io/volumes/overview/).
+
+## ADR-092: Eval is an explicitly selected native factory profile
+
+**Status:** accepted for source implementation under the human's optional Eval
+packaging approval (2026-10-16). Both target builds and guest acceptance remain
+unverified until their actual receipts and serial transcripts exist.
+
+**Decision.** Keep the ADR-084 default factory pure BEAM. The separate
+`ELIXOS_EVAL_PROFILE=1` image profile selects `elixos-factory-eval` and
+`elixos-coding-eval-python`, never an installer or an OS startup callback.
+It uses the image's OTP 29.1.1/Elixir 1.20.4, target musl, QuickBEAM 0.11.3's
+published checksummed native artifacts, and the canonical MIT-licensed
+Snakepit 0.14.0 private-diagnostics source snapshot. These are new optional
+runtime package dependencies authorized only in this profile.
+
+The factory builds the same OS sources through native Mix post-configuration:
+optional direct dependencies and release `:load` applications are selected
+before compilation. In particular Oh-My-Jido's Python adapter must compile
+with Snakepit present; grafting a Python app onto a previously compiled
+pure-BEAM factory is not equivalent. A separate merged lock keeps every OS
+pin authoritative and adds only previously absent canonical lock entries.
+Neither checkout nor committed lock is rewritten.
+
+QuickBEAM's transitive OXC 0.19.0 lacks complete musl precompiled coverage
+(no aarch64 parser, and neither musl formatter/linter). Build its actual
+upstream Rust NIF crates with the OS-pinned Rustler 0.38.0 and Alpine's
+target-native Cargo toolchain, retaining Cargo.lock. This is a build-time
+toolchain, not a Rust helper process or another agent/runtime framework.
+For aarch64, native target melange execution may use an explicitly configured
+binfmt/QEMU build runner; never transplant x86_64 native artifacts.
+
+Python uses the pinned Alpine 3.14 system interpreter and a package-created,
+read-only venv. Its grpcio, protobuf, numpy and typing-extensions wheels are
+explicit upstream URL/SHA256 pins for CPython 3.14 and musllinux 1.2.
+The package copies the canonical Snakepit SDK and its already generated gRPC
+stubs unchanged. grpcio-tools, pytest and showcase/telemetry extras are not
+needed by the Eval adapter's actual import closure; no protoc regeneration,
+pip, uv, setup, dependency fetching or global environment mutation runs in
+the guest. Worker-local PYTHONPATH remains Oh-My-Jido's existing adapter
+contract; interpreter site-packages supplies the pinned binary wheels.
+
+The shared packaging pipeline records actual emitted BEAM/native/source
+bytes, ELF machine/libc, resolved native dependency links, and the target
+ERTS's exported NIF symbols. Missing/empty artifacts, unresolved links,
+foreign-machine ELF, wrong OTP/Python, changed locks or absent licensed
+source provenance fail the build. No target digest is pre-invented.
+The explicit IEx frontend starts only native OTP prerequisites and a
+host-configured Oh-My-Jido runtime. Elixir/JavaScript run in its JSON-only,
+non-distributed separate ERTS; Python remains exclusively Snakepit-managed.
+All are trusted-code crash separation, not a security sandbox.
+
+**Operations.** Optional builds require a separate `ELIXOS_BUILD` directory;
+their apko locks and image outputs are separate from the default profile.
+No packaging entrypoint creates, rewrites or discovers a disk image.
+The packaged finite opt-in smoke runs real two-cell state, granted/denied
+Jido tool calls, errors/output quotas, timeout/reset, cancellation, actual
+worker termination, host survival and process cleanup for all three
+backends. Only that guest run produces a smoke receipt; package assembly
+does not claim F05/E01–E07 or either architecture verified.
+
+## ADR-093: Oh-My-Jido approvals replace the Ask queue
+
+**Status:** accepted (2026-10-22), decided by the human. Supersedes the M20
+Ask milestone (ADR-059, ADR-061) and the Ask-dialog parts of M27.
+
+**Problem.** Elixos had two human-in-the-loop systems. `Elixos.Ask` was proposed
+before Oh-My-Jido was part of the plan. Oh-My-Jido's managed sessions already
+pause an effect or clarification, carry its context (session, run, capability,
+effect) and fail closed. A separate OS queue strips that context.
+
+**Decision.** Delete `Elixos.Ask`, its Jido action, its console notice and its
+tests. Oh-My-Jido approvals and questions are the only human-in-the-loop
+mechanism. Anything that asked through Ask asks through an Oh-My-Jido session.
+Retire M20 and its acceptance (`ask_test.exs`, `m20_ask_test.exs`) and the
+M27 subscription test. The `elixos-ask:` console line is removed from
+PROTOCOL.md §6. Retired tests were added after the scaffold baseline, so
+`make audit` reports no deletions.
+
+**Detached agents.** The library covers waiting: a session belongs to its
+runtime, not to the REPL that started it, so agents started in the background,
+from an Oban job, or resumed after a reboot ask the same way. A question waits
+up to `question_timeout_ms` and then fails closed; cancellation, session exit
+and non-approving answers deny; restored sessions never revive old questions
+(Oh-My-Jido's sessions-and-recovery contract). It does not provide one place to
+find questions across sessions. Elixos adds that:
+
+- `Elixos.Approvals.Host`, the OS's `OhMyJido.Host`, delegates policy to
+  `OhMyJido.Host.Local` and leaves every question pending while registering it.
+- `Elixos.Approvals` indexes every open question of those sessions under a
+  small OS-local number, from the session's own event stream, and drops it when
+  Oh-My-Jido reports it answered, withdrawn or expired, or the session exits.
+- The boot tree starts it and the OS's `Elixos.Coding` runtime (file-backed
+  checkpoints under `/priv/coding/sessions`, one-hour question timeout) as a
+  non-critical service; rescue starts neither.
+- Any login IEx or SSH session has `approvals/0`, `approve/1`, `deny/1` and
+  `answer/2`. Answers go through `OhMyJido.answer/3` unchanged; nothing in the
+  OS answers on its own.
+
+**GUI.** The framebuffer GUI never starts at boot; Elixos boots to `iex(1)>`.
+It is an optional front-end for these requests opened with
+`Elixos.GUI.start/0`, which refuses to take the screen when nothing is
+pending. Escape or F12 hands the screen back, as does the last request being
+resolved. Escape no longer dismisses: denial is an explicit "no". The M27
+acceptance is rewritten for this behavior.
+
+**Escape hatch.** Approvals decide what an agent may do. The unprivileged
+BEAM, the shim's helper allow-list and sealed commits decide what it cannot do
+even after an approval; none of them changes.
+
+**Consequences.** M15 Jido agents that are not Oh-My-Jido sessions no longer
+have an OS ask action; they ask by running work in a session. The OS-local
+index is in memory: after a reboot it is empty because Oh-My-Jido revived
+nothing to answer. Oh-My-Jido's bundled `examples/elixos` host, which called
+`Elixos.Ask`, lives in that separate project and must move to approvals there.
+
+## ADR-094: No compiler runs under emulation
+
+**Status:** accepted (2026-10-22), decided by the human. Extends ADR-060.
+
+**Context.** ADR-060 cross-built the arm64 kernel and ERTS but left two
+packages compiling inside the emulated aarch64 melange environment: the Emerge
+renderer (Rust and Skia, hours under qemu-user) and the factory (every Elixir
+compiler process emulated). The human's rule: cross compile everything.
+
+**Decision.** Every package that compiles anything for a foreign
+architecture builds in the build host's native environment and is staged
+through `cross_build`/`stage_prebuilt`; the target-architecture recipe only
+installs the staged tree and fails if it is missing, instead of falling back
+to an emulated compile.
+
+* `melange/gui-renderer-cross.yaml` builds the Emerge NIF with a pinned Rust
+  toolchain plus the target's `rust-std`, Alpine clang/lld and an aarch64
+  sysroot from Alpine's own packages (the `otp-cross.yaml` pattern), and ships
+  its private ELF closure resolved against that sysroot.
+* `melange/factory-cross.yaml` runs the same `scripts/package-factory.sh` on
+  the native OTP/Elixir with `FACTORY_ARCH`/`TARGET_ARCH` set for the target
+  (the Nerves convention RustlerPrecompiled and Emerge read). The factory has
+  no native code; its receipt records the target's `system_architecture`
+  (`FACTORY_SYSTEM_ARCHITECTURE`), not the build host's.
+* The aarch64 Eval profile (ADR-092) builds Rust NIFs and has no cross recipe
+  yet; `build-image.sh` refuses it on aarch64 rather than emulate.
+
+Packages that only download and repack (browser, toolchain) or already run a
+host-architecture compiler (shim via `ELIXOS_ZIG_HOST_ARCH`) are unchanged;
+their target environment still unpacks under emulation, which compiles
+nothing.
+
+**Consequences.** An aarch64 image needs the x86_64 OTP and Elixir APKs first
+(already true for `otp-cross`). The riscv64 port (M28) follows the same rule
+from the start: kernel, ERTS (interpreter, no JIT), renderer and factory are
+all host cross builds.
+
+## ADR-095: AutoCommit uses a boot gate; the full suites gate candidates and export
+
+**Status:** accepted (2026-10-23).
+
+**Context.** AutoCommit's default gate had become the full `Elixos.Health`
+run: the portable system suite and the tool smoke suite in child ERTS
+workers, on every boot. In the 1 GiB QEMU guest the initramfs root holds
+~420 MiB and the login BEAM ~125 MiB; a suite child grows past what is left
+(the whole suite peaks near 770 MiB with `+S 2:2`), the OOM killer took it and
+no generation was ever committed. Even at 2 GiB the suites do not finish in
+the commit windows the M05, M06 and M17 acceptance tests require (a commit
+within 60 s of `elixos.commit_after=2`). Those tests are the contract.
+
+**Decision.** `Elixos.Health.boot/0` is AutoCommit's default: liveness, the
+running-generation identity check (each loaded module's MD5 equals its
+SHA256-verified store BEAM), and for a generation that came from
+`Elixos.Candidate.propose/1`, that its candidate is unchanged and its recorded
+suites passed (`Candidate.proposal_validated/1`). The suites already ran
+before NEXT was written. `Elixos.Health.run/0` keeps the full suite gate, and
+image export and explicit checks still require it. `:elixos, :health_checks`
+overrides both gates as before.
+
+The identity check had never passed for any saved module: it matched
+`:beam_lib.md5/1`'s result as a list. That is fixed and covered by
+`test/elixos/running_generation_test.exs`.
+
+**Consequences.** A prompt `Elixos.save/1` is committed on liveness and code
+identity, as before the suite gate. Running the full suites on a booted
+generation is explicit: `Elixos.Health.run/0` or `run_generation/1`.
+
+## ADR-096: Acceptance changes for the retained candidate gates, the SDK and native OCI
+
+**Status:** accepted (2026-10-23).
+
+**Context.** ADR-083 withdrew the agent arc but kept its generation
+machinery: candidate builds in child ERTS workers, health gates, retained
+evidence and generation provenance (ARCHITECTURE §4.5, TESTING "Candidate and
+Health host gates"). ADR-049 described that machinery and is withdrawn with
+the arc, so the shipped tests it changed have no accepted ADR. Each change
+below follows an interface change; none weakens an assertion.
+
+**Decision.** These protected tests change, in their own commit:
+
+* `test/elixos/boot/auto_commit_test.exs` - AutoCommit records each check under
+  an evidence directory, so the test gives it a temporary one
+  (`:evidence_dir`); a commit callback must return `:ok`, because a
+  control-write failure is now retained as failure (ADR-095), so the stub
+  returns `:ok` instead of the message it sent.
+* `test/elixos/image/generation_test.exs` - adds a case: the version-one
+  manifest's optional `provenance` round-trips and legacy manifests read `nil`.
+* `test/elixos/package/mix_target_test.exs` - tagged `:host_orchestration`: it
+  starts a second Mix build, which candidate suite children exclude so a
+  validation never recursively builds itself.
+* `test/elixos/package/spec_test.exs` - `Spec.read_project/1` returns the app,
+  version, dependencies and spec together (ADR-088); it runs `async: false`
+  because reading a project takes Mix's global project lock.
+* `shim/src/main.zig` `refAllDecls` - adds `container` and `seed` (ADR-091),
+  so the native OCI modules are analysed by the Zig unit tests.
+* `test/elixos/candidate_test.exs` - Elixir 1.20's compiler never loads the
+  modules it compiles, so a candidate's `@on_load` first runs when a suite
+  child loads its beams. The origin-frame and counterfeit-receipt attacks are
+  asserted at that phase (the suite output, and `:invalid_child_receipt` for
+  both suites with no proposal), not at build. The OS checkout test now builds
+  for real because candidate children receive the Oh-My-Jido source location
+  and link dependencies into Mix's per-environment build path.
+* `test/elixos/coding_factory_test.exs` - a `mix.lock` evaluates to atom keys;
+  the identity comparison now names apps as strings on both sides.
+
+**Consequences.** `make audit` covers these files through the commit that
+names this ADR.

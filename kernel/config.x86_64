@@ -2,7 +2,7 @@
 #
 # Applied over x86_64_defconfig + kvm_guest.config, on top of the common
 # fragment (kernel/elixos.config); the guard checks all three files together.
-# Everything here is a symbol arm64 does not have (or spells differently).
+# Architecture-only symbols and defaults that differ from arm64's defconfig.
 
 # --- guest niceties, x86 only: the KVM guest bits are x86 symbols ---
 CONFIG_HYPERVISOR_GUEST=y
@@ -14,3 +14,8 @@ CONFIG_SERIAL_8250_CONSOLE=y
 
 # --- QEMU's -watchdog device is the i6300esb, an x86 PCI part ---
 CONFIG_I6300ESB_WDT=y
+
+# --- only userspace may select storage; never auto-assemble physical RAID ---
+# x86_64_defconfig builds MD in; arm64's MD is an unloaded module.
+# Live must not activate an existing SSD array before PID 1 can skip storage.
+# CONFIG_MD_AUTODETECT is not set

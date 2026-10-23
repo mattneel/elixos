@@ -2,7 +2,7 @@
   "version": "v1",
   "config": {
     "name": "/home/autark/src/elixos/apko/system.yaml",
-    "checksum": "sha256-wLJLec0rQIXUyzHtpXgU9d/QDlgLKWxuBjn8kII0Pho="
+    "checksum": "sha256-BBWsPMpjpCoGbdjXznW1NiIEZ9JtWRXUqCslpAkcF3s="
   },
   "contents": {
     "keyring": [
@@ -58,22 +58,22 @@
       },
       {
         "name": "alpine-release",
-        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/alpine-release-3.24.2-r0.apk",
-        "version": "3.24.2-r0",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/alpine-release-3.24.3-r0.apk",
+        "version": "3.24.3-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-722",
-          "checksum": "sha1-7yFxKIi1DZC/z5FByU6hjuKPmHg="
+          "range": "bytes=0-717",
+          "checksum": "sha1-8fWWWhDHIfmDULVjJMKVho3ksWI="
         },
         "control": {
-          "range": "bytes=723-1211",
-          "checksum": "sha1-tH9vSL07Dtx6XeOS8n1bskUv+1M="
+          "range": "bytes=718-1202",
+          "checksum": "sha1-vLeR64tqL6geAGmf21410czPK/I="
         },
         "data": {
-          "range": "bytes=1212-2079",
-          "checksum": "sha256-aSzrU6l+LeW8i5YxjfP9wM7WGFRV0yI7jMVtbF/yABQ="
+          "range": "bytes=1203-2070",
+          "checksum": "sha256-kCV/fIyqDfL3swDaOX0dhBO56+XLrt4uEJMyaxs5kaA="
         },
-        "checksum": "Q1tH9vSL07Dtx6XeOS8n1bskUv+1M="
+        "checksum": "Q1vLeR64tqL6geAGmf21410czPK/I="
       },
       {
         "name": "elixos-browser",
@@ -81,37 +81,56 @@
         "version": "1.0.0-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-688",
-          "checksum": "sha1-ZZhBhNfGcuonN1GZUHt2c2cBT1c="
+          "range": "bytes=0-685",
+          "checksum": "sha1-J6yaZJUL98beB4DPjQw5vTCs+Hk="
         },
         "control": {
-          "range": "bytes=689-2741",
-          "checksum": "sha1-lelXWAwRRaK0TRjmPtl6HxwUu7s="
+          "range": "bytes=686-2744",
+          "checksum": "sha1-SzQy83Xsns0s+ulljLz3ffy3TpQ="
         },
         "data": {
-          "range": "bytes=2742-29438408",
-          "checksum": "sha256-cn5WDdoOr8zZANP/Mlm/jkO9hoAripBREMnPtDxRruM="
+          "range": "bytes=2745-29438408",
+          "checksum": "sha256-SjSYDwB1802A+WEPbMKQhOZGmidKgByv+0dsXVT+DdY="
         },
-        "checksum": "Q1lelXWAwRRaK0TRjmPtl6HxwUu7s="
+        "checksum": "Q1SzQy83Xsns0s+ulljLz3ffy3TpQ="
+      },
+      {
+        "name": "elixos-gui-renderer",
+        "url": "/home/autark/src/elixos/build/apk/aarch64/aarch64/elixos-gui-renderer-0.4.2-r0.apk",
+        "version": "0.4.2-r0",
+        "architecture": "aarch64",
+        "signature": {
+          "range": "bytes=0-687",
+          "checksum": "sha1-8aJxIoknjdZgHYtBFw+VsSD5tuY="
+        },
+        "control": {
+          "range": "bytes=688-3091",
+          "checksum": "sha1-WX2ANZXhfHUGGWT6IvuZ8FIAayg="
+        },
+        "data": {
+          "range": "bytes=3092-8069732",
+          "checksum": "sha256-WIpiVTR/iExxADtIVecGKZvvAyvH0VgrV4k5Wux6zxA="
+        },
+        "checksum": "Q1WX2ANZXhfHUGGWT6IvuZ8FIAayg="
       },
       {
         "name": "musl",
-        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/musl-1.2.6-r2.apk",
-        "version": "1.2.6-r2",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/musl-1.2.6-r3.apk",
+        "version": "1.2.6-r3",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-721",
-          "checksum": "sha1-y+t9ldAmPNwLq3Ga3dueuZqNaUM="
+          "range": "bytes=0-722",
+          "checksum": "sha1-Sx2OqlxZp7k3+OGLbf/X+oeVKaE="
         },
         "control": {
-          "range": "bytes=722-1230",
-          "checksum": "sha1-JNQts+O/Z+jaJ4QHLMXQ5svftIU="
+          "range": "bytes=723-1228",
+          "checksum": "sha1-LxWdAiUjx6a3hymmYymFy3cU++Y="
         },
         "data": {
-          "range": "bytes=1231-417709",
-          "checksum": "sha256-vfWekZAxJC8s35bqhBgP0wneXmaCHMgBA7YQkWTXwr4="
+          "range": "bytes=1229-417729",
+          "checksum": "sha256-qSO9f0iypdmqmjxRFYv5Z8NkA9zhBF6OqxSNoJb6SYE="
         },
-        "checksum": "Q1JNQts+O/Z+jaJ4QHLMXQ5svftIU="
+        "checksum": "Q1LxWdAiUjx6a3hymmYymFy3cU++Y="
       },
       {
         "name": "busybox",

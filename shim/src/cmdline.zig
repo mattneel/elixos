@@ -10,6 +10,9 @@ const decimal = @import("decimal.zig");
 pub const Settings = struct {
     /// elixos.safe[=1|0]: boot the factory in rescue mode.
     safe: bool = false,
+    /// elixos.live[=1|0]: keep writable /priv on the RAM-backed initramfs rootfs.
+    /// Never mounts data_device, even when safe or data is also supplied.
+    live: bool = false,
     /// elixos.generation=N: boot generation N once.
     generation: ?u32 = null,
     /// elixos.max_attempts=N (N >= 1).
@@ -50,6 +53,8 @@ pub fn parse(text: []const u8) Settings {
 
         if (std.mem.eql(u8, name, "safe")) {
             if (setFlag(&settings.safe, value) == null) settings.invalid += 1;
+        } else if (std.mem.eql(u8, name, "live")) {
+            if (setFlag(&settings.live, value) == null) settings.invalid += 1;
         } else if (std.mem.eql(u8, name, "generation")) {
             if (setNumber(&settings.generation, value, 0) == null) settings.invalid += 1;
         } else if (std.mem.eql(u8, name, "max_attempts")) {
@@ -188,4 +193,42 @@ test "cmdline: tolerates repeated spaces and the trailing newline" {
     const s = parse("  quiet   elixos.generation=3  \n");
     try testing.expectEqual(@as(?u32, 3), s.generation);
     try testing.expectEqual(@as(u32, 0), s.invalid);
+}
+
+test "cmdline: live accepts the same boolean syntax as safe" {
+    try milestone.require(1);
+    const cases = [_]struct { text: []const u8, live: bool, invalid: u32 = 0 }{
+        .{ .text = "elixos.live", .live = true },
+        .{ .text = "elixos.live=1", .live = true },
+        .{ .text = "elixos.live=0", .live = false },
+        .{ .text = "elixos.live=", .live = false, .invalid = 1 },
+        .{ .text = "elixos.live=2", .live = false, .invalid = 1 },
+        .{ .text = "elixos.live=yes", .live = false, .invalid = 1 },
+        .{ .text = "elixos.live=true", .live = false, .invalid = 1 },
+        .{ .text = "elixos.live=01", .live = false, .invalid = 1 },
+        .{ .text = "elixos.live=1=0", .live = false, .invalid = 1 },
+    };
+    for (cases) |case| {
+        const settings = parse(case.text);
+        try testing.expectEqual(case.live, settings.live);
+        try testing.expectEqual(case.invalid, settings.invalid);
+        try testing.expect(!settings.safe);
+    }
+}
+
+test "cmdline: the last valid live flag wins and malformed flags do not reset it" {
+    try milestone.require(1);
+    const cases = [_]struct { text: []const u8, live: bool, invalid: u32 = 0 }{
+        .{ .text = "elixos.live elixos.live=0", .live = false },
+        .{ .text = "elixos.live=0 elixos.live=1", .live = true },
+        .{ .text = "elixos.live=0 elixos.live", .live = true },
+        .{ .text = "elixos.live=1 elixos.live=bad", .live = true, .invalid = 1 },
+        .{ .text = "elixos.live=0 elixos.live=bad", .live = false, .invalid = 1 },
+        .{ .text = "elixos.live=bad elixos.live", .live = true, .invalid = 1 },
+    };
+    for (cases) |case| {
+        const settings = parse(case.text);
+        try testing.expectEqual(case.live, settings.live);
+        try testing.expectEqual(case.invalid, settings.invalid);
+    }
 }

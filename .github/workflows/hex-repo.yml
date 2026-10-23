@@ -2,8 +2,8 @@ name: Hex repo
 
 # Builds the official Elixos Hex repository (ADR-019) and publishes it to
 # GitHub Pages, so the URL the factory preconfigures always serves a signed
-# registry. Packages are the Mix projects under hex/packages/ (each is built
-# with `mix hex.build`) plus any tarballs dropped into hex/prebuilt/.
+# registry. Packages are the source Mix projects under hex/packages/, filtered
+# for prod/elixos by the SDK, plus tarballs dropped into hex/prebuilt/.
 #
 # One-time setup on the repository:
 #   * Settings -> Pages -> Source: GitHub Actions
@@ -50,6 +50,20 @@ jobs:
 
       - name: Install Hex
         run: mix local.hex --force
+
+      - name: Test SDK source packaging and generated consumers
+        working-directory: hex/packages/elixos_sdk
+        run: mix test
+
+      - name: Test shared portable library
+        working-directory: hex/packages/elixos_demo_stats
+        run: mix test
+
+      - name: Test native demo's portable behavior and fresh-VM state recovery
+        working-directory: hex/packages/elixos_demo
+        run: |
+          mix deps.get --only test --target host
+          mix test
 
       - name: Build package tarballs
         run: ./hex/build-packages.sh

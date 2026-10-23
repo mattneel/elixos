@@ -47,12 +47,34 @@ defmodule Elixos.Boot.Cmdline do
     end
   end
 
-  @doc "Reads and parses `/proc/cmdline`; `%{}` when it does not exist (dev host)."
+  @doc """
+  Whether the shim selected RAM-backed Live storage. Like its boolean parser,
+  the last valid bare/1/0 flag wins; malformed values do not reset the choice.
+  Defaults to the running kernel's command line.
+  """
+  @spec live?(String.t()) :: boolean()
+  def live?(text \\ cmdline()) when is_binary(text) do
+    text
+    |> String.split()
+    |> Enum.reduce(false, fn
+      flag, _ when flag in ["elixos.live", "elixos.live=1"] -> true
+      "elixos.live=0", _ -> false
+      _, enabled -> enabled
+    end)
+  end
+
+  @doc "Reads `/proc/cmdline`; containers ignore their host's boot configuration."
   @spec current() :: map()
-  def current do
-    case File.read("/proc/cmdline") do
-      {:ok, text} -> parse(text)
-      {:error, _} -> %{}
+  def current, do: parse(cmdline())
+
+  defp cmdline do
+    if Elixos.Boot.runtime() == :container do
+      ""
+    else
+      case File.read("/proc/cmdline") do
+        {:ok, text} -> text
+        {:error, _} -> ""
+      end
     end
   end
 end

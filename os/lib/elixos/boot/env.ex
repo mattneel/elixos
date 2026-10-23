@@ -81,6 +81,32 @@ defmodule Elixos.Boot.Env do
   defp mode("rescue"), do: {:ok, :rescue}
   defp mode(_other), do: {:error, {:invalid, "ELIXOS_MODE"}}
 
+  @doc """
+  Identifies a real machine or shared-kernel container launch.
+
+  A runtime marker alone is not a launch contract. Older machine shims omit
+  the optional marker; an unknown explicit value is a broken launch.
+  """
+  @spec runtime(map()) ::
+          {:ok, :host | :machine | :container}
+          | {:error, {:missing | :invalid, String.t()}}
+  def runtime(env \\ System.get_env()) when is_map(env) do
+    case parse(env) do
+      {:ok, :host} ->
+        {:ok, :host}
+
+      {:ok, %__MODULE__{}} ->
+        case Map.get(env, "ELIXOS_RUNTIME", "machine") do
+          "machine" -> {:ok, :machine}
+          "container" -> {:ok, :container}
+          _other -> {:error, {:invalid, "ELIXOS_RUNTIME"}}
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
   @doc "Parses the running VM's environment."
   @spec current() :: {:ok, t() | :host} | {:error, {:missing | :invalid, String.t()}}
   def current, do: parse(System.get_env())

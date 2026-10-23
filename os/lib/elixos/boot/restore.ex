@@ -68,8 +68,15 @@ defmodule Elixos.Boot.Restore do
         # the spec and still let AutoCommit commit the generation. Throwing is
         # a failed boot, not an omitted child.
         try do
-          Enum.each(boot, fn {module, function, args} -> apply(module, function, args) end)
-          :ok
+          Enum.reduce_while(boot, :ok, fn {module, function, args}, :ok ->
+            case apply(module, function, args) do
+              {:error, reason} ->
+                {:halt, {:stop, {:boot_spec_failed, generation, {:error, reason}}}}
+
+              _result ->
+                {:cont, :ok}
+            end
+          end)
         catch
           kind, reason -> {:stop, {:boot_spec_failed, generation, {kind, reason}}}
         end

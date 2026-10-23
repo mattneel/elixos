@@ -33,6 +33,23 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="${ELIXOS_BUILD:-$ROOT/build}"
+# Optional Eval builds never reuse the default factory/image output directory.
+EVAL_PROFILE="${ELIXOS_EVAL_PROFILE:-0}"
+ROOTFS_CONFIG="$ROOT/apko/apko.yaml"
+LOCK_ROOT="$ROOT/apko"
+case "$EVAL_PROFILE" in
+  0) ;;
+  1)
+    : "${ELIXOS_BUILD:?Eval profile requires a separate explicit ELIXOS_BUILD directory}"
+    [ "$(readlink -m "$BUILD")" != "$(readlink -m "$ROOT/build")" ] || {
+      echo "build-image: Eval profile refuses the default build directory" >&2; exit 1;
+    }
+    ROOTFS_CONFIG="$ROOT/apko/apko-eval.yaml"
+    LOCK_ROOT="$BUILD/locks"
+    mkdir -p "$LOCK_ROOT"
+    ;;
+  *) echo "build-image: ELIXOS_EVAL_PROFILE must be 0 or 1" >&2; exit 1 ;;
+esac
 TOOLS="$BUILD/tools"
 MELANGE="${MELANGE:-$TOOLS/melange}"
 APKO="${APKO:-$TOOLS/apko}"
@@ -66,10 +83,17 @@ stage() {
   # workspace, so it must not be the repository (55G, once).
   rm -rf "$SRC"
   mkdir -p "$SRC/os"
-  cp -r "$ROOT/build.zig" "$ROOT/build.zig.zon" "$ROOT/.zig-version" "$ROOT/.tool-versions" \
+  cp -r "$ROOT/build.zig" "$ROOT/build.zig.zon" "$ROOT/.zig-version" "$ROOT/.tool-versions" "$ROOT/MILESTONE" \
         "$ROOT/shim" "$ROOT/spec" "$ROOT/kernel" "$ROOT/scripts" "$ROOT/hex" "$ROOT/toolchain" \
         "$SRC/"
-  cp -r "$ROOT/os/mix.exs" "$ROOT/os/mix.lock" "$ROOT/os/lib" "$ROOT/os/config" "$ROOT/os/priv" "$SRC/os/"
+  cp -r "$ROOT/os/mix.exs" "$ROOT/os/mix.lock" "$ROOT/os/lib" "$ROOT/os/config" "$ROOT/os/priv" "$ROOT/os/test" "$SRC/os/"
+  # Canonical native coding packages are human-pinned source inputs, never
+  # host BEAM or the example's reduced host-test OS application (ADR-084).
+  local coding_source="${ELIXOS_OH_MY_JIDO_SOURCE:-$ROOT/../oh_my_jido}"
+  local coding_pin="${ELIXOS_CODING_SHA256:?set the reviewed pin from scripts/stage-coding.exs pin SOURCE}"
+  local operation=stage
+  [ "$EVAL_PROFILE" = 0 ] || operation=stage-eval
+  elixir "$ROOT/scripts/stage-coding.exs" "$operation" "$coding_source" "$SRC/coding" "$coding_pin"
   cp -r "$ROOT/melange" "$SRC/"
 }
 
@@ -89,10 +113,18 @@ package_inputs() { # package_inputs <arch> <package>: hash of everything the rec
       fi
       ;;
     elixir) paths=(.tool-versions melange/elixir.yaml prebuilt/elixir prebuilt/elixir.links) ;;
-    factory) paths=(os hex .tool-versions melange/factory.yaml) ;;
+    factory|factory-eval)
+      paths=(os coding spec MILESTONE hex .tool-versions melange/factory.yaml melange/factory-eval.yaml melange/coding-eval-python.yaml scripts/stage-coding.exs scripts/factory-coding-receipt.exs scripts/package-factory.sh scripts/build-coding-eval.exs scripts/coding-eval-native.py scripts/coding-eval scripts/build-image.sh)
+      # The aarch64 factory is the tree the host cross build staged (ADR-094).
+      [ "$arch" = aarch64 ] && paths+=(prebuilt/factory prebuilt/factory.links)
+      ;;
+    coding-eval-python) paths=(melange/coding-eval-python.yaml scripts/coding-eval-native.py scripts/coding-eval) ;;
     shim) paths=(shim spec .zig-version build.zig build.zig.zon melange/shim.yaml) ;;
     browser) paths=(melange/browser.yaml) ;;
-    gui-renderer) paths=(melange/gui-renderer.yaml) ;;
+    gui-renderer)
+      paths=(melange/gui-renderer.yaml)
+      [ "$arch" = aarch64 ] && paths+=(prebuilt/gui-renderer prebuilt/gui-renderer.links)
+      ;;
     toolchain) paths=(toolchain .zig-version melange/toolchain.yaml) ;;
     *) paths=(melange) ;;
   esac
@@ -227,7 +259,14 @@ build_packages() { # build_packages <arch>
   # Dependency order, not glob order: OTP before Elixir and the factory (they
   # build against it), the kernel and the shim independent, the browser a
   # download-and-repack, the toolchain last (it needs only a compiler).
-  for pkg in kernel otp elixir gui-renderer factory shim browser toolchain; do
+  local -a packages=(kernel otp elixir gui-renderer)
+  if [ "$EVAL_PROFILE" = 1 ]; then
+    packages+=(coding-eval-python factory-eval)
+  else
+    packages+=(factory)
+  fi
+  packages+=(shim browser toolchain)
+  for pkg in "${packages[@]}"; do
     file="$SRC/melange/$pkg.yaml"
     [ -f "$file" ] || continue
     pname="elixos-$pkg"
@@ -291,21 +330,26 @@ build_index() { # build_index <arch>
 
 lock() { # lock <arch>
   local arch="$1"
-  "$APKO" lock "$ROOT/apko/apko.yaml" --arch "$arch" \
+  "$APKO" lock "$ROOTFS_CONFIG" --arch "$arch" \
     -r "$BUILD/apk/$arch" -k "$KEY.pub" \
-    --cache-dir "$MIRROR" --output "$ROOT/apko/apko.lock.$arch.json"
+    --cache-dir "$MIRROR" --output "$LOCK_ROOT/apko.lock.$arch.json"
 }
 
 assemble() { # assemble <arch> <output tar>
   local arch="$1" out="$2"
-  "$APKO" build --lockfile "$ROOT/apko/apko.lock.$arch.json" --arch "$arch" \
+  "$APKO" build --lockfile "$LOCK_ROOT/apko.lock.$arch.json" --arch "$arch" \
     -r "$BUILD/apk/$arch" -k "$KEY.pub" \
     --build-date "$BUILD_DATE" --sbom-path "$(dirname "$out")" --cache-dir "$MIRROR" \
-    "$ROOT/apko/apko.yaml" "elixos:$arch" "$out"
+    "$ROOTFS_CONFIG" "elixos:$arch" "$out"
 }
 
 system_lock() { # system_lock <arch>: retain committed pins until config changes
-  local arch="$1" config="$ROOT/apko/system.yaml" lockfile="$ROOT/apko/system.lock.$1.json"
+  local arch="$1" config="$ROOT/apko/system.yaml" lockfile="$LOCK_ROOT/system.lock.$1.json"
+  if [ "$EVAL_PROFILE" = 1 ]; then
+    "$APKO" lock "$config" --arch "$arch" --cache-dir "$MIRROR" \
+      -r "$BUILD/apk/$arch" -k "$KEY.pub" --output "$lockfile"
+    return
+  fi
   if ! python3 - "$config" "$lockfile" <<'PY'
 import base64, hashlib, json, sys
 try:
@@ -325,7 +369,7 @@ assemble_system() { # assemble_system <arch> <work directory>
   local arch="$1" work="$2" epoch
   epoch="$(date -u -d "$BUILD_DATE" +%s)"
   mkdir -p "$work"
-  "$APKO" build --lockfile "$ROOT/apko/system.lock.$arch.json" --arch "$arch" \
+  "$APKO" build --lockfile "$LOCK_ROOT/system.lock.$arch.json" --arch "$arch" \
     --build-date "$BUILD_DATE" --sbom-path "$work" --cache-dir "$MIRROR" \
     -r "$BUILD/apk/$arch" -k "$KEY.pub" \
     "$ROOT/apko/system.yaml" "elixos-system:$arch" "$work/rootfs.tar"
@@ -366,7 +410,7 @@ layer_digest() { # layer_digest <image tar>: the layer file *is* named by its di
 }
 
 check_sbom() { # check_sbom <arch> <sbom> [config]
-  local arch="$1" sbom="$2" config="${3:-$ROOT/apko/apko.yaml}"
+  local arch="$1" sbom="$2" config="${3:-$ROOTFS_CONFIG}"
   # Every requested package must have its resolved version in the SBOM.
   python3 - "$config" "$sbom" "$arch" <<'PY'
 import json, re, sys
@@ -391,8 +435,8 @@ image_inputs() { # image_inputs <arch>: everything the assembled image is made o
   local arch="$1" apk
   {
     printf 'arch=%s\nbuild_date=%s\n' "$arch" "$BUILD_DATE"
-    sha256sum "$APKO" "$ROOT/apko/apko.yaml" "$ROOT/apko/apko.lock.$arch.json" \
-      "$ROOT/apko/system.yaml" "$ROOT/apko/system.lock.$arch.json" \
+    sha256sum "$APKO" "$ROOTFS_CONFIG" "$LOCK_ROOT/apko.lock.$arch.json" \
+      "$ROOT/apko/system.yaml" "$LOCK_ROOT/system.lock.$arch.json" \
       "$ROOT/scripts/mkinitramfs.sh" "$ROOT/scripts/build-image.sh"
     sha256sum "$BUILD/apk/$arch/$arch/APKINDEX.tar.gz"
     for apk in "$BUILD/apk/$arch/$arch"/elixos-*.apk; do sha256sum "$apk"; done
@@ -469,9 +513,25 @@ build_arch() { # build_arch <arch>
     # environment; the aarch64 elixos-otp package installs what it produces.
     cross_build otp "$ROOT/melange/otp-cross.yaml" .tool-versions melange/otp.yaml
     native_reuse
+    # Nothing compiles under emulation (ADR-094): the renderer NIF (Rust and
+    # Skia, cross toolchain plus an aarch64 sysroot) and the factory (target-
+    # configured bytecode, compiled by the native BEAM) are built here too.
+    cross_build gui-renderer "$ROOT/melange/gui-renderer-cross.yaml" melange/gui-renderer.yaml
+    if [ "$EVAL_PROFILE" = 1 ]; then
+      echo "build-image: the aarch64 eval profile has no cross build yet; refusing an emulated compile" >&2
+      return 1
+    fi
+    cross_build factory "$ROOT/melange/factory-cross.yaml" os coding spec MILESTONE hex .tool-versions \
+      melange/factory.yaml scripts/stage-coding.exs scripts/factory-coding-receipt.exs scripts/package-factory.sh
   fi
   build_packages "$arch"
   build_index "$arch"
+  if [ "$EVAL_PROFILE" = 1 ]; then
+    # These locks do not exist in a fresh optional output directory, and their
+    # local APK identities must be resolved before the assembly cache key.
+    lock "$arch"
+    system_lock "$arch"
+  fi
 
   # Assembly (root filesystem, reproducibility, initramfs, squashfs) is the
   # other expensive half: skip it when the lockfiles, the APKs and the packers

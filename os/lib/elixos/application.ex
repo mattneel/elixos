@@ -2,21 +2,22 @@ defmodule Elixos.Application do
   @moduledoc """
   The OS application.
 
-  On the dev host, only the idle, supervised tool-peer owner starts; it boots
-  no engine until a tool needs one. Under the shim (M4 onward) the OS services
-  come up in order:
+  On the dev host (unit tests) `Elixos.Boot.Env.current/0` returns `{:ok, :host}`
+  and nothing is started. Under the shim (M4 onward) this is where the system
+  comes up, in order:
 
     1. `Elixos.Shim.Control` on the inherited control fd (heartbeats start).
     2. `Elixos.Privileges` on the inherited helper reply fd (M17).
     3. The asynchronous PostgreSQL and Oban managers (M18, M19), before restore.
     4. The generation's modules and boot spec (`Elixos.Image.restore/2`, M6).
-    5. The recorder, agents, Ask queue, framebuffer GUI, browser manager and SSH.
+    5. The recorder, agents, approval index, browser manager and SSH.
     6. The login REPL via `:shell.start_interactive/1` (M4, M9), then auto-commit.
     7. `Elixos.Oban.activate/0`, once the complete supervision tree is up.
 
   Control, privileges, restore, login and auto-commit failures must exit the VM
   non-zero so the shim counts the attempt and falls back (ADR-007). Database,
-  scheduler, GUI, browser and SSH startup failures remain non-critical.
+  scheduler, approvals, browser and SSH startup failures remain non-critical.
+  The framebuffer GUI never starts at boot; it is opened on purpose from IEx.
   """
   use Application
 
@@ -79,18 +80,24 @@ defmodule Elixos.Application do
     for dir <- Path.wildcard(Path.join(os_priv(), "apps/*/ebin")), do: Code.append_path(dir)
 
     case Elixos.Boot.Env.current() do
-      # Host tests need the same supervised, initially idle peer owner.
+      # On the dev host (unit tests) there is no shim and nothing to start.
       {:ok, :host} ->
-        Supervisor.start_link([{Elixos.Toolset.Peer, []}],
-          strategy: :one_for_one,
-          name: Elixos.Supervisor
-        )
+        Supervisor.start_link([], strategy: :one_for_one, name: Elixos.Supervisor)
 
       {:ok, env} ->
+        runtime = Elixos.Boot.runtime()
+
+        if runtime == :container and Application.fetch_env(:elixos, :toolchain_dir) == :error do
+          Application.put_env(:elixos, :toolchain_dir, "/toolchain")
+        end
+
         # Before anything can load a generation: the base stays the base.
         Elixos.Boot.Base.stick()
 
-        with {:ok, image} <- open_image() do
+        # A fresh provider volume has no image-populated home directory.
+        # Restored services may exec with the session cwd before SSH/login run.
+        with :ok <- File.mkdir_p(Elixos.Session.default()),
+             {:ok, image} <- open_image() do
           children = [
             # Services from installed apps' elixos: keys live here, under the
             # system's tree; the restore below starts the ones the image knows,
@@ -104,8 +111,6 @@ defmodule Elixos.Application do
             # Validate/open the shim reply fd before generation code can ask
             # for helpers, without blocking the heartbeat writer while waiting.
             {Elixos.Privileges, []},
-            # Idle until a tool call; present before restore can start agents.
-            {Elixos.Toolset.Peer, []},
             # The database and the scheduler start before the restore (M19):
             # a generation's oban declarations are collected while its modules
             # and services restore, and no queue exists until Elixos.Oban
@@ -121,13 +126,11 @@ defmodule Elixos.Application do
             # supervisor and restored with what they remembered (M15).
             {DynamicSupervisor, name: Elixos.Agents.Supervisor, strategy: :one_for_one},
             {Elixos.Agents, {image, env.mode}},
-            # Questions are data in the OS (M20): agents ask through the Jido
-            # action and every front-end sees the same queue. Not boot-critical,
-            # and rescue runs none of it.
-            {Elixos.Ask, mode: env.mode},
-            # Raster dialogs and framebuffer/input ownership are optional.
-            # Initialization is asynchronous; rescue never acquires the console.
-            {Elixos.GUI, mode: env.mode},
+            # Oh-My-Jido is the only human-in-the-loop mechanism (ADR-093):
+            # its sessions own approvals and questions; this indexes every
+            # open one so any IEx/SSH session can answer it, and starts the
+            # OS's coding runtime. Not boot-critical; rescue runs none of it.
+            {Elixos.Approvals, mode: env.mode},
             # The headless browser (M25): the ecosystem's stack over a Port,
             # given the binary the image ships. Not boot-critical and rescue
             # runs none of it, so a broken adapter costs the browser and not

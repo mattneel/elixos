@@ -106,7 +106,8 @@ defmodule Elixos.Package.Spec do
     Enum.flat_map(paths, fn
       path when is_binary(path) ->
         cond do
-          Path.type(path) == :absolute -> [persist: :absolute_path]
+          path == "" or String.contains?(path, <<0>>) -> [persist: :invalid]
+          Path.type(path) != :relative -> [persist: :absolute_path]
           ".." in Path.split(path) -> [persist: :parent_path]
           true -> []
         end
@@ -137,60 +138,118 @@ defmodule Elixos.Package.Spec do
   defp service?(_other), do: false
 
   @doc """
-  Reads the `elixos:` key from the Mix project in `dir` without building it.
+  Reads the app, version, effective dependencies and `elixos:` declaration of
+  the Mix project in `dir` under the installer's `:prod` / `:elixos` settings.
 
-  It must not change the VM's working directory, not even briefly (ADR-016):
-  every program on Elixos shares this VM, and `Mix.Project.in_project/4`
-  cd's all of them. Hint, verified on Elixir 1.20.4: compiling a mix.exs runs
-  `Mix.Project.__after_compile__/2`, which pushes the project onto Mix's
-  stack; read `Mix.Project.config/0`, `Mix.Project.pop/0`, then unload the
-  modules mix.exs defined.
+  The locked read never changes the VM's cwd or OS environment. Mix's scoped
+  environment, target and complete project stack are restored even if project
+  evaluation fails, and modules defined by the project file are unloaded.
   """
-  @spec read_project(Path.t()) :: {:ok, t() | :none} | {:error, term()}
+  @spec read_project(Path.t()) ::
+          {:ok, %{app: atom(), version: String.t(), deps: %{atom() => String.t()}, spec: t()}}
+          | {:error, term()}
   def read_project(dir) do
-    path = Path.join(dir, "mix.exs")
+    path = Path.expand("mix.exs", dir)
 
-    # Mix's project stack is global to this VM, so two reads at once would
-    # trade projects: the whole read is serialized.
-    :global.trans({__MODULE__, :read_project}, fn -> read_locked(path) end, [node()])
+    # Lock requesters must be distinct: a constant requester ID would let
+    # concurrent reads share a lock and exchange Mix's global project state.
+    :global.trans({__MODULE__, self()}, fn -> read_locked(path) end, [node()])
   end
 
   defp loaded_modules do
-    MapSet.new(for {module, _file, _loaded} <- :code.all_loaded(), do: module)
+    MapSet.new(for {module, _file} <- :code.all_loaded(), do: module)
   end
 
   defp read_locked(path) do
-    project = Mix.Project.get()
+    env = Mix.env()
+    target = Mix.target()
     loaded = loaded_modules()
 
     try do
-      # Compiling the file is what pushes the project (its __after_compile__),
-      # and loading it is what defines its modules. Both are global state, and
-      # both are undone below whatever happens.
-      Code.compile_file(path)
-      from_project(Mix.Project.config())
+      Mix.env(:prod)
+      Mix.target(:elixos)
+
+      Mix.ProjectStack.on_clean_slate(fn ->
+        Code.compile_file(path)
+
+        if Mix.Project.get() do
+          project_metadata(Mix.Project.config())
+        else
+          {:error, :no_mix_project}
+        end
+      end)
     rescue
       error -> {:error, error}
     after
-      unwind_to(project)
-      unload(MapSet.difference(loaded_modules(), loaded))
+      Mix.env(env)
+      Mix.target(target)
+      loaded_modules()
+      |> MapSet.difference(loaded)
+      |> Enum.filter(&defined_in?(&1, path))
+      |> unload()
     end
   end
 
-  # Only the frames this read pushed come off: a file may define no project at
-  # all, or more than one, and the caller's stack is theirs.
-  defp unwind_to(project, budget \\ 8)
-  defp unwind_to(_project, 0), do: :ok
+  defp project_metadata(project) do
+    app = project[:app]
+    version = project[:version]
 
-  defp unwind_to(project, budget) do
-    if Mix.Project.get() == project do
-      :ok
+    with :ok <- check_app(app),
+         {:ok, _version} <- Version.parse(version || ""),
+         {:ok, deps} <- project_deps(project[:deps] || []),
+         {:ok, spec} <- from_project(project) do
+      {:ok,
+       %{app: app, version: version, deps: deps, spec: if(spec == :none, do: %__MODULE__{}, else: spec)}}
     else
-      case Mix.Project.pop() do
-        :error -> :ok
-        _popped -> unwind_to(project, budget - 1)
-      end
+      :error -> {:error, {:invalid_project_version, version}}
+      {:error, _reason} = error -> error
     end
+  end
+
+  defp check_app(app) when is_atom(app) and app not in [nil, true, false] do
+    if Regex.match?(~r/^[a-z][a-z0-9_]*$/, Atom.to_string(app)),
+      do: :ok,
+      else: {:error, {:invalid_project_app, app}}
+  end
+
+  defp check_app(app), do: {:error, {:invalid_project_app, app}}
+
+  defp project_deps(deps) when is_list(deps) do
+    Enum.reduce_while(deps, {:ok, %{}}, fn dep, {:ok, requirements} ->
+      with {:ok, app, requirement, opts} <- dependency(dep),
+           :ok <- check_app(app),
+           true <- Keyword.keyword?(opts) do
+        cond do
+          Mix.Dep.Loader.skip?(%Mix.Dep{opts: opts}, {:prod, :elixos}) ->
+            {:cont, {:ok, requirements}}
+
+          is_nil(requirement) ->
+            {:cont, {:ok, Map.put(requirements, app, ">= 0.0.0")}}
+
+          is_binary(requirement) and match?({:ok, _}, Version.parse_requirement(requirement)) ->
+            {:cont, {:ok, Map.put(requirements, app, requirement)}}
+
+          true ->
+            {:halt, {:error, {:invalid_dependency, dep}}}
+        end
+      else
+        _ -> {:halt, {:error, {:invalid_dependency, dep}}}
+      end
+    end)
+  end
+
+  defp project_deps(deps), do: {:error, {:invalid_dependencies, deps}}
+
+  defp dependency({app, opts}) when is_list(opts), do: {:ok, app, nil, opts}
+  defp dependency({app, requirement}), do: {:ok, app, requirement, []}
+  defp dependency({app, requirement, opts}) when is_list(opts), do: {:ok, app, requirement, opts}
+  defp dependency(dep), do: {:error, {:invalid_dependency, dep}}
+
+  defp defined_in?(module, path) do
+    source = module.module_info(:compile)[:source]
+    source != nil and Path.expand(to_string(source)) == path
+  rescue
+    _ -> false
   end
 
   # Only modules this read loaded are unloaded. A module that was already

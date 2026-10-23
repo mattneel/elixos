@@ -3,17 +3,16 @@ defmodule Elixos.GUI.PointerTest do
 
   @moduletag milestone: 27
 
-  alias Elixos.Ask.Question
+  alias Elixos.Approvals.Request
   alias Elixos.GUI.Dialog
 
   defp question do
-    %Question{
+    %Request{
       id: 1,
       kind: :confirm,
       prompt: "continue?",
       options: [],
-      default: nil,
-      asker: self()
+      default: nil
     }
   end
 

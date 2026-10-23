@@ -3,12 +3,12 @@ defmodule Elixos.GUI.DialogTest do
 
   @moduletag milestone: 27
 
-  alias Elixos.Ask.Question
+  alias Elixos.Approvals.Request
   alias Elixos.GUI.Dialog
 
   defp question(kind, opts \\ []) do
     struct!(
-      Question,
+      Request,
       Keyword.merge(
         [
           id: 1,
@@ -16,8 +16,7 @@ defmodule Elixos.GUI.DialogTest do
           prompt: "choose",
           options: ["alpha", "beta", "gamma"],
           default: nil,
-          allow_other: false,
-          asker: self()
+          allow_other: false
         ],
         opts
       )
@@ -83,7 +82,7 @@ defmodule Elixos.GUI.DialogTest do
     assert {:answer, ["alpha", "gamma"], _} = key(dialog, "Enter")
   end
 
-  test "autorepeat edits text but cannot answer or dismiss unseen questions" do
+  test "autorepeat edits text but cannot answer or hand back for unseen requests" do
     dialog = Dialog.new(question(:text, default: "a"))
     assert {:continue, dialog} = Dialog.input(dialog, {:key, "a", :repeat})
     assert dialog.text == "aa"
@@ -111,9 +110,30 @@ defmodule Elixos.GUI.DialogTest do
     assert {:answer, "next", _} = key(dialog, "Enter")
   end
 
-  test "escape dismisses a question but returns the idle view to the console" do
-    assert {:dismiss, _} = Dialog.new(question(:text)) |> key("Escape")
+  test "escape and F12 hand the screen back without answering" do
+    assert {:stop, _} = Dialog.new(question(:text)) |> key("Escape")
+    assert {:stop, _} = Dialog.new(question(:confirm)) |> key("Escape")
     assert {:stop, _} = Dialog.new(nil) |> key("Escape")
     assert {:stop, _} = Dialog.new(question(:choice)) |> key("F12")
+  end
+
+  test "requests built from Oh-My-Jido questions keep their kinds and labels" do
+    choice =
+      struct!(
+        Request,
+        Map.merge(
+          Elixos.Approvals.describe(%{
+            question: "proceed?",
+            options: [%{label: "yes"}, %{label: "no"}]
+          }),
+          %{id: 3}
+        )
+      )
+
+    assert {:answer, "yes", _} = Dialog.new(choice) |> key("Enter")
+
+    effect = struct!(Request, Map.merge(Elixos.Approvals.describe(%{kind: :effect}), %{id: 4}))
+    assert {:answer, false, _} = Dialog.new(effect) |> key("Enter")
+    assert {:answer, false, _} = Dialog.new(effect) |> key("n")
   end
 end

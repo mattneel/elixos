@@ -17,7 +17,7 @@ Implementations: `shim/src/decimal.zig` (`parseU32`) and `Elixos.Decimal`
 
 **Transport.** Before exec'ing ERTS the shim creates two pipes. The BEAM gets
 the control pipe's write end in `ELIXOS_CTL_FD` and the reply pipe's read end
-in `ELIXOS_REPLY_FD` (§3). PID 1 keeps the opposite ends; they survive its
+in `ELIXOS_REPLY_FD` (§3). The shim keeps the opposite ends; they survive its
 panic re-exec. The pipe inodes belong to uid/gid 1000: control mode 0200,
 reply mode 0400, so the unprivileged BEAM can reopen `/proc/self/fd/<n>`.
 Each direction has one writer. Writes are below `PIPE_BUF` and atomic.
@@ -51,8 +51,9 @@ Any malformed, duplicate or overflowing list disables the entire list.
 The reply pipe carries `HELPER <name> OK <pid>\n` (positive canonical u32)
 or `HELPER <name> REFUSED\n`. Unknown names and failed forks are refused and
 logged (§6); PostgreSQL helpers are also refused in rescue or without the
-mounted system image. One live child per name is reused; exited children are
-reaped. `OK` acknowledges a fork, not successful exec or SQL readiness.
+read-only service tree (mounted on machines, baked into native OCI images).
+One live child per name is reused; exited children are reaped. `OK`
+acknowledges a fork, not successful exec or SQL readiness.
 Helpers run as the declared uid/gid, without the BEAM's supplementary groups
 or capabilities. PostgreSQL helpers receive a fixed child-only library/PATH
 environment rooted in `/system`; caller argv and environment are never used.
@@ -77,8 +78,8 @@ No shell script runs in this launch path (ADR-012, amended by ADR-041 to
 permit BusyBox sh for tooling). Set what the release's `bin/` scripts would
 have set (like Nerves' erlinit does): `ROOTDIR`, `BINDIR`, `EMU`, `PROGNAME`,
 plus `HOME=/priv/home`, `TERM=linux`, `LANG=C.UTF-8`,
-`PATH=/priv/toolchain:/bin:/usr/bin` when the persistent disk is mounted
-(`/bin:/usr/bin` otherwise), and:
+`PATH=/priv/toolchain:/usr/local/bin:/bin:/usr/bin` when writable `/priv`
+is available (`/usr/local/bin:/bin:/usr/bin` otherwise), and:
 
 | variable            | value                                                  |
 |---------------------|--------------------------------------------------------|
@@ -87,13 +88,13 @@ plus `HOME=/priv/home`, `TERM=linux`, `LANG=C.UTF-8`,
 | `ELIXOS_ATTEMPT`    | `next_state.attempts` of the plan that launched it     |
 | `ELIXOS_CTL_FD`     | fd of the control pipe's write end (not CLOEXEC, ≥ 3)  |
 | `ELIXOS_REPLY_FD`   | fd of the helper reply pipe's read end (not CLOEXEC, ≥ 3) |
+| `ELIXOS_RUNTIME`   | `machine` or `container`; shim-owned boundary marker |
 
-- fds 0, 1, 2 are `/dev/console`. The working directory is `/` and stays
-  there (ADR-016). When the persistent disk is mounted, the shim also sets
-  `ERL_CRASH_DUMP` to `/priv/crash/gen<g>-attempt<n>.dump` (§7, ADR-025) and
-  `ERL_CRASH_DUMP_BYTES` to 1 MiB, so a crash leaves its evidence on the disk
-  the next boot mounts. Without the disk both are left unset and ERTS keeps
-  its default.
+- Machine fds 0, 1, 2 are `/dev/console`; native OCI retains the container
+  runtime's stdio. The working directory is `/` and stays there (ADR-016).
+  With writable `/priv`, the shim sets `ERL_CRASH_DUMP` to
+  `/priv/crash/gen<g>-attempt<n>.dump` (§7, ADR-025) and
+  `ERL_CRASH_DUMP_BYTES` to 1 MiB. Without writable state both are unset.
 - The BEAM runs as `elixos`, real/effective/saved/filesystem uid 1000 and gid
   1000, with supplementary `input` (23) and `video` (27). Its permitted,
   effective, inheritable and ambient capabilities contain only
@@ -117,6 +118,44 @@ The four boot variables are parsed by `Elixos.Boot.Env.parse/1`; the required
 reply descriptor is validated by `Elixos.Privileges` before opening its client.
 Panic adoption preserves both pipe ends, the actual running generation
 (which may differ from NEXT's `current`), and live helper pids.
+
+### Native OCI launch and shutdown
+
+The native build (`-Dcontainer=true`) requires `container=oci` and a
+root-owned regular `/etc/elixos/runtime` containing exactly `container\n`.
+It validates procfs and its PID namespace, rejects initial-namespace PID 1,
+and becomes a child subreaper when launched below a provider's init.
+`/priv` must already be a writable, safely owned directory supplied by the
+runtime. This build never mounts/unmounts filesystems or reboots the kernel.
+An invalid initial-namespace PID 1 idles instead of exiting.
+
+Its PATH is `/toolchain:/usr/local/bin:/bin:/usr/bin`; `/toolchain` exists
+only in the SDK image. `ELIXOS_CONSOLE=1` enables IEx; all other values keep
+the default headless startup. Exact `ELIXOS_SAFE=1` selects rescue. Host
+`/proc/cmdline` is never used for shim or BEAM boot policy.
+
+Ordinary OCI application environment and runtime secrets are forwarded from
+the immutable startup environment. The shim supplies authoritative release,
+identity and control values: caller `ROOTDIR`, `BINDIR`, `EMU`, `PROGNAME`,
+`HOME`, `TERM`, `LANG`, `PATH`, all launch variables in the table above and
+`ELIXOS_CONSOLE` are replaced. `ERL_*`, `ERTS_*` and `LD_*` are excluded so
+caller flags/loaders cannot override the launch or recovery contract.
+Forwarding allocates pointer slots once at startup, not copies of secrets;
+panic re-exec retains the original environment. Nothing mutates the running
+BEAM's cwd or environment.
+
+Control-line bytes and `boot.state` are unchanged. The shim supervises and
+signals only its own children; hardware/mount helpers are refused even if
+listed in the image. PostgreSQL helpers retain their existing uid and
+child-only environment. SIGTERM/INT/PWR request an orderly poweroff; after
+the BEAM and helpers stop, poweroff/halt exit 0 and reboot exits 75. The
+orchestrator decides whether to start another process. No global signal
+broadcast, system-wide sync, unmount or kernel reboot occurs.
+
+`Elixos.Boot.Env.runtime/1` requires the complete ordinary boot contract
+before recognizing `ELIXOS_RUNTIME`. A marker alone is not an OS. Legacy
+complete contracts without the marker mean `:machine`; an unknown explicit
+marker is an error. Hosts without a shim contract remain `:host`.
 
 ## §4 `boot.state`
 
@@ -155,18 +194,30 @@ rescue override **and never writes the file**, so the evidence survives.
 
 ## §5 Kernel command line
 
-Shim side (`shim/src/cmdline.zig`); the last occurrence of a key wins, and
-malformed or unknown `elixos.*` tokens are counted and logged, never applied:
+Shim side (`shim/src/cmdline.zig`); the last valid occurrence of a key wins,
+and malformed or unknown `elixos.*` tokens are counted and logged, never applied:
 
 | parameter                       | default    | meaning                                         |
 |---------------------------------|------------|-------------------------------------------------|
 | `elixos.safe[=1\|0]`            | off        | boot the factory in rescue mode                 |
+| `elixos.live[=1\|0]`            | off        | keep writable `/priv` in RAM; never mount the data device |
 | `elixos.generation=<gen>`       | none       | boot `<gen>` once, outside attempt accounting   |
 | `elixos.max_attempts=<n≥1>`     | 3          | launches before falling back                    |
 | `elixos.hb_timeout=<s≥1>`       | 10         | seconds without `HB` before killing the BEAM    |
 | `elixos.boot_grace=<s≥1>`       | 120        | seconds allowed before the first `HB`           |
 | `elixos.data=/dev/<dev>`        | /dev/vda   | ext4 device mounted on `/priv`                  |
 | `elixos.data_wait=<s≥0>`        | 10         | seconds to wait for that device to appear        |
+
+Live is a storage choice, not a third launch mode. Normal Live uses the
+embedded service image; `elixos.safe` still selects rescue. With Live enabled,
+`elixos.data` and `elixos.data_wait` never trigger a physical mount or wait.
+The `--live` x86_64 EFI profile hard-locks this flag and its panel console;
+firmware arguments cannot select another data device. The GUI remains opt-in
+so IEx retains the local keyboard and framebuffer.
+
+These kernel parameters apply only to machine builds. Native OCI uses the
+explicit console/rescue environment switches in §3 and ordinary recovery
+defaults; it does not inherit the host's kernel boot policy.
 
 BEAM side (`Elixos.Boot.Cmdline`):
 
@@ -192,13 +243,15 @@ by the UEFI builder. A hook-free deployment-image target remains unfinished.
 
 ## §6 Console log contract
 
-The shim writes these lines to `/dev/console`, each prefixed `elixos-shim: `.
-Placeholders: `<g>` generation, `<n>` number, `<m>` `normal|rescue`,
-`<k>` `reboot|poweroff|halt`, `<E>` an errno or error name like `ENOENT`.
+Machine builds write these lines to `/dev/console`; native OCI writes to
+the runtime's stdout. Each has prefix `elixos-shim: `. Placeholders:
+`<g>` generation, `<n>` number, `<m>` `normal|rescue`,
+`<k>` `reboot|poweroff|halt`, `<E>` an errno or error name.
 
 | line (after the prefix)                                                | when                                  | from |
 |------------------------------------------------------------------------|---------------------------------------|------|
-| `pid 1, version <version>`                                             | first thing                           | M3   |
+| `pid 1, version <version>`                                             | machine startup                       | M3   |
+| `container supervisor pid=<n>, version <version>`                      | native OCI startup; actual supervisor PID | native OCI |
 | `ignored <n> invalid elixos.* parameters`                              | n > 0                                 | M3   |
 | `waiting for <device> up to <n>s`                                      | the data device is absent, so the shim waits | M13  |
 | `cannot mount <device> (<E>), entering rescue`                         | data disk missing or unmountable      | M3   |
@@ -206,7 +259,7 @@ Placeholders: `<g>` generation, `<n>` number, `<m>` `normal|rescue`,
 | `fallback to last_good=<g> after <n> attempts of generation=<g>`       | planLaunch fell back                  | M3   |
 | `plan generation=<g> mode=<m> attempt=<n>`                             | every plan, before persisting it      | M3   |
 | `test hook <name>`                                                     | a test hook acts                      | M3   |
-| `shutdown <k>`                                                         | right before reboot(2)                | M3   |
+| `shutdown <k>`                                                         | before machine reboot(2) or native OCI exit | M3   |
 | `launching generation=<g> mode=<m>`                                    | right before exec                     | M4   |
 | `beam exited status=<n>`                                               | BEAM exited by itself                 | M5   |
 | `beam killed by signal <n>`                                            | BEAM died from a signal               | M5   |
@@ -234,45 +287,14 @@ Placeholders: `<g>` generation, `<n>` number, `<m>` `normal|rescue`,
 `attempt=<n>` is the plan's `next_state.attempts`. When planning from an
 unreadable or unmountable state, the shim uses the defaults (`0/0/0`).
 
-The BEAM prints one further console line, prefixed `elixos-ask: ` (M20), when
-a question is added to `Elixos.Ask`: the console REPL is the first front-end
-of the question queue (docs/ARCHITECTURE.md §6, ADR-059), so a human watching
-the console sees the question the moment it exists - an agent's question
-included.
-
-| line (after the prefix)                       | when                       | from |
-|-----------------------------------------------|----------------------------|------|
-| `question <id> (<kind>): <prompt>`            | a question enters the queue | M20 |
-
-`<id>` is the queue's own id (a positive integer), `<kind>` is one of `text`,
-`choice`, `multi`, `confirm`, and `<prompt>` is the question's text, verbatim.
-The line is API: the M20 acceptance matches it, so it changes like any other
-console line. Questions do not survive the session that asked them.
-
-What a front-end renders is the question itself (`Elixos.Ask.pending/0`)
-under these fields, and what `Elixos.Ask.answer/2` accepts is checked against
-them:
-
-```
-id           pos_integer, unique while it is open (oldest first in pending/0)
-kind         :text | :choice | :multi | :confirm
-prompt       the question, verbatim
-options      [String.t()], the choices a choice or multi offers (else [])
-allow_other  boolean, whether free text is accepted beside those options
-default      term, a suggestion a front-end may pre-fill (optional)
-timeout      pos_integer milliseconds or nil; expiry resolves {:error, :timeout}
-asker        pid, the process blocked on the answer
-asked_at     DateTime.t()
-```
-
-`:text` takes any binary; `:confirm` a boolean; `:choice` one of `options`, or
-any binary when `allow_other` is true; `:multi` a non-empty list of `options`.
-Anything else is `{:error, :invalid_answer}`, and the question stays open.
-Resolving a question the queue does not hold is `{:error, :unknown_question}`.
+The BEAM's former `elixos-ask:` notice line is withdrawn with `Elixos.Ask`
+(ADR-093). Oh-My-Jido approvals are the only human-in-the-loop mechanism; the
+OS indexes them for every session (§10) and logs a `Logger` notice per new
+request, which is not a byte-for-byte console contract.
 
 ## §7 The persistent disk
 
-ext4, label `ELIXOS`, mounted on `/priv`:
+In persistent mode: ext4, label `ELIXOS`, mounted on `/priv`:
 
 ```
 /priv/boot.state        §4, written only by the shim
@@ -288,6 +310,7 @@ ext4, label `ELIXOS`, mounted on `/priv`:
 /priv/cache/cargo/      CARGO_HOME for on-box Rust builds (M25, ADR-066)
 /priv/toolchain/        unpacked elixos-toolchain APK: Zig, cc/c++, Rust and Cargo
 /priv/apps/             installed apps (M11)
+/priv/data/<app>/       stable application state; `persist` paths live beneath it
 /priv/agents/           agent memory, `<id>.term` (M15, ADR-032)
 /priv/llm.exs           LLM provider settings (a keyword list, M15)
 /priv/hex/repos.exs     trusted Hex repositories (M14, ADR-019)
@@ -298,6 +321,13 @@ ext4, label `ELIXOS`, mounted on `/priv`:
 /priv/postgres/log/     uid/gid 70, mode 0755; logs are mode 0644 (M18)
 /priv/postgres/log/initdb.log  a fresh cluster's initialization output (M20)
 ```
+
+Live uses the same layout in RAM, with the service image and toolchain seeded
+from packages (ADR-085). Saving a generation does not export it to USB:
+all runtime changes, PostgreSQL data and generated keys disappear on a
+kernel reboot or power loss. No physical volume is automatically mounted,
+formatted or partitioned. Manual mounts and durable save/restore are not
+implemented by this boot profile.
 
 The system database itself is not on this list: it lives inside the cluster
 above. The BEAM (uid 1000) reaches it over loopback as the `postgres` role,
@@ -342,20 +372,23 @@ The factory ships the official repository preconfigured — its key in
 [elixos: [url: "https://mattneel.github.io/elixos", key: "<the shipped key>"]]
 ```
 
-in `/factory/hex/repos.exs` — so it is trusted without any consent step; the
-box's `/priv/hex/repos.exs` wins once it exists. The file is the machine
-owner's (single user, ADR-013), and it is the one configuration file Elixos
-reads by evaluating it (`Code.eval_file/1`), because it holds PEM keys.
+in `/factory/hex/repos.exs`. Application initialization imports this preset
+only when the writable trust file is absent. Reading/listing repositories
+never imports it or modifies an empty custom trust store; an explicit `[]`
+remains empty across boots. The file is the machine owner's (single user,
+ADR-013), and it is the one configuration file Elixos reads by evaluating
+it (`Code.eval_file/1`), because it holds PEM keys.
 
 Reads and writes of `repos.exs` are atomic (temporary file, fsync, rename,
 fsync of each directory), like every other file Elixos keeps.
 
 ## §9 Framebuffer GUI and console lease (M27)
 
-The GUI is a view of the Ask queue, not its owner. `Elixos.Ask.subscribe/0`
-atomically returns `{:ok, questions}` and subscribes the calling process to
-`{:elixos_ask, questions}` snapshots when the pending queue changes.
-Answers and dismissals retain the M20 Ask API and validation.
+The GUI is an optional view of `Elixos.Approvals` (§10), never its owner, and
+never starts at boot. `Elixos.GUI.start/0` returns `{:error, :nothing_pending}`
+without taking the screen or keyboard when no request is open. Escape or F12
+hands the screen back, as does the last open request being resolved; Escape
+never answers or denies. Answers go to `Elixos.Approvals.answer/2`.
 
 `Elixos.GUI.status/0` returns `{:ok, pid}` only after the first frame has
 been presented. `stop/0` stops rendering, releases input grabs and waits for
@@ -395,3 +428,36 @@ replies `C`, then closes the lease. EOF, unexpected data or an error also
 releases the lease and triggers rebind before another lease is granted.
 No peer supplies a path or a sysfs command. Broker SIGKILL cannot perform
 cleanup; starting the broker again restores abandoned console bindings.
+
+## §10 Oh-My-Jido approvals (ADR-093)
+
+Oh-My-Jido sessions own every approval and question: their timeout, failure
+and restart semantics are the library's (`question_timeout_ms`, fail closed,
+no revival after restore). Sessions using `Elixos.Approvals.Host` register each
+question with `Elixos.Approvals`; the OS's `Elixos.Coding` runtime uses that
+host with a one-hour question timeout (`:approval_timeout_ms`).
+
+`Elixos.Approvals.pending/0` lists open requests, oldest first:
+
+```
+id           pos_integer, OS-local, unique while the index runs
+session_id   the Oh-My-Jido session; session is its %OhMyJido.SessionRef{}
+question_id  Oh-My-Jido's id, passed to OhMyJido.answer/3
+run_id       the run that asked, or nil
+kind         :confirm (an effect approval) | :text | :choice | :multi
+prompt       what is being asked, derived from the question
+question     Oh-My-Jido's original (redacted) question map
+options      [String.t()], labels of the offered choices (else [])
+choices      the original option terms, in the same order
+requested_at DateTime.t()
+```
+
+`approve/1` sends `true`; `deny/1` sends `:deny`, which Oh-My-Jido treats as a
+denial. `answer/2` takes a boolean for `:confirm`, one label for `:choice`
+(the original option term is sent), a non-empty list of distinct labels for
+`:multi` and a non-empty binary for `:text`; anything else is
+`{:error, :invalid_answer}` and the request stays open. An id that is no
+longer open is `{:error, :unknown_request}`. `subscribe/0` returns the open
+requests and then sends `{:elixos_approvals, requests}` on every change.
+Login IEx sessions import `approvals/0`, `approve/1`, `deny/1` and
+`answer/2`. Nothing in the OS answers a request on its own.

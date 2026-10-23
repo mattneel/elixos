@@ -53,22 +53,22 @@
       },
       {
         "name": "musl",
-        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/musl-1.2.6-r2.apk",
-        "version": "1.2.6-r2",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/musl-1.2.6-r3.apk",
+        "version": "1.2.6-r3",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-721",
-          "checksum": "sha1-y+t9ldAmPNwLq3Ga3dueuZqNaUM="
+          "range": "bytes=0-722",
+          "checksum": "sha1-Sx2OqlxZp7k3+OGLbf/X+oeVKaE="
         },
         "control": {
-          "range": "bytes=722-1230",
-          "checksum": "sha1-JNQts+O/Z+jaJ4QHLMXQ5svftIU="
+          "range": "bytes=723-1228",
+          "checksum": "sha1-LxWdAiUjx6a3hymmYymFy3cU++Y="
         },
         "data": {
-          "range": "bytes=1231-417709",
-          "checksum": "sha256-vfWekZAxJC8s35bqhBgP0wneXmaCHMgBA7YQkWTXwr4="
+          "range": "bytes=1229-417729",
+          "checksum": "sha256-qSO9f0iypdmqmjxRFYv5Z8NkA9zhBF6OqxSNoJb6SYE="
         },
-        "checksum": "Q1JNQts+O/Z+jaJ4QHLMXQ5svftIU="
+        "checksum": "Q1LxWdAiUjx6a3hymmYymFy3cU++Y="
       },
       {
         "name": "busybox",
@@ -148,41 +148,41 @@
       },
       {
         "name": "alpine-release",
-        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/alpine-release-3.24.2-r0.apk",
-        "version": "3.24.2-r0",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/alpine-release-3.24.3-r0.apk",
+        "version": "3.24.3-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-722",
-          "checksum": "sha1-7yFxKIi1DZC/z5FByU6hjuKPmHg="
+          "range": "bytes=0-717",
+          "checksum": "sha1-8fWWWhDHIfmDULVjJMKVho3ksWI="
         },
         "control": {
-          "range": "bytes=723-1211",
-          "checksum": "sha1-tH9vSL07Dtx6XeOS8n1bskUv+1M="
+          "range": "bytes=718-1202",
+          "checksum": "sha1-vLeR64tqL6geAGmf21410czPK/I="
         },
         "data": {
-          "range": "bytes=1212-2079",
-          "checksum": "sha256-aSzrU6l+LeW8i5YxjfP9wM7WGFRV0yI7jMVtbF/yABQ="
+          "range": "bytes=1203-2070",
+          "checksum": "sha256-kCV/fIyqDfL3swDaOX0dhBO56+XLrt4uEJMyaxs5kaA="
         },
-        "checksum": "Q1tH9vSL07Dtx6XeOS8n1bskUv+1M="
+        "checksum": "Q1vLeR64tqL6geAGmf21410czPK/I="
       },
       {
         "name": "ca-certificates-bundle",
-        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/ca-certificates-bundle-20260909-r0.apk",
-        "version": "20260909-r0",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/ca-certificates-bundle-20261020-r0.apk",
+        "version": "20261020-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-721",
-          "checksum": "sha1-djOxvn2uEvT7aM4X14S/cBu390Q="
+          "range": "bytes=0-719",
+          "checksum": "sha1-DHvvIiktfIQ3X9PDGdtucG+4dU0="
         },
         "control": {
-          "range": "bytes=722-1307",
-          "checksum": "sha1-FGTYu4SxbeFGQyIqvXBBZvKmLPY="
+          "range": "bytes=720-1299",
+          "checksum": "sha1-1TztRkPmb8I4jKteprSsaIu3KW8="
         },
         "data": {
-          "range": "bytes=1308-108525",
-          "checksum": "sha256-A4PJtnzsfyL/Ri1OrStAqbIk+h4xYf4yy+I0mbiiRPQ="
+          "range": "bytes=1300-107098",
+          "checksum": "sha256-i7JSpufbjHD9CnPr4AzdnaQhI4MyP6BULNqCyDAH/Q0="
         },
-        "checksum": "Q1FGTYu4SxbeFGQyIqvXBBZvKmLPY="
+        "checksum": "Q11TztRkPmb8I4jKteprSsaIu3KW8="
       },
       {
         "name": "libcrypto3",
@@ -304,18 +304,18 @@
         "version": "29.1.1-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-686",
-          "checksum": "sha1-3r/IT29cmGT16LLndgpnkp4NPAU="
+          "range": "bytes=0-690",
+          "checksum": "sha1-Nt3DS1+WscrSth/80YPu+GpJ5y0="
         },
         "control": {
-          "range": "bytes=687-2678",
-          "checksum": "sha1-Mue1Cz359dsvdQarMBoSmk4JD3c="
+          "range": "bytes=691-2689",
+          "checksum": "sha1-akwAUgC2M/TWjseEbZI8PIfvTxE="
         },
         "data": {
-          "range": "bytes=2679-55311971",
-          "checksum": "sha256-7w7Q88I9l5kDwVJV2Uqluvzn7Y/m/l4Ws0+bBBTkMGY="
+          "range": "bytes=2690-55311980",
+          "checksum": "sha256-fNYugrnoTpXWDSrtjkpW7O4vcnqOqdc/bfiQaHb9cCk="
         },
-        "checksum": "Q1Mue1Cz359dsvdQarMBoSmk4JD3c="
+        "checksum": "Q1akwAUgC2M/TWjseEbZI8PIfvTxE="
       },
       {
         "name": "elixos-elixir",
@@ -323,18 +323,18 @@
         "version": "1.20.4-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-693",
-          "checksum": "sha1-GLtXedJOBe4rsQxIBeNfh+AYefY="
+          "range": "bytes=0-687",
+          "checksum": "sha1-t0RdkJZYlN3DjOyIUyjYY7BfQdk="
         },
         "control": {
-          "range": "bytes=694-2477",
-          "checksum": "sha1-ukESsxzOSTgdY/lgzDVhr0zXgB0="
+          "range": "bytes=688-2475",
+          "checksum": "sha1-ACHIT57zrQ3EtVlJCmR+OnIyjbE="
         },
         "data": {
-          "range": "bytes=2478-7333502",
-          "checksum": "sha256-mYOPxQOk2r6sE6athhtRlzKSDM1SphWdK/hmNfRhiMU="
+          "range": "bytes=2476-7333513",
+          "checksum": "sha256-PP5+1U4G/thA104Kx5TOr1C/9B7gwxUDhA9cSNaBwfw="
         },
-        "checksum": "Q1ukESsxzOSTgdY/lgzDVhr0zXgB0="
+        "checksum": "Q1ACHIT57zrQ3EtVlJCmR+OnIyjbE="
       },
       {
         "name": "libformw",
@@ -456,18 +456,18 @@
         "version": "0.1.0-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-688",
-          "checksum": "sha1-wKndXlwFBCkry/W913BBxbjm1rA="
+          "range": "bytes=0-687",
+          "checksum": "sha1-x59HzySZqTf3PydZbzSntAsAFSw="
         },
         "control": {
-          "range": "bytes=689-2581",
-          "checksum": "sha1-q926cl8mkEszxWUVb3TPG9uh24g="
+          "range": "bytes=688-2179",
+          "checksum": "sha1-BLJJFOwcXrQRhhGTMfcGkRuzY/I="
         },
         "data": {
-          "range": "bytes=2582-5539078",
-          "checksum": "sha256-T37EdeDA/cTGpQBso3fwHqRRNzwgM/oa8cfx0x5AS6k="
+          "range": "bytes=2180-14323917",
+          "checksum": "sha256-GGNJOzcmlWi9pIXiRWI/CEEIf6VTfFxFakHKpUfCsmU="
         },
-        "checksum": "Q1q926cl8mkEszxWUVb3TPG9uh24g="
+        "checksum": "Q1BLJJFOwcXrQRhhGTMfcGkRuzY/I="
       },
       {
         "name": "elixos-kernel",
@@ -475,18 +475,18 @@
         "version": "7.2.9-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-691",
-          "checksum": "sha1-NFB+SLONYS8u8jQ+65IqY7J+fwI="
+          "range": "bytes=0-690",
+          "checksum": "sha1-USqt5dHeQ7lGLBfsn6AXuibzjPs="
         },
         "control": {
-          "range": "bytes=692-2722",
-          "checksum": "sha1-gcSumYWBuUTyUR0g7MbJK8rOxZk="
+          "range": "bytes=691-2726",
+          "checksum": "sha1-wNS3JQM3w+zOdkBJd5La1ma4pdI="
         },
         "data": {
-          "range": "bytes=2723-16253326",
-          "checksum": "sha256-gWwpfItLWhCBMZGOorqfEuLQud9gugssV0axqaqYJIQ="
+          "range": "bytes=2727-16265428",
+          "checksum": "sha256-Sdhzly0s1GaElI7UuRflmAnT5exGndVLZJ85jL+5QBQ="
         },
-        "checksum": "Q1gcSumYWBuUTyUR0g7MbJK8rOxZk="
+        "checksum": "Q1wNS3JQM3w+zOdkBJd5La1ma4pdI="
       },
       {
         "name": "elixos-shim",
@@ -494,18 +494,18 @@
         "version": "0.0.0-r0",
         "architecture": "aarch64",
         "signature": {
-          "range": "bytes=0-687",
-          "checksum": "sha1-K4WyZCGAc9mR/YrDqe7+enxEx4E="
+          "range": "bytes=0-689",
+          "checksum": "sha1-qbPx/zLXBm4pd4RdBL2Ko9zPoE0="
         },
         "control": {
-          "range": "bytes=688-2487",
-          "checksum": "sha1-BTk7cpFkRrsPyfu7YFupdhvSG0Y="
+          "range": "bytes=690-2528",
+          "checksum": "sha1-NG1JGI321qn4SkJ5ouK9j0ngISA="
         },
         "data": {
-          "range": "bytes=2488-2182203",
-          "checksum": "sha256-AJJXxXwtK9beupMaEgP5foNc9slSjq+gSndpQpNNsok="
+          "range": "bytes=2529-4263000",
+          "checksum": "sha256-gEnooGczAIGnaJuDFO7aYmkcFPb2ItIXIigkdZBjhyA="
         },
-        "checksum": "Q1BTk7cpFkRrsPyfu7YFupdhvSG0Y="
+        "checksum": "Q1NG1JGI321qn4SkJ5ouK9j0ngISA="
       }
     ]
   }

@@ -28,7 +28,9 @@ with cast_file.open() as cast:
         text += event[2]
         if start is None and "CAPTURE READY" in text:
             start = clock
-        if stop is None and "M27 STOP :ok" in text:
+        # The GUI hands the screen back by itself once nothing is pending;
+        # the last confirmed handback ends the framebuffer panel.
+        if "M27 HANDED BACK {:error, :not_running}" in text:
             stop = clock
 if start is None:
     raise SystemExit("compose: capture start marker missing from console recording")
@@ -73,7 +75,7 @@ filter_graph = (
     "[g][c]hstack=inputs=2,pad=2000:1000:0:60:color=0x0e121b,"
     f"drawtext=fontfile='{font}':text='GUI  /  LIVE FRAMEBUFFER':x=24:y=16:fontsize=28:fontcolor=white,"
     f"drawtext=fontfile='{font}':text='IEx  /  COMMANDS AND ANSWERS':x=824:y=16:fontsize=28:fontcolor=white,"
-    f"drawtext=fontfile='{font}':text='Real keyboard input resolves the same Ask queue shown in IEx.':"
+    f"drawtext=fontfile='{font}':text='Real keyboard input answers the Oh-My-Jido approvals listed in IEx.':"
     "x=24:y=958:fontsize=26:fontcolor=0xb8c8dc[v]"
 )
 subprocess.run([

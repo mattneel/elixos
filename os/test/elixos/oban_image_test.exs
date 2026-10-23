@@ -24,12 +24,15 @@ defmodule Elixos.ObanImageTest do
         image,
         :demo,
         "1.0.0",
-        [{Elixos.ObanImageTest.Service, []}],
+        %Elixos.Package.Spec{
+          services: [{Elixos.ObanImageTest.Service, []}],
+          oban: @declaration
+        },
         %{oban: "~> 2.24"},
-        @declaration
+        []
       )
 
-    :ok = Image.record_app(image, :plain, "0.1.0", [], %{}, [])
+    :ok = Image.record_app(image, :plain, "0.1.0", %Elixos.Package.Spec{}, %{}, [])
     {:ok, n} = Image.save(image)
     :ok = Image.close(image)
 

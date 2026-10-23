@@ -1,14 +1,19 @@
-# Real framebuffer and QMP keyboard, then console handover.
-M27 GUI {:ok,
+# Boot to IEx without the GUI; real framebuffer and QMP keyboard answer
+# Oh-My-Jido approvals; the GUI hands the console back when nothing is pending.
+M27 GUI {:error, :not_running} {:error, :nothing_pending}
 M27 PENDING [:confirm]
-M27 ANSWER confirm {:ok, true}
+M27 OPEN {:ok,
+M27 ANSWER approve :ok
+M27 HANDED BACK {:error, :not_running}
 M27 PENDING [:text]
-M27 ANSWER text {:ok, "hello"}
+M27 ANSWER text {:ok, %{answer: "hello"}}
+M27 HANDED BACK {:error, :not_running}
 M27 PENDING [:choice]
-M27 ANSWER choice {:ok, "Green"}
+M27 ANSWER choice {:ok, %{answer: %{label: "Green"}}}
+M27 HANDED BACK {:error, :not_running}
 M27 PENDING [:multi]
-M27 ANSWER multi {:ok, ["Network", "Audio"]}
-M27 STOP :ok
+M27 ANSWER multi {:ok, %{answer: [%{label: "Network"}, %{label: "Audio"}]}}
+M27 HANDED BACK {:error, :not_running}
 M27 CONSOLE 42
 M27 FBCON ["1"]
 elixos-shim: shutdown poweroff

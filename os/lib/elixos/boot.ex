@@ -37,6 +37,21 @@ defmodule Elixos.Boot do
   end
 
   @doc """
+  Execution boundary: `:machine` owns its kernel, `:container` shares the
+  hosting kernel, and `:host` is development without a shim launch.
+
+  This is independent of normal/rescue mode. Container generations and
+  services are real, but kernel boot and host hardware are not container APIs.
+  """
+  @spec runtime() :: :machine | :container | :host
+  def runtime do
+    case Elixos.Boot.Env.runtime() do
+      {:ok, runtime} -> runtime
+      {:error, {kind, name}} -> raise "broken launch contract: #{kind} #{name} (PROTOCOL.md §3)"
+    end
+  end
+
+  @doc """
   The target this VM was built for, short form: `"x86_64"`, `"aarch64"`.
 
   ERTS knows its own target triple (`aarch64-unknown-linux-musl`, say); the

@@ -32,7 +32,7 @@ deps: ## Fetch the locked Elixir dependency set for the OS
 test-os: deps ## ExUnit tests for the Elixir userland (no QEMU)
 	cd os && ELIXOS_MILESTONE=$(MILESTONE) mix test
 
-test-qemu: deps image ## Boot real images in QEMU (slow): os/test/integration
+test-qemu: deps image uefi-image ## Boot real images in QEMU (slow): os/test/integration
 	cd os && ELIXOS_QEMU=1 ELIXOS_MILESTONE=$(MILESTONE) mix test test/integration
 
 test-qemu-aarch64: images ## The aarch64 smoke set, on qemu-system-aarch64 (TCG: slow)

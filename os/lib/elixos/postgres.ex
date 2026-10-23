@@ -236,7 +236,7 @@ defmodule Elixos.Postgres do
           {:error, :init_timeout}
         end
 
-      {:error, :enoent} ->
+      {:error, reason} when reason in [:enoent, :esrch] ->
         :ok
 
       {:error, reason} ->

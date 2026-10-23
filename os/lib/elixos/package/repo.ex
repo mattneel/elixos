@@ -156,8 +156,6 @@ defmodule Elixos.Package.Repo do
   # holds PEM keys, which no literal format reads kindly. Nothing is trusted
   # if it cannot be read - and `add/3` refuses rather than overwrite it.
   defp read_pairs do
-    ensure_seeded()
-
     if File.regular?(repos_file()) do
       try do
         case Code.eval_file(repos_file()) do

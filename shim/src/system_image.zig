@@ -1,7 +1,8 @@
-//! M18's normal-mode service image. Raw Linux, fixed storage, no libc.
+//! M18's service tree: read-only machine image or baked native OCI directory.
 const std = @import("std");
 const linux = std.os.linux;
 const milestone = @import("milestone.zig");
+const container_profile = @import("build_options").container;
 
 pub const postgres_uid: linux.uid_t = 70;
 pub const postgres_gid: linux.gid_t = 70;
@@ -42,6 +43,10 @@ const data_mounts = [_]struct { source: [*:0]const u8, target: [*:0]const u8 }{
 };
 
 pub fn mounted() bool {
+    if (container_profile) {
+        verifyBaked() catch return false;
+        return true;
+    }
     const root_id = mountId("/") catch return false;
     if ((mountId("/system") catch return false) == root_id) return false;
     for (data_mounts) |data| {
@@ -58,6 +63,7 @@ fn mountId(path: [*:0]const u8) Error!u64 {
 }
 
 pub fn mount() Error!void {
+    if (container_profile) return verifyBaked();
     const root_id = try mountId("/");
     if ((try mountId("/system")) == root_id) try mountSystem();
     for (data_mounts) |data| {
@@ -104,6 +110,7 @@ fn mountSystem() Error!void {
 }
 
 pub fn unmount() Error!void {
+    if (container_profile) return;
     const root_id = try mountId("/");
     var failed = false;
     for (data_mounts) |data| {
@@ -115,6 +122,28 @@ pub fn unmount() Error!void {
     }
     if ((try mountId("/system")) != root_id and linux.errno(linux.umount2("/system", 0)) != .SUCCESS) failed = true;
     if (failed) return error.UnmountFailed;
+}
+
+/// OCI supplies a regular, root-owned immutable image tree. ICU and zoneinfo
+/// are baked symlinks, never bind mounts. The image producer owns tree-content
+/// integrity; this boundary rejects writable roots and unexpected data links.
+fn verifyBaked() Error!void {
+    const system = try directory(linux.AT.FDCWD, "/system");
+    defer _ = linux.close(system);
+    if (!trustedBakedDirectory(&(try info(system)))) return error.UnsafePath;
+    for (data_mounts) |data| {
+        const source = try directory(linux.AT.FDCWD, data.source);
+        defer _ = linux.close(source);
+        if (!trustedBakedDirectory(&(try info(source)))) return error.UnsafePath;
+        var link_buffer: [128]u8 = undefined;
+        const length = linux.readlinkat(linux.AT.FDCWD, data.target, &link_buffer, link_buffer.len);
+        if (linux.errno(length) != .SUCCESS or length == link_buffer.len or
+            !std.mem.eql(u8, link_buffer[0..length], std.mem.span(data.source))) return error.UnsafePath;
+    }
+}
+
+fn trustedBakedDirectory(metadata: *const linux.Statx) bool {
+    return linux.S.ISDIR(metadata.mode) and metadata.uid == 0 and metadata.gid == 0 and metadata.mode & 0o022 == 0;
 }
 
 /// Only root or the database account may already own the cluster directories.
@@ -188,4 +217,20 @@ test "system image rejects writable, foreign-owned and aliased executable images
     try std.testing.expect(!trustedImage(&metadata, 10));
     metadata.mode = linux.S.IFLNK | 0o444;
     try std.testing.expect(!trustedImage(&metadata, 9));
+}
+
+test "baked service tree accepts regular immutable roots without requiring another mount" {
+    var metadata = std.mem.zeroes(linux.Statx);
+    metadata.mode = linux.S.IFDIR | 0o555;
+    metadata.mnt_id = 1;
+    try std.testing.expect(trustedBakedDirectory(&metadata));
+    metadata.mode = linux.S.IFDIR | 0o755;
+    try std.testing.expect(trustedBakedDirectory(&metadata));
+    metadata.mode |= 0o020;
+    try std.testing.expect(!trustedBakedDirectory(&metadata));
+    metadata.mode = linux.S.IFLNK | 0o755;
+    try std.testing.expect(!trustedBakedDirectory(&metadata));
+    metadata.mode = linux.S.IFDIR | 0o555;
+    metadata.uid = 1000;
+    try std.testing.expect(!trustedBakedDirectory(&metadata));
 }

@@ -4,9 +4,9 @@ defmodule Elixos.Package.SCM do
 
   A project built on Elixos declares its dependencies the ordinary way -
   `{:hello_dep, "~> 0.1"}` - and this box has no network and keeps one version
-  per package (M10). `Elixos.Package.build/1` prepends this SCM inside the
-  child ERTS that runs Mix, so it is asked before any SCM that would fetch:
-  when the dependency is installed under `/priv/apps`, it is answered there
+  per package (M10). `Elixos.Package` prepends this SCM inside the child ERTS
+  that runs Mix, so it is asked before any SCM that would fetch: when the
+  dependency is installed under `/priv/apps`, it is answered there
   and `checked_out?/1` is true because it is already on the disk, so Mix never
   reaches for a repository.
 
@@ -15,6 +15,11 @@ defmodule Elixos.Package.SCM do
   by that name is installed, and when what is installed does not satisfy the
   requirement in the `mix.exs`. A dependency this box did not install resolves
   the ordinary way, where a repository is the only place it could come from.
+
+  `:elixos` is different: it is always the running OS's actual application
+  resource, even if the project names an alternate path or Git repository.
+  Its resource version must match the loaded OS exactly, and Mix checks the
+  tuple requirement against that resource. It is never fetched or compiled.
   """
   @behaviour Mix.SCM
 
@@ -24,6 +29,41 @@ defmodule Elixos.Package.SCM do
   def fetchable?, do: false
 
   @impl true
+  def accepts_options(:elixos, opts) do
+    dir =
+      # Use this executing OS module's provenance, not a directory-name
+      # lookup that an alternate app on the code path could shadow.
+      case :code.which(__MODULE__) do
+        path when is_list(path) -> path |> to_string() |> Path.dirname() |> Path.dirname()
+        _ -> Mix.raise("the running Elixos application is unavailable")
+      end
+
+    app_file = Path.join(dir, "ebin/elixos.app")
+    loaded_version = Application.spec(:elixos, :vsn)
+
+    with {:ok, [{:application, :elixos, properties}]} <- :file.consult(String.to_charlist(app_file)),
+         true <- Keyword.keyword?(properties),
+         {:ok, ^loaded_version} <- Keyword.fetch(properties, :vsn),
+         {:ok, _version} <- Version.parse(to_string(loaded_version)) do
+      version = to_string(loaded_version)
+
+      if opts[:requirement] != nil and not Version.match?(version, opts[:requirement]) do
+        Mix.raise("running Elixos #{version} does not satisfy #{inspect(opts[:requirement])}")
+      end
+
+      opts
+      |> Keyword.drop(@own_source ++ [:manager])
+      |> Keyword.put(:dest, dir)
+      # Mix does not pass a tuple's requirement to accepts_options/2. An
+      # absolute :app resource lets its normal dependency loader check that
+      # requirement against the OS rather than a nonexistent local build.
+      |> Keyword.put(:app, app_file)
+      |> Keyword.put(:compile, false)
+    else
+      _ -> Mix.raise("running Elixos resource #{app_file} does not match its loaded version")
+    end
+  end
+
   def accepts_options(app, opts) do
     with nil <- named_source(opts),
          dir when is_binary(dir) <- installed_dir(app),

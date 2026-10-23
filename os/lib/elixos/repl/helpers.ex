@@ -16,6 +16,12 @@ defmodule Elixos.REPL.Helpers do
 
   `ls/0` lists the session's directory, `ls/1` a path inside it, and `cd/1`
   accepts anything `Elixos.Session.expand/1` understands.
+
+  Every open Oh-My-Jido approval or question on the machine, including those of
+  detached agents, is answered from any prompt (ADR-093):
+
+      iex(4)> approvals()
+      iex(5)> approve(1)    # or deny(1), or answer(2, "staging")
   """
 
   @doc "The session's working directory."
@@ -37,4 +43,20 @@ defmodule Elixos.REPL.Helpers do
 
   @spec ls(Path.t()) :: [String.t()] | {:error, term()}
   def ls(path), do: Elixos.Session.ls(path)
+
+  @doc "Open Oh-My-Jido approvals and questions from every session, oldest first."
+  @spec approvals() :: [Elixos.Approvals.Request.t()] | {:error, term()}
+  def approvals, do: Elixos.Approvals.pending()
+
+  @doc "Approves request `id` (see `approvals/0`)."
+  @spec approve(pos_integer()) :: :ok | {:error, term()}
+  def approve(id), do: Elixos.Approvals.approve(id)
+
+  @doc "Denies request `id`; the waiting effect does not run."
+  @spec deny(pos_integer()) :: :ok | {:error, term()}
+  def deny(id), do: Elixos.Approvals.deny(id)
+
+  @doc "Answers a clarification request with one of its options or text."
+  @spec answer(pos_integer(), term()) :: :ok | {:error, term()}
+  def answer(id, value), do: Elixos.Approvals.answer(id, value)
 end

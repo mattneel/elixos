@@ -1,25 +1,23 @@
 defmodule Elixos.EmergeRenderTest do
   @moduledoc """
-  The Ask dialogs render with no display (M27): the renderer is headless
-  raster, and `Elixos.GUI.render_dialog/1` hands the pixels back, so every
-  kind of question is tested on the host, not only on the machine's screen.
+  Approval dialogs render with no display (M27, ADR-093): the renderer is
+  headless raster, and `Elixos.GUI.render_dialog/1` hands the pixels back, so
+  every kind of request is tested on the host, not only on the machine's screen.
   """
   use ExUnit.Case, async: true
 
   @moduletag milestone: 27
 
-  alias Elixos.Ask.Question
+  alias Elixos.Approvals.Request
   alias Elixos.GUI
 
   defp question(kind) do
-    %Question{
-      id: "q1",
+    %Request{
+      id: 1,
       kind: kind,
       prompt: "pick one",
       options: ["alpha", "beta", "gamma"],
-      asker: self(),
       default: nil,
-      timeout: nil,
       allow_other: kind in [:choice, :multi]
     }
   end

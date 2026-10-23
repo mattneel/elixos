@@ -23,3 +23,12 @@ Fix: the script `unset LLVM` before configuring. We build with gcc
 `/dev/kvm` exists here, so QEMU runs at full speed and
 `ELIXOS_QEMU_SLOWDOWN` can stay at 1. On a host without nested
 virtualization, raise it instead of raising test timeouts.
+
+## Alpine pins rotate
+
+The mirrors keep only current Alpine revisions, so an exact pin can stop
+resolving. On 2026-10-22 Alpine 3.24 moved to `alpine-release=3.24.3-r0`, with
+new `gn` and musl revisions; the melange recipe pins were bumped to match.
+If melange or apko are missing or stale, run `scripts/install-build-tools.sh`.
+A factory build also needs the approved `ELIXOS_CODING_SHA256` and the exact
+Oh-My-Jido source snapshot that it pins.

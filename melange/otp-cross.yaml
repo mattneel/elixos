@@ -41,7 +41,7 @@ environment:
       - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
       - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
     packages:
-      - alpine-release=3.24.2-r0
+      - alpine-release=3.24.3-r0
       - alpine-keys
       # The bootstrap ERTS: the same version, built natively by the x86_64
       # recipe. OTP's cross build runs *this* erl to compile the target's

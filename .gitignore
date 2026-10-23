@@ -12,3 +12,8 @@ erl_crash.dump
 /os/tmp/
 # A demo's working disk copy, made and removed by demos/record.sh
 demos/*.disk
+# The optional Eval profile builds into its own ELIXOS_BUILD (ADR-092).
+/build-eval/
+/hex/packages/*/_build/
+/hex/packages/*/deps/
+/hex/packages/*/tmp/

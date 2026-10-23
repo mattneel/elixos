@@ -44,6 +44,7 @@ defmodule Elixos.Test.QEMU do
     * `:disk` (required) - data disk image (see `Elixos.Test.Disk.fresh!/1`)
     * `:append` - extra kernel command line words, e.g. `["elixos.safe"]`
     * `:memory_mb` - default 1024
+    * `:initramfs` - explicit initramfs file for a distinct boot profile
     * `:ssh_port` - forward host 127.0.0.1:<port> to guest port 22 (virtio-net, ip=dhcp)
     * `:arch` - `:x86_64` (default) or `:aarch64`: which QEMU binary, machine,
       console and artifacts the guest gets
@@ -110,7 +111,7 @@ defmodule Elixos.Test.QEMU do
           "-kernel",
           artifact(kernel_env, kernel_name),
           "-initrd",
-          artifact(initramfs_env, initramfs_name),
+          Keyword.get_lazy(opts, :initramfs, fn -> artifact(initramfs_env, initramfs_name) end),
           "-append",
           append
         ]

@@ -1,0 +1,22 @@
+# Elixos kernel config: riscv64 (M28).
+#
+# Applied over riscv's defconfig, on top of the common fragment
+# (kernel/elixos.config); the guard checks both files together.
+# This is configuration only: the kernel stays unmodified mainline (ADR-001).
+
+# --- QEMU virt: the platform M28's tests boot ---
+CONFIG_ARCH_VIRT=y
+CONFIG_RISCV_SBI=y
+CONFIG_PCI_HOST_GENERIC=y
+CONFIG_VIRTIO_MMIO=y
+CONFIG_RTC_DRV_GOLDFISH=y
+
+# --- the serial console: virt's ns16550a at 0x10000000 is ttyS0 ---
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_SERIAL_OF_PLATFORM=y
+CONFIG_SERIAL_EARLYCON_RISCV_SBI=y
+
+# --- poweroff and reboot through virt's syscon (SBI SRST also works) ---
+CONFIG_POWER_RESET_SYSCON=y
+CONFIG_POWER_RESET_SYSCON_POWEROFF=y

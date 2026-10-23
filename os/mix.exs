@@ -26,10 +26,7 @@ defmodule Elixos.MixProject do
           include_erts:
             System.get_env("ELIXOS_INCLUDE_ERTS") != "0" and
               (System.get_env("ELIXOS_ERTS") || true),
-          include_executables_for: [],
-          # ADR-047: ship the engine without loading its application spec;
-          # Jido discovery must never enumerate its NIFs in the main VM.
-          applications: [quickbeam: :none, oxc: :none]
+          include_executables_for: []
         ]
       ]
     ]
@@ -69,9 +66,14 @@ defmodule Elixos.MixProject do
   # natives and does not build on musl: a JVM-shaped payload is not worth it for
   # a browser, and the interface implemented here means either is one line away
   # if that changes.
-  defp deps,
-    do: [
-      {:jido, "~> 2.4"},
+  # Oh-My-Jido is installer-less. Jido is already installed by ADR-036;
+  # changing its source below preserves that wiring, not a second install.
+  # ReqLLM's source override remains the canonical library's own dependency.
+  defp deps do
+    coding = Path.expand(System.get_env("ELIXOS_OH_MY_JIDO_SOURCE") || "../../oh_my_jido", __DIR__)
+    [
+      {:jido, path: Path.join(coding, "vendor/jido"), override: true},
+      {:oh_my_jido, path: coding},
       {:oban, "~> 2.24"},
       {:ecto_sql, "~> 3.14"},
       {:postgrex, "~> 0.22"},
@@ -79,9 +81,7 @@ defmodule Elixos.MixProject do
       # The image packages Emerge's musl raster NIF separately from its BEAM.
       # Rustler generates a loader without compiling/downloading native code.
       {:rustler, "~> 0.38.0", runtime: false},
-      {:emerge, "0.4.2"},
-      # Loaded and started only by the supervised tool peer (ADR-047).
-      {:quickbeam, "0.11.3", runtime: false},
-      {:oxc, "0.19.0", runtime: false}
+      {:emerge, "0.4.2"}
     ]
+  end
 end

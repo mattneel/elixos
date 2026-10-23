@@ -10,6 +10,17 @@ defmodule Elixos.Package do
   the image so the next `Elixos.save/1` includes it. NIFs compile with the
   bundled `zig cc` (ADR-009) against the running ERTS.
 
+  Project metadata and compilation both use `Mix.target() == :elixos` and
+  `Mix.env() == :prod`. The exact declared app's application resource supplies
+  its built version; dependencies are checked system-wide before building.
+  Target config is recorded with the install and reapplied at boot.
+
+  App state belongs in `data_dir/1`, outside its replaceable installed tree.
+  Declared `persist:` directories are created there without following
+  symlinks, and are retained on upgrades and removal. `boot: :manual` permits
+  services and Oban at explicit installation but never auto-starts them from
+  a later saved generation.
+
   A **name** is installed from the trusted Hex repositories (M14, ADR-019):
 
       iex> Elixos.Package.install(:hello_pkg)
@@ -39,7 +50,7 @@ defmodule Elixos.Package do
     root = Path.expand(dir)
 
     if File.regular?(Path.join(root, "mix.exs")) do
-      install_project(root, %{})
+      install_project(root)
     else
       install_payload(root)
     end
@@ -58,11 +69,11 @@ defmodule Elixos.Package do
   # One version of every package (ADR-015): the resolver weighs the whole
   # closure, and everything already installed, before anything is unpacked.
   defp check_plan(closure) do
-    case Elixos.Package.Resolver.plan(
-           installed_packages(),
-           closure_packages(closure),
-           os_version()
-         ) do
+    check_packages(closure_packages(closure))
+  end
+
+  defp check_packages(incoming) do
+    case Elixos.Package.Resolver.plan(installed_packages(), incoming, os_version()) do
       {:ok, _plan} -> :ok
       {:error, conflicts} -> {:error, {:conflicts, conflicts}}
     end
@@ -77,13 +88,17 @@ defmodule Elixos.Package do
   # Dependencies first: a package that requires another compiles against it,
   # so it has to be there when the child ERTS builds it.
   defp install_closure(closure) do
-    Enum.each(closure, fn entry ->
+    incoming = closure_packages(closure)
+
+    Enum.reduce(Enum.zip(closure, incoming), incoming, fn {entry, expected}, pending ->
       dir = Path.join([os_priv(), "apps", "#{entry.name}-#{entry.version}"])
 
       case Elixos.Package.Hex.unpack(entry.repo, entry.name, entry.version, dir) do
         {:ok, ^dir} ->
-          case install_project_or_payload(dir, atom_deps(entry.deps)) do
-            {:ok, _app} -> :ok
+          case install_project_or_payload(dir, expected, pending) do
+            # Later planning must retain this install's actual target deps,
+            # not replace them again with the registry's source-level deps.
+            {:ok, _app} -> Enum.reject(pending, &(&1.app == expected.app))
             {:error, reason} -> throw({:error, {:install_failed, entry.name, reason}})
           end
 
@@ -97,26 +112,52 @@ defmodule Elixos.Package do
     {:error, reason} -> {:error, reason}
   end
 
-  defp install_project_or_payload(dir, deps) do
+  defp install_project_or_payload(dir, expected, incoming) do
     if File.regular?(Path.join(dir, "mix.exs")) do
-      install_project(dir, deps)
+      install_project(dir, expected, incoming)
     else
-      install_payload(dir, deps)
+      install_payload(dir, expected, incoming)
     end
   end
 
-  defp install_project(root, deps) do
-    with {:ok, spec} <- spec(root),
-         {:ok, app, version, ebin} <- build(root),
-         :ok <- apply_config(root),
+  defp install_project(root, expected \\ nil, incoming \\ []) do
+    with {:ok, project} <- Elixos.Package.Spec.read_project(root),
+         :ok <- Elixos.Package.Spec.check_os(project.spec, os_version()),
+         :ok <- check_identity(project, expected),
+         :ok <- check_project_plan(project, incoming),
+         {:ok, config} <- read_config(root),
+         {:ok, app, version, ebin} <- build(root, project.app),
+         :ok <- check_built_version(project, version),
          :ok <- install_tree(app, ebin, root),
+         :ok <- prepare_app(app, project.spec.persist, config),
          :ok <- load(app, installed_ebin(app)),
-         :ok <- configure_oban(app, spec.oban),
-         :ok <- start_services(spec.services),
-         :ok <- record(app, version, spec, deps) do
+         :ok <- configure_oban(app, project.spec.oban),
+         :ok <- start_services(project.spec.services),
+         :ok <- record(app, version, project.spec, project.deps, config) do
       {:ok, app}
     end
   end
+
+  defp check_identity(_project, nil), do: :ok
+
+  defp check_identity(%{app: app, version: version}, %{app: app, version: version}), do: :ok
+
+  defp check_identity(project, expected) do
+    {:error, {:package_identity_mismatch, {expected.app, expected.version}, {project.app, project.version}}}
+  end
+
+  defp check_project_plan(project, incoming) do
+    package = Map.take(project, [:app, :version, :deps])
+    # The signed closure was checked before unpacking. Keep planning over the
+    # whole closure here, not an intermediate upgrade that temporarily still
+    # has an old dependent installed, while also checking target-effective deps.
+    remaining = Enum.reject(incoming, &(&1.app == project.app))
+    check_packages([package | remaining])
+  end
+
+  defp check_built_version(%{version: version}, version), do: :ok
+  defp check_built_version(project, version),
+    do: {:error, {:built_version_mismatch, project.app, project.version, version}}
 
   # The scheduler is configured before the app's services start - a service
   # may enqueue - and a refusal is an install failure, not a silent drop: the
@@ -135,11 +176,13 @@ defmodule Elixos.Package do
   # the only one, and it is taken where it lies (the disk's /priv/toolchain is
   # 421M; copying it would be waste) and recorded, so it is part of the image
   # like any package.
-  defp install_payload(root, deps \\ %{}) do
-    name = root |> Path.basename() |> String.to_atom()
+  defp install_payload(root, expected \\ nil, incoming \\ []) do
+    package =
+      expected || %{app: root |> Path.basename() |> String.to_atom(), version: payload_version(root), deps: %{}}
 
-    with :ok <- record(name, payload_version(root), %Elixos.Package.Spec{}, deps) do
-      {:ok, name}
+    with :ok <- check_packages(if(incoming == [], do: [package], else: incoming)),
+         :ok <- record(package.app, package.version, %Elixos.Package.Spec{}, package.deps, []) do
+      {:ok, package.app}
     end
   end
 
@@ -161,42 +204,59 @@ defmodule Elixos.Package do
 
   ## A path install
 
-  defp spec(root) do
-    case Elixos.Package.Spec.read_project(root) do
-      {:ok, :none} -> {:ok, %Elixos.Package.Spec{}}
-      {:ok, spec} -> {:ok, spec}
-      {:error, reason} -> {:error, {:malformed_spec, reason}}
-    end
-  end
-
+  # Metadata and compilation use the same target/environment pair.
   # The build half: a child ERTS, exec'd directly - this VM's working
   # directory is not a build directory (ADR-016) - running Mix with
   # MIX_TARGET=elixos so config/elixos.exs applies. `--no-deps-check` is what
   # makes `:elixos` a dependency on the *running OS*: its modules are loaded
   # here already, and Mix must not go looking for the path the project names.
-  defp build(root) do
+  @doc false
+  def compile_project do
+    Mix.start()
+    Mix.SCM.prepend(Elixos.Package.SCM)
+    Mix.CLI.main(["compile", "--no-deps-check"])
+
+    project = Mix.Project.config()
+    app = Keyword.fetch!(project, :app)
+    version = Keyword.fetch!(project, :version)
+    resource = Path.join(Mix.Project.compile_path(), "#{app}.app")
+
+    # A version read from another file need not change mix.exs or any BEAM.
+    # Refresh only its stale application resource, not all native compilers.
+    if app_version(app, resource) != {:ok, version} do
+      Mix.Task.reenable("compile.app")
+
+      case Mix.Task.run("compile.app", ["--force"]) do
+        {:error, diagnostics} -> Mix.raise("application resource compilation failed: #{inspect(diagnostics)}")
+        _result -> :ok
+      end
+    end
+  end
+
+  defp build(root, app) do
     env = [
       {"MIX_ENV", "prod"},
       {"MIX_TARGET", "elixos"},
       {"MIX_HOME", "/priv/mix"},
       {"HEX_HOME", "/priv/hex-home"},
+      {"MIX_BUILD_PATH", nil},
+      {"MIX_DEPS_PATH", nil},
+      {"MIX_PATH", nil},
       {"ROOTDIR", factory()},
       {"BINDIR", Path.join(factory(), "erts/bin")}
     ]
 
-    # -eval is Erlang, so this calls the Elixir Mix.Own entry point the way
+    # -eval is Erlang, so this calls the Elixir Mix.CLI entry point the way
     # the mix script itself does: a list of binaries, no shell anywhere.
     # A failure makes the eval fail, which ends the child non-zero on its own;
-    # a success has to say so, or the release's boot leaves the child running
-    # as a daemon and System.cmd waits forever.
+    # a success halts explicitly, otherwise the clean child keeps running
+    # and System.cmd waits forever.
     #
     # An installed package is a dependency (M26): prepended before any SCM Mix
     # starts with, Elixos.Package.SCM answers for dependencies this box already
     # has, so a project resolves them where they are installed instead of a
     # repository it cannot reach.
-    code =
-      ~s|'Elixir.Mix':start(), 'Elixir.Mix.SCM':prepend('Elixir.Elixos.Package.SCM'), | <>
-        ~s|'Elixir.Mix.CLI':main([<<"compile">>, <<"--no-deps-check">>]), erlang:halt(0)|
+    code = ~s|'Elixir.Elixos.Package':compile_project(), erlang:halt(0)|
 
     # The release's boot script resolves $RELEASE_LIB against the boot_var the
     # shim passes, so a child ERTS has to pass it too.
@@ -223,47 +283,36 @@ defmodule Elixos.Package do
       System.cmd(erlexec(), args, cd: root, env: env, stderr_to_stdout: true)
 
     if status == 0 do
-      ebin = Path.join([root, "_build", "elixos_prod", "lib", app_dir(root), "ebin"])
-
-      cond do
-        ebin == nil -> {:error, {:no_build_output, root, output}}
-        true -> {:ok, app_of(ebin), version_of(ebin), ebin}
-      end
+      build_output(root, app)
     else
       {:error, {:build_failed, status, output}}
     end
+  rescue
+    error -> {:error, {:build_failed, Exception.message(error)}}
   end
 
-  defp app_dir(root) do
-    case File.ls(Path.join([root, "_build", "elixos_prod", "lib"])) do
-      {:ok, [dir | _]} -> dir
-      _other -> nil
+  @doc false
+  @spec build_output(Path.t(), atom()) ::
+          {:ok, atom(), String.t(), Path.t()} | {:error, term()}
+  def build_output(root, app) do
+    ebin = Path.join([root, "_build", "elixos_prod", "lib", Atom.to_string(app), "ebin"])
+    path = Path.join(ebin, "#{app}.app")
+
+    case app_version(app, path) do
+      {:ok, version} -> {:ok, app, version, ebin}
+      {:error, :enoent} -> {:error, {:no_build_output, app, path}}
+      {:error, reason} -> {:error, {:invalid_build_output, app, path, reason}}
     end
   end
 
-  # The build dir names both: _build/elixos_prod/lib/<app>-<version>/ebin.
-  defp app_of(ebin) do
-    ebin |> Path.dirname() |> Path.basename() |> String.split("-") |> hd() |> String.to_atom()
-  end
-
-  defp version_of(ebin) do
-    ebin |> Path.dirname() |> Path.basename() |> String.split("-") |> List.last()
-  end
-
-  # The app's own config/*.exs is its settings (ADR-010): read it the way mix
-  # does - env and target set - and put every value into this VM, so the app
-  # behaves as built. Case 1's SampleApp.where() is exactly this.
-  defp apply_config(root) do
+  # Keep the target config itself, not only its effects on this VM: a saved
+  # generation must apply it again before any installed service starts.
+  defp read_config(root) do
     path = Path.join(root, "config/config.exs")
 
-    if File.regular?(path) do
-      for {app, settings} <- Config.Reader.read!(path, env: :prod, target: :elixos),
-          {key, value} <- settings do
-        Application.put_env(app, key, value)
-      end
-    end
-
-    :ok
+    if File.regular?(path),
+      do: {:ok, Config.Reader.read!(path, env: :prod, target: :elixos)},
+      else: {:ok, []}
   rescue
     error -> {:error, {:config_failed, Exception.message(error)}}
   end
@@ -275,14 +324,14 @@ defmodule Elixos.Package do
     dest = installed_dir(app)
     File.rm_rf!(dest)
     File.mkdir_p!(Path.dirname(dest))
-    File.cp_r!(Path.dirname(ebin), dest)
+    File.cp_r!(Path.dirname(ebin), dest, dereference_symlinks: true)
 
     # Mix links a project's priv into the build dir when the build starts; a
     # compiler that creates priv while compiling (the NIF fixture does) is
     # later than that, so the project's priv is what ebin loads from at run
     # time. Copy it beside ebin.
     priv = Path.join(root, "priv")
-    if File.dir?(priv), do: File.cp_r!(priv, Path.join(dest, "priv"))
+    if File.dir?(priv), do: File.cp_r!(priv, Path.join(dest, "priv"), dereference_symlinks: true)
 
     :ok
   end
@@ -297,18 +346,122 @@ defmodule Elixos.Package do
   def installed_dir(app), do: Path.join([os_priv(), "apps", Atom.to_string(app)])
 
   @doc """
+  The app's state directory: `$priv/data/<app>` (`/priv/data/<app>` normally).
+
+  `elixos: [persist: ...]` names relative directories below this root. State
+  is ordinary filesystem data, separate from replaceable installed code and
+  retained on upgrades and removal. This does not add reboot durability to
+  a Live system whose `/priv` is in RAM.
+  """
+  @spec data_dir(atom()) :: Path.t()
+  def data_dir(app) when is_atom(app) do
+    name = Atom.to_string(app)
+
+    if Regex.match?(~r/^[a-z][a-z0-9_]*$/, name) do
+      Path.join([os_priv(), "data", name])
+    else
+      raise ArgumentError, "invalid application name: #{inspect(app)}"
+    end
+  end
+
+  @doc """
+  Reapplies an installed app's recorded configuration and required state
+  directories before a saved generation starts services or scheduler queues.
+  The metadata also retains manual boot declarations; this step starts no
+  service itself. Failure raises so boot cannot silently discard a policy.
+  """
+  @spec restore_app!(atom(), map()) :: :ok
+  def restore_app!(app, metadata) do
+    case prepare_app(app, metadata.persist, metadata.config) do
+      :ok -> :ok
+      {:error, {:persist_failed, path, reason}} ->
+        raise File.Error, reason: reason, action: "create app data directory", path: path
+      {:error, reason} ->
+        raise ArgumentError, "cannot restore #{inspect(app)}: #{inspect(reason)}"
+    end
+  end
+
+  defp prepare_app(app, paths, config) do
+    with {:ok, _spec} <- Elixos.Package.Spec.from_project(elixos: [persist: paths]),
+         :ok <- prepare_data_dir(app, paths) do
+      for {configured_app, settings} <- config, {key, value} <- settings do
+        # Application.load/1 must not replace the target config with defaults
+        # from the .app resource when a service loads its application later.
+        Application.put_env(configured_app, key, value, persistent: true)
+      end
+
+      :ok
+    end
+  end
+
+  defp prepare_data_dir(app, paths) do
+    root = data_dir(app)
+
+    with :ok <- File.mkdir_p(os_priv()),
+         :ok <- data_directory(Path.dirname(root)),
+         :ok <- data_directory(root) do
+      Enum.reduce_while(paths, :ok, fn path, :ok ->
+        case make_relative_directories(root, Path.split(path)) do
+          :ok -> {:cont, :ok}
+          {:error, _reason} = error -> {:halt, error}
+        end
+      end)
+    end
+  end
+
+  defp make_relative_directories(_root, []), do: :ok
+  defp make_relative_directories(root, ["." | rest]), do: make_relative_directories(root, rest)
+  defp make_relative_directories(root, [name | rest]) do
+    path = Path.join(root, name)
+    with :ok <- data_directory(path), do: make_relative_directories(path, rest)
+  end
+
+  # mkdir, rather than mkdir_p, checks every existing component without
+  # following an app-controlled symlink out of its data directory.
+  defp data_directory(path) do
+    case File.mkdir(path) do
+      :ok -> :ok
+      {:error, :eexist} ->
+        case File.lstat(path) do
+          {:ok, %{type: :directory}} -> :ok
+          {:ok, _other} -> {:error, {:persist_failed, path, :enotdir}}
+          {:error, reason} -> {:error, {:persist_failed, path, reason}}
+        end
+      {:error, reason} ->
+        {:error, {:persist_failed, path, reason}}
+    end
+  end
+
+  @doc """
   The version an installed package declares in its `.app`, or `nil` when it is
   not installed.
   """
   def installed_version(app) do
     app_file = Path.join([installed_dir(app), "ebin", "#{app}.app"])
 
-    with {:ok, [{:application, ^app, props}]} <- :file.consult(String.to_charlist(app_file)),
-         true <- Keyword.has_key?(props, :vsn) do
-      props[:vsn] |> to_string()
-    else
-      _other -> nil
+    case app_version(app, app_file) do
+      {:ok, version} -> version
+      {:error, _reason} -> nil
     end
+  end
+
+  defp app_version(app, path) do
+    case :file.consult(String.to_charlist(path)) do
+      {:ok, [{:application, ^app, props}]} when is_list(props) ->
+        with true <- Keyword.keyword?(props),
+             version when is_list(version) or is_binary(version) <- props[:vsn],
+             version = to_string(version),
+             {:ok, _parsed} <- Version.parse(version) do
+          {:ok, version}
+        else
+          _ -> {:error, :invalid_version}
+        end
+
+      {:ok, other} -> {:error, {:invalid_application, other}}
+      {:error, reason} -> {:error, reason}
+    end
+  rescue
+    error -> {:error, {:invalid_application, Exception.message(error)}}
   end
 
   defp installed_ebin(app), do: Path.join(installed_dir(app), "ebin")
@@ -362,10 +515,10 @@ defmodule Elixos.Package do
 
   defp child_spec(service), do: service
 
-  defp record(app, version, spec, deps) do
+  defp record(app, version, spec, deps, config) do
     case Process.whereis(Elixos.Image) do
       nil -> {:error, :no_image}
-      image -> Elixos.Image.record_app(image, app, version, spec.services, deps, spec.oban)
+      image -> Elixos.Image.record_app(image, app, version, spec, deps, config)
     end
   end
 
@@ -384,7 +537,8 @@ defmodule Elixos.Package do
   defp factory, do: Application.get_env(:elixos, :factory_dir, "/factory")
   defp erlexec, do: Path.join([factory(), "erts", "bin", "erlexec"])
   defp mix_ebin, do: Path.join([factory(), "lib", "mix", "ebin"])
-  defp boot_script, do: Path.join([factory(), "releases", "current", "start"])
+  # A build loads the release's modules but never starts another OS runtime.
+  defp boot_script, do: Path.join([factory(), "releases", "current", "start_clean"])
   defp lib_dir, do: Path.join(factory(), "lib")
   defp sys_config, do: Path.join([factory(), "releases", "current", "sys.config"])
 
@@ -467,7 +621,7 @@ defmodule Elixos.Package do
     end
   end
 
-  @doc "Uninstalls `name`: its services stop, its modules unload, its files go."
+  @doc "Uninstalls `name`: stops services, unloads modules and removes installed code; app data stays."
   @spec remove(atom()) :: :ok | {:error, term()}
   def remove(name) do
     case Process.whereis(Elixos.Image) do

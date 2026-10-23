@@ -5,9 +5,10 @@ watched instead of described. They are scripted, reproducible, and checked
 before they count; a demo never shapes the code (a demo that exposes a bug
 means a failing test first, then the fix).
 
-Recorded demos cover M3–M20 where visible, plus M25, M26 and M27's x86_64
-development recording. M21–M24 are deferred (ADR-063); M27's full milestone
-gate is still in progress.
+Recorded demos cover M3–M19 where visible, plus M25, M26 and M27's x86_64
+development recording. M20's Ask demo was removed with the Ask queue
+(ADR-093). M21–M24 are withdrawn (ADR-083). M27's full milestone gate is
+still in progress.
 
 | demo | milestone | shows |
 |------|-----------|-------|
@@ -27,10 +28,9 @@ gate is still in progress.
 | `m17-escape-hatch.mp4` | M17 | uid 1000, refused recovery-file writes and an unknown helper, then a saved module survives a power cycle and its generation is sealed |
 | `m18-postgres.mp4` | M18 | PostgreSQL 17 answers from the prompt as uid 70, both extensions load from the read-only `/system` image, and a row survives the power cycle with a clean shutdown |
 | `m19-oban.mp4` | M19 | a worker defined at the prompt runs a job now, and a job scheduled for later survives a power cycle and runs on the next boot |
-| `m20-ask.mp4` | M20 | an agent asks the human through the Jido action, the console shows the notice line, the prompt answers, and the answer returns into the agent's state |
 | `m25-browser.mp4` | M25 | the headless browser ships in the read-only image and returns page text, JavaScript results and a PNG over `cdp_ex` through the adapter-compatible `Elixos.Browser.CDP` interface |
 | `m26-system-deps.mp4` | M26 | installing a package installs its closure first, and the build that follows resolves the dependency where it is installed - the dependency's code is the installed copy, on a box with no network |
-| [`m27-gui.mp4`](m27-gui.mp4) | M27 (in progress) | synchronized GUI and IEx panels: real keyboard input answers confirm, text, choice and multi questions; stopping the GUI hands the framebuffer back to fbcon |
+| [`m27-gui.mp4`](m27-gui.mp4) | M27 (in progress) | boot to IEx without the GUI; Oh-My-Jido approvals (confirm, text, choice, multi) are opened with `Elixos.GUI.start/0` and answered with the real keyboard; the GUI hands the console back once nothing is pending |
 
 ## Play, record, check
 

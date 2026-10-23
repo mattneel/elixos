@@ -19,8 +19,12 @@ defmodule Elixos.SSHTest do
     key_dir = Path.join(dir, name)
     File.mkdir_p!(key_dir)
     path = Path.join(key_dir, "id_ed25519")
-    {_, 0} = System.cmd("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", path])
-    {key_dir, File.read!(path <> ".pub")}
+    {public, private} = :crypto.generate_key(:eddsa, :ed25519)
+    key = {:ECPrivateKey, 1, private, {:namedCurve, {1, 3, 101, 112}}, public, :asn1_NOVALUE}
+    File.write!(path, :public_key.pem_encode([:public_key.pem_entry_encode(:ECPrivateKey, key)]))
+    File.chmod!(path, 0o600)
+    pub = "ssh-ed25519 #{Base.encode64(:ssh_message.ssh2_pubkey_encode(key))} fixture\n"
+    {key_dir, pub}
   end
 
   test "the host key is generated once, and it is the key ssh_file reads", ctx do

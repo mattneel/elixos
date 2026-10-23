@@ -1,0 +1,59 @@
+{
+  "format_version": 1,
+  "python": "3.14.8",
+  "alpine_python": "3.14.8-r0",
+  "sources": {
+    "x86_64": [
+      {
+        "package": "grpcio",
+        "filename": "grpcio-1.84.0-cp314-cp314-musllinux_1_2_x86_64.whl",
+        "url": "https://files.pythonhosted.org/packages/de/c4/3e1c3d6155c16b8737cc31d5b477d6cf1fc7cdd10d58320cf0ec9b446f42/grpcio-1.84.0-cp314-cp314-musllinux_1_2_x86_64.whl",
+        "sha256": "c5559b492007dc09b4de9b95dab05f0b5e53547aad230cf07e46c7dd017a3be5"
+      },
+      {
+        "package": "protobuf",
+        "filename": "protobuf-7.35.1-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/19/c7/5f7c636ec43e0c545e28d1f1db71990108306f7bdcb89f069ba97e428e7f/protobuf-7.35.1-py3-none-any.whl",
+        "sha256": "4bc97768d8fe4ad6743c8a19403e314511ed9f6d13205b687e52421c023ac1b9"
+      },
+      {
+        "package": "numpy",
+        "filename": "numpy-2.5.4-cp314-cp314-musllinux_1_2_x86_64.whl",
+        "url": "https://files.pythonhosted.org/packages/f3/92/a77b5061b1b3e2643928c37976d79ee173e1b171ed158b7a3c61056b41bc/numpy-2.5.4-cp314-cp314-musllinux_1_2_x86_64.whl",
+        "sha256": "4e263278bfb5ee6409db8aedbc4cc32973b1b82bc1e8d3c668551d04d83a7e37"
+      },
+      {
+        "package": "typing-extensions",
+        "filename": "typing_extensions-4.16.0-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+        "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
+      }
+    ],
+    "aarch64": [
+      {
+        "package": "grpcio",
+        "filename": "grpcio-1.84.0-cp314-cp314-musllinux_1_2_aarch64.whl",
+        "url": "https://files.pythonhosted.org/packages/23/c9/7033e95d4b344969818b09185721c7608b47fc2498d97b5e4eec4995dbf3/grpcio-1.84.0-cp314-cp314-musllinux_1_2_aarch64.whl",
+        "sha256": "5deda5b4bf62769eb98c119cca43d40e1231e34846b19db5cdea821d446a2253"
+      },
+      {
+        "package": "protobuf",
+        "filename": "protobuf-7.35.1-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/19/c7/5f7c636ec43e0c545e28d1f1db71990108306f7bdcb89f069ba97e428e7f/protobuf-7.35.1-py3-none-any.whl",
+        "sha256": "4bc97768d8fe4ad6743c8a19403e314511ed9f6d13205b687e52421c023ac1b9"
+      },
+      {
+        "package": "numpy",
+        "filename": "numpy-2.5.4-cp314-cp314-musllinux_1_2_aarch64.whl",
+        "url": "https://files.pythonhosted.org/packages/f9/cf/673fd1b8f4cd78eb6320e87ec4c90ac19c095644259e3749853a405c70f4/numpy-2.5.4-cp314-cp314-musllinux_1_2_aarch64.whl",
+        "sha256": "823874a507a84af050493b622affde94b6f7c3a0dc22cb2801381bc03b871c00"
+      },
+      {
+        "package": "typing-extensions",
+        "filename": "typing_extensions-4.16.0-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+        "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
+      }
+    ]
+  }
+}

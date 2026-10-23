@@ -8,8 +8,9 @@ is in docs/VISION.md; read it once. This file is your operating manual.
 ## The loop
 
 The roadmap already exists as tests, gated by the `MILESTONE` file
-(docs/TESTING.md). Work in order except for explicit ADR-backed deferrals
-(M21–M24 are deferred by ADR-063). `MILESTONE` is the active gate, not a claim
+(docs/TESTING.md). Work in order except for explicit ADR-backed exceptions
+(M20 is retired by ADR-093; M21–M24 are withdrawn by ADR-083). After M27 the
+K230 cyberdeck track (M28–M33) comes first. `MILESTONE` is the active gate, not a claim
 that every milestone up to it is complete.
 
 0. If this is not a git repository yet, `git init` and commit everything as

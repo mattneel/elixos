@@ -15,7 +15,11 @@ defmodule Elixos.Boot.Login do
 
   @doc "Supervisor child: starts the login REPL once the tree is up."
   def start_link({env, image}) do
-    GenServer.start_link(__MODULE__, {env, image}, name: __MODULE__)
+    if Elixos.Boot.runtime() != :container or System.get_env("ELIXOS_CONSOLE") == "1" do
+      GenServer.start_link(__MODULE__, {env, image}, name: __MODULE__)
+    else
+      :ignore
+    end
   end
 
   def start_link(env), do: start_link({env, nil})

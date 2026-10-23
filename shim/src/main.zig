@@ -1,13 +1,15 @@
 //! Elixos PID 1 shim (ADR-002..004, docs/ARCHITECTURE.md §3).
 //!
-//! The kernel execs this binary as /init from the initramfs. It must never
-//! exit: PID 1 exiting panics the kernel, which is why `main` is `noreturn`.
+//! Machine kernels exec this binary as /init and PID 1 never exits. The native
+//! OCI build reuses the same supervisor, under namespace PID 1 or provider init;
+//! only that build exits its process on namespace-local shutdown.
 //!
 //! Its jobs, built up over milestones M3..M8 (docs/ROADMAP.md):
 //!
 //!   1. Mount /proc, /sys, /dev (devtmpfs), /run and /tmp (tmpfs).
 //!   2. Read /proc/cmdline -> cmdline.parse. Log the banner and invalid tokens.
-//!   3. Mount the data device (elixos.data, ext4) on /priv. Missing: rescue.
+//!   3. Use RAM-backed /priv for Live; otherwise mount elixos.data (ext4).
+//!      Missing persistent storage: rescue.
 //!   4. Read /priv/boot.state -> statefile.parse. Missing file: defaults.
 //!      Corrupt file: rescue override, and never overwrite the evidence.
 //!   5. recovery.planLaunch, persist next_state atomically, log the plan.
@@ -39,6 +41,12 @@ pub const helpers = @import("helpers.zig");
 pub const seal = @import("seal.zig");
 pub const system_image = @import("system_image.zig");
 pub const postgres_init = @import("postgres_init.zig");
+pub const container = @import("container.zig");
+pub const seed = @import("seed.zig");
+
+/// OCI environment pointer storage is allocated only before supervision. The
+/// original startup block remains untouched and is carried through panic exec.
+var container_environment: ?container.Environment = null;
 
 // The supervising frame lives until reboot. Shutdown can also happen before
 // supervision exists, in which case there are no image-declared helpers.
@@ -68,8 +76,14 @@ const rescue = struct {
     var helpers_text: [helpers.max_helpers * 11]u8 = undefined;
     /// Includes the running generation and live helpers, not just NEXT's disk state.
     var argv: [11:null]?[*:0]const u8 = @splat(null);
-    /// The kernel gives PID 1 no environment; the new shim needs none either.
-    var envp: [1:null]?[*:0]const u8 = .{null};
+    const empty_env = [_:null]?[*:0]const u8{};
+    /// Machine PID 1 needs no inherited environment. OCI app secrets and the
+    /// explicit runtime marker must survive adoption and later BEAM relaunches.
+    var envp: [*:null]const ?[*:0]const u8 = &empty_env;
+
+    fn inheritEnvironment(inherited: [:null]const ?[*:0]const u8) void {
+        envp = inherited.ptr;
+    }
 
     const Adopted = struct {
         beam_pid: linux.pid_t,
@@ -82,6 +96,7 @@ const rescue = struct {
         /// the adopted shim cannot re-derive, and a shutdown request already
         /// read off the control pipe cannot be replayed.
         safe: bool,
+        /// Writable /priv is available: persistent storage or the Live RAM rootfs.
         disk_mounted: bool,
         requested: ?recovery.Shutdown,
     };
@@ -189,7 +204,7 @@ fn rescuePanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
     if (rescue.argv[0] == null) shutdown(.poweroff);
 
     log("re-exec after panic: {s}", .{msg});
-    _ = linux.execve(init_path, @ptrCast(&rescue.argv), @ptrCast(&rescue.envp));
+    _ = linux.execve(init_path, @ptrCast(&rescue.argv), rescue.envp);
 
     // Nothing left to trust, and the re-exec did not work: stop the machine.
     shutdown(.poweroff);
@@ -226,8 +241,8 @@ const state_path = "/priv/boot.state";
 const state_tmp_path = "/priv/.seal/boot.state.tmp";
 
 /// Crash dumps (PROTOCOL.md §7): ERTS writes them where the shim points
-/// ERL_CRASH_DUMP, on the persistent disk, so the evidence of why a
-/// generation failed survives the reboot that falls back from it.
+/// ERL_CRASH_DUMP. Persistent storage keeps the evidence across reboot;
+/// Live keeps it only for the current RAM-backed session.
 const crash_dir = "/priv/crash";
 /// One dump cannot fill /priv (ERL_CRASH_DUMP_BYTES).
 const crash_dump_bytes = "1048576";
@@ -246,7 +261,24 @@ const sys_config_path = factory_path ++ "/releases/current/sys.config";
 const lib_path = factory_path ++ "/lib";
 
 pub fn main(init: std.process.Init.Minimal) noreturn {
-    log("pid 1, version " ++ version, .{});
+    if (container.enabled) {
+        rescue.inheritEnvironment(init.environ.block.slice);
+        container.validate(init.environ.block.slice) catch |err| {
+            log("invalid container runtime ({t}), refusing startup", .{err});
+            container.exit(1);
+        };
+        container.checkPriv() catch |err| {
+            log("container /priv unavailable ({t}), exiting", .{err});
+            container.exit(1);
+        };
+        container_environment = container.Environment.init(std.heap.page_allocator, init.environ.block.slice) catch {
+            log("cannot preserve container environment, exiting", .{});
+            container.exit(1);
+        };
+        log("container supervisor pid={d}, version " ++ version, .{linux.getpid()});
+    } else {
+        log("pid 1, version " ++ version, .{});
+    }
     loadHelpers();
 
     // A re-exec after a panic (ADR-004): the mounts are still in place (they
@@ -257,6 +289,16 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
     var cmdline_buffer: [4096]u8 = undefined;
     var argv_buffer: [10][]const u8 = undefined;
     if (rescue.parse(ownArgs(init, &argv_buffer))) |adopted| {
+        if (container.enabled) {
+            var owned = container.ownsChild(adopted.beam_pid);
+            for (adopted.helper_pids) |pid| {
+                if (pid != 0 and !container.ownsChild(pid)) owned = false;
+            }
+            if (!owned) {
+                log("invalid container adoption, exiting", .{});
+                container.exit(1);
+            }
+        }
         const settings = readSettings(&cmdline_buffer);
         var state: recovery.BootState = .{};
         var state_unreadable = false;
@@ -290,31 +332,37 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
     }
 
     var overrides: recovery.Overrides = .{};
+    if (container.enabled) {
+        const initialized = seed.initialize() catch |err| {
+            log("container seed initialization refused ({t}), exiting", .{err});
+            linux.exit_group(1);
+        };
+        if (initialized) log("container seed initialized", .{});
+    }
 
     // 1. The filesystems the rest of the boot needs. A missing one is not
     //    fatal: it only costs us /proc/cmdline or a place to mount /priv.
-    if (!mountBase()) overrides.safe = true;
+    if (!container.enabled and !mountBase()) overrides.safe = true;
 
     // 1b. Loopback up: the kernel leaves `lo` down until someone asks, and
     //     everything local needs it - a provider an agent's action calls on
     //     127.0.0.1, a session's own services. One ioctl, as any init does.
-    bringLoopbackUp();
+    if (!container.enabled) bringLoopbackUp();
 
     // 2. Kernel command line (PROTOCOL.md §5). The buffer outlives the
     //    settings it is parsed into, for the whole of main.
     const settings = readSettings(&cmdline_buffer);
     if (settings.safe) overrides.safe = true;
 
-    // 3+4. /priv and boot.state. The disk is mounted and read even when the
-    //      safe override is set: rescue is "the factory with /priv mounted"
-    //      (ARCHITECTURE.md §4.5), and the plan must be computed from the real
-    //      state. Persisting is a separate decision: only a plan that actually
-    //      changes the state is written, which is what leaves the safe and
-    //      generation overrides, and exhausted-rescue, untouched (ADR-006).
+    // 3+4. /priv and boot.state. Live keeps the initramfs's RAM-backed /priv,
+    //      including its embedded service image and toolchain; never mount over
+    //      those assets or copy them. Otherwise mount the data device even when
+    //      safe is set: rescue is "the factory with /priv available".
+    //      State accounting and sealing are identical for either storage choice.
+    //      Only a plan that changes state is written (ADR-006).
     var state: recovery.BootState = .{};
-    var disk_mounted = false;
-    if (mountData(settings.data_device, settings.data_wait_s)) {
-        disk_mounted = true;
+    const disk_mounted = if (container.enabled) true else preparePriv(settings, mountData);
+    if (disk_mounted) {
         if (readState(&state)) |_| {} else |err| switch (err) {
             // No file yet: the defaults mean "boot the factory, count it".
             error.FileNotFound => {},
@@ -331,8 +379,10 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
         log("cannot prepare unprivileged state ({t}), powering off", .{err});
         shutdown(.poweroff);
     };
-    prepareDeviceGroups("/dev", "fb", 27);
-    prepareDeviceGroups("/dev/input", "event", 23);
+    if (!container.enabled) {
+        prepareDeviceGroups("/dev", "fb", 27);
+        prepareDeviceGroups("/dev/input", "event", 23);
+    }
     // 5. Plan, log it, persist it, then carry it out (ARCHITECTURE.md §3.3).
     const policy: recovery.Policy = .{ .max_attempts = settings.max_attempts };
     if (!overrides.safe) overrides.generation = settings.generation;
@@ -393,6 +443,13 @@ fn mountBase() bool {
     return ok;
 }
 
+/// Whether writable /priv is available, including Live's RAM-backed rootfs.
+/// Live short-circuits before any physical-device mount or wait, independently
+/// of the safe/generation overrides. The mount boundary is injectable for tests.
+fn preparePriv(settings: cmdline.Settings, comptime mount_data: fn ([]const u8, u32) bool) bool {
+    return settings.live or mount_data(settings.data_device, settings.data_wait_s);
+}
+
 /// Mounts the data device on /priv, waiting for it to appear first (see
 /// `Settings.data_wait_s`: the kernel starts /init without waiting for USB or
 /// SD storage, so on real hardware the device may not exist yet). Logs and
@@ -424,8 +481,8 @@ fn mountData(device: []const u8, wait_s: u32) bool {
 
 /// Creates /priv/crash and prunes it to the newest `crash_dumps_kept` dumps.
 /// Runs before every launch - including a relaunch after a crash, so a crash
-/// loop inside one boot is bounded too - on a disk we may have just mounted;
-/// without a disk there is nowhere to keep a dump.
+/// loop inside one boot is bounded too - wherever writable /priv is available,
+/// including Live's RAM-backed rootfs.
 fn prepareCrashDir() void {
     _ = linux.mkdir(crash_dir, 0o755);
     // This directory may be new since seal.prepare() migrated existing state.
@@ -527,6 +584,7 @@ fn pruneCrashDumps() bool {
 /// `buffer` is the caller's: the returned settings point into it (data_device
 /// and friends are slices into the command line), so it must outlive them.
 fn readSettings(buffer: *[4096]u8) cmdline.Settings {
+    if (container.enabled) return .{ .safe = container_environment.?.safe };
     const text: []const u8 = readFile("/proc/cmdline", buffer) catch "";
     const settings = cmdline.parse(text);
     if (settings.invalid > 0) log("ignored {d} invalid elixos.* parameters", .{settings.invalid});
@@ -608,8 +666,8 @@ fn execErts(
         "-noshell",
         null,
     };
-    // Without the persistent disk there is nowhere to keep a dump, and ERTS
-    // would fail writing one: leave its default (the working directory) then.
+    // Without writable /priv there is nowhere to keep a dump, and ERTS would
+    // fail writing one: leave its default (the working directory) then.
     const crash_env: [2]?[*:0]const u8 = if (disk_mounted) .{
         zeroed(&crash, "ERL_CRASH_DUMP={s}/gen{d}-attempt{d}.dump", .{
             crash_dir,
@@ -619,15 +677,16 @@ fn execErts(
         "ERL_CRASH_DUMP_BYTES=" ++ crash_dump_bytes,
     } else .{ null, null };
 
-    // The toolchain package (ADR-009, M11) lives on the disk and acts as
-    // `cc`/`c++` through symlinks to zig, so a build on the box finds it on
-    // PATH. Without the disk there is nothing but the initramfs.
-    const path_env = if (disk_mounted)
-        "PATH=/priv/toolchain:/bin:/usr/bin"
+    // OCI's SDK is immutable and separate from the writable /priv volume.
+    // Machine builds retain the persistent/Live toolchain layout (ADR-009).
+    const path_env = if (container.enabled)
+        "PATH=/toolchain:/usr/local/bin:/bin:/usr/bin"
+    else if (disk_mounted)
+        "PATH=/priv/toolchain:/usr/local/bin:/bin:/usr/bin"
     else
-        "PATH=/bin:/usr/bin";
+        "PATH=/usr/local/bin:/bin:/usr/bin";
 
-    const envp = [_]?[*:0]const u8{
+    const contract = [_]?[*:0]const u8{
         "ROOTDIR=" ++ factory_path,
         "BINDIR=" ++ bindir_path,
         "EMU=beam",
@@ -641,9 +700,25 @@ fn execErts(
         zeroed(&attempt, "ELIXOS_ATTEMPT={d}", .{plan.next_state.attempts}),
         zeroed(&control, "ELIXOS_CTL_FD={d}", .{ctl_fd}),
         zeroed(&reply, "ELIXOS_REPLY_FD={d}", .{reply_fd}),
+        if (container.enabled) "ELIXOS_RUNTIME=container" else "ELIXOS_RUNTIME=machine",
+        if (container.enabled) (if (container_environment.?.console) "ELIXOS_CONSOLE=1" else "ELIXOS_CONSOLE=0") else null,
         crash_env[0],
         crash_env[1],
-        null,
+    };
+    // Compact optional entries for the machine build too: a null in the
+    // middle would hide the crash limit and every following environment key.
+    var machine_environment: [container.contract_capacity:null]container.Entry = @splat(null);
+    const envp = if (container.enabled)
+        container_environment.?.launch(&contract).ptr
+    else blk: {
+        var count: usize = 0;
+        for (contract) |entry| {
+            if (entry != null) {
+                machine_environment[count] = entry;
+                count += 1;
+            }
+        }
+        break :blk @as([*:null]const container.Entry, &machine_environment);
     };
 
     // PID 1 blocks the signals it handles through the signalfd, and fork
@@ -660,7 +735,7 @@ fn execErts(
     };
 
     log("launching generation={d} mode={t}", .{ plan.launch.generation, plan.launch.mode });
-    _ = linux.execve(erlexec_path, @ptrCast(&argv), @ptrCast(&envp));
+    _ = linux.execve(erlexec_path, @ptrCast(&argv), envp);
     // execve only returns on failure. Say why we are going away, and let the
     // shim count the attempt (ADR-007) instead of leaving a zombie half-boot.
     log("cannot exec {s}, exiting", .{erlexec_path});
@@ -756,6 +831,7 @@ const Session = struct {
     settings: cmdline.Settings,
     policy: recovery.Policy,
     overrides: recovery.Overrides,
+    /// Writable /priv is available, including the Live RAM rootfs, not just a disk.
     disk_mounted: bool,
 
     epfd: linux.fd_t,
@@ -972,12 +1048,28 @@ const Session = struct {
     }
 
     fn startHelper(self: *Session, name: []const u8) void {
+        // No clock, DHCP, console handover or host hardware operations in
+        // OCI, even if an image accidentally declares such a helper.
+        if (container.enabled and !container.helperAllowed(name)) {
+            log("helper refused name={s}", .{name});
+            self.helperReply(name, null);
+            return;
+        }
         if ((std.mem.eql(u8, name, "postgres") or std.mem.eql(u8, name, "postgres-init")) and
             (self.plan.launch.mode != .normal or !system_image.mounted()))
         {
             log("helper refused name={s}", .{name});
             self.helperReply(name, null);
             return;
+        }
+        if (container.enabled) {
+            // A baked tree remains present even after an ownership failure;
+            // unmount() cannot be used as the machine-only availability flag.
+            system_image.preparePostgres() catch |err| {
+                log("postgres directories unavailable ({t}), services disabled", .{err});
+                self.helperReply(name, null);
+                return;
+            };
         }
         for (helper_list.helpers[0..helper_list.len], 0..) |*helper, index| {
             if (!std.mem.eql(u8, helper.name[0..helper.name_len], name)) continue;
@@ -1113,6 +1205,10 @@ const Session = struct {
         // BEAM's exit must not turn the shutdown back into a relaunch.
         self.rearm();
         if (self.beam != 0) _ = linux.kill(self.beam, .TERM);
+        if (container.enabled) {
+            self.first_heartbeat_pending = false;
+            armTimer(self.timerfd, self.settings.heartbeat_timeout_s);
+        }
     }
 
     /// Reaps every child that has exited. PID 1 inherits orphans, so this runs
@@ -1143,6 +1239,7 @@ const Session = struct {
         if (self.reply_fd >= 0) _ = linux.close(self.reply_fd);
         self.reply_fd = -1;
         self.beam = 0;
+        if (container.enabled) stopOwnedChildren(&self.helper_pids);
 
         // A generation override does not survive a crash: onBeamExit drops it
         // and keeps a safe override (ARCHITECTURE.md §3.3).
@@ -1332,9 +1429,36 @@ fn logBeamExit(status: u32) void {
     }
 }
 
-/// 9. Shutdown. PID 1 does not exit (ADR-002); the kernel powers the machine
-/// off, reboots or halts, and if it refuses we idle forever.
+/// Machine PID 1 never exits (ADR-002). OCI stops only this supervisor's
+/// descendants and exits for its orchestrator; runtime volumes stay mounted.
 fn shutdown(kind: recovery.Shutdown) noreturn {
+    if (container.enabled) {
+        if (active_session) |session| {
+            // Most shutdowns arrive after BEAM exit. A fatal shim path may
+            // still have a live BEAM: stop it before PostgreSQL, not after it.
+            if (session.beam != 0) {
+                _ = linux.kill(session.beam, .TERM);
+                const deadline = monotonicMs() + @as(i64, session.settings.heartbeat_timeout_s) * 1000;
+                var killed = false;
+                while (true) {
+                    var status: i32 = 0;
+                    const result = linux.wait4(session.beam, &status, linux.W.NOHANG, null);
+                    const err = linux.errno(result);
+                    if ((err == .SUCCESS and result != 0) or err == .CHILD) break;
+                    if (!killed and err != .INTR and monotonicMs() >= deadline) {
+                        _ = linux.kill(session.beam, .KILL);
+                        killed = true;
+                    }
+                    sleepMs(25);
+                }
+                session.beam = 0;
+            }
+            session.stopHelpers();
+        }
+        stopOwnedChildren(&.{});
+        log("shutdown {t}", .{kind});
+        linux.exit_group(container.exitStatus(kind));
+    }
     if (active_session) |session| session.stopHelpers();
     // Stragglers first (ARCHITECTURE.md §3.1): ask, then insist. -1 means
     // every process except us, which is what PID 1 is for.
@@ -1352,6 +1476,21 @@ fn shutdown(kind: recovery.Shutdown) noreturn {
     };
     _ = linux.reboot(.MAGIC1, .MAGIC2, cmd, null);
     while (true) _ = linux.pause();
+}
+
+/// Child-tree cleanup works for both namespace PID 1 and a provider init's
+/// subreaper child. It never sends a namespace-wide or host-wide signal.
+fn stopOwnedChildren(excluded: []const linux.pid_t) void {
+    const had_children = container.signalChildren(.TERM, excluded) catch |err| {
+        log("cannot enumerate owned children ({t}), exiting", .{err});
+        linux.exit_group(1);
+    };
+    if (!had_children) return;
+    sleepMs(50);
+    while (container.signalChildren(.KILL, excluded) catch |err| {
+        log("cannot enumerate owned children ({t}), exiting", .{err});
+        linux.exit_group(1);
+    }) sleepMs(25);
 }
 
 // ---------------------------------------------------------------------------
@@ -1483,6 +1622,100 @@ fn pathExists(path: [*:0]const u8) bool {
 const ReadError = error{ FileNotFound, ReadFailed, TooLong };
 const StateError = ReadError || statefile.ParseError;
 
+test "live keeps writable RAM storage without attempting a physical mount" {
+    const MountData = struct {
+        var calls: usize = 0;
+
+        fn mount(_: []const u8, _: u32) bool {
+            calls += 1;
+            return false;
+        }
+    };
+    const cases = [_]struct {
+        text: []const u8,
+        generation: u32 = 0,
+        mode: recovery.Mode = .normal,
+        attempts: u32 = 1,
+    }{
+        .{ .text = "elixos.live" },
+        .{ .text = "elixos.live=1 elixos.data=/dev/vda elixos.data_wait=4294967295" },
+        .{ .text = "elixos.data=/dev/sda elixos.live" },
+        .{ .text = "elixos.live elixos.data=/dev/nvme0n1" },
+        .{ .text = "elixos.live elixos.safe elixos.generation=9", .mode = .rescue, .attempts = 0 },
+        .{ .text = "elixos.safe elixos.live", .mode = .rescue, .attempts = 0 },
+        .{ .text = "elixos.live elixos.generation=9", .generation = 9, .attempts = 0 },
+    };
+    MountData.calls = 0;
+    for (cases) |case| {
+        const settings = cmdline.parse(case.text);
+        const disk_mounted = preparePriv(settings, MountData.mount);
+        try std.testing.expect(disk_mounted);
+        try std.testing.expectEqual(@as(usize, 0), MountData.calls);
+        const plan = recovery.planLaunch(.{}, .{ .max_attempts = settings.max_attempts }, .{
+            .safe = settings.safe or !disk_mounted,
+            .generation = settings.generation,
+        });
+        try std.testing.expectEqualDeep(recovery.Plan{
+            .launch = .{ .generation = case.generation, .mode = case.mode },
+            .next_state = .{ .attempts = case.attempts },
+        }, plan);
+    }
+}
+
+test "persistent storage retains its device, wait and mount-failure behavior" {
+    const MountData = struct {
+        var calls: usize = 0;
+        var seen_device: []const u8 = "";
+        var seen_wait_s: u32 = 0;
+        var succeeds: bool = false;
+
+        fn mount(device: []const u8, wait_s: u32) bool {
+            calls += 1;
+            seen_device = device;
+            seen_wait_s = wait_s;
+            return succeeds;
+        }
+    };
+    const cases = [_]struct {
+        text: []const u8,
+        device: []const u8 = "/dev/vda",
+        wait_s: u32 = 10,
+    }{
+        .{ .text = "" },
+        .{ .text = "elixos.safe" },
+        .{ .text = "elixos.live=0 elixos.data=/dev/sda2 elixos.data_wait=3", .device = "/dev/sda2", .wait_s = 3 },
+        .{ .text = "elixos.live elixos.live=0 elixos.data=/dev/vdb elixos.data_wait=0", .device = "/dev/vdb", .wait_s = 0 },
+        .{ .text = "elixos.live=bad" },
+        .{ .text = "elixos.live=0 elixos.live=bad" },
+    };
+    for (cases) |case| {
+        for ([_]bool{ true, false }) |succeeds| {
+            MountData.calls = 0;
+            MountData.succeeds = succeeds;
+            try std.testing.expectEqual(succeeds, preparePriv(cmdline.parse(case.text), MountData.mount));
+            try std.testing.expectEqual(@as(usize, 1), MountData.calls);
+            try std.testing.expectEqualStrings(case.device, MountData.seen_device);
+            try std.testing.expectEqual(case.wait_s, MountData.seen_wait_s);
+        }
+    }
+}
+
+test "a live normal session preserves writable RAM availability in its panic handoff" {
+    const helper_pids: [helpers.max_helpers]linux.pid_t = @splat(0);
+    rescue.arm(4242, 7, 8, 3, &helper_pids, false, true, null);
+    var args: [10][]const u8 = undefined;
+    for (&args, 0..) |*arg, index| arg.* = std.mem.span(rescue.argv[index].?);
+
+    const adopted = rescue.parse(&args) orelse return error.TestExpectedAdoption;
+    try std.testing.expect(!adopted.safe);
+    try std.testing.expect(adopted.disk_mounted);
+    try std.testing.expectEqual(@as(u32, 3), adopted.generation);
+    try std.testing.expectEqual(@as(linux.pid_t, 4242), adopted.beam_pid);
+    try std.testing.expectEqual(@as(linux.fd_t, 7), adopted.ctl_fd);
+    try std.testing.expectEqual(@as(linux.fd_t, 8), adopted.reply_fd);
+    try std.testing.expectEqual(@as(?recovery.Shutdown, null), adopted.requested);
+}
+
 test "the rescue argv round-trips everything an adopted shim needs" {
     var helper_pids: [helpers.max_helpers]linux.pid_t = @splat(0);
     helper_pids[0] = 41;
@@ -1547,6 +1780,29 @@ test {
     std.testing.refAllDecls(seal);
     std.testing.refAllDecls(system_image);
     std.testing.refAllDecls(postgres_init);
+    std.testing.refAllDecls(container);
+    std.testing.refAllDecls(seed);
     std.testing.refAllDecls(@import("gui_io.zig"));
     std.testing.refAllDecls(@import("console_handover.zig"));
+}
+
+test "panic adoption preserves the original OCI environment for later relaunch" {
+    const before = rescue.envp;
+    defer rescue.envp = before;
+    const inherited = [_:null]container.Entry{
+        "container=oci",
+        "ELIXOS_CONSOLE=1",
+        "APP_SECRET=never-truncated",
+        "ERL_AFLAGS=-eval rejected-on-launch",
+    };
+    rescue.inheritEnvironment(&inherited);
+    const helper_pids: [helpers.max_helpers]linux.pid_t = @splat(0);
+    rescue.arm(4242, 7, 8, 3, &helper_pids, false, true, .reboot);
+    try std.testing.expectEqual(@as([*:null]const container.Entry, &inherited), rescue.envp);
+    try std.testing.expectEqualStrings("APP_SECRET=never-truncated", std.mem.span(rescue.envp[2].?));
+    var args: [10][]const u8 = undefined;
+    for (&args, 0..) |*arg, index| arg.* = std.mem.span(rescue.argv[index].?);
+    const adopted = rescue.parse(&args) orelse return error.TestExpectedAdoption;
+    try std.testing.expectEqual(@as(?recovery.Shutdown, .reboot), adopted.requested);
+    try std.testing.expect(adopted.disk_mounted);
 }

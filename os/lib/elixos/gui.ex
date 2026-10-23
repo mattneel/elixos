@@ -1,6 +1,14 @@
 defmodule Elixos.GUI do
   @moduledoc """
-  The non-critical framebuffer view of the Ask queue (M27).
+  An optional framebuffer front-end for Oh-My-Jido approvals and questions
+  (M27, ADR-093).
+
+  `Elixos.Approvals` is the authority: it indexes every open approval and
+  question, and every answer goes through it. The GUI never starts at boot;
+  Elixos boots to `iex(1)>`. `start/0` is the explicit IEx entry point and,
+  with nothing pending, refuses without taking the screen or keyboard. Once
+  open, the GUI hands the console back on Escape, on F12, or when nothing is
+  pending any more. Escape decides nothing: denial is an explicit No.
 
   Emerge renders headless raster RGBA frames. A libc-free Port helper owns
   `/dev/fb0` and evdev devices; a fixed privileged broker leases fbcon handover
@@ -9,12 +17,13 @@ defmodule Elixos.GUI do
 
   Renderer load/start failures leave the text console available. A native
   renderer crash can still take down the BEAM; the shim remains outside it.
+  Approvals decide no privilege: the unprivileged BEAM and sealed commits hold.
   """
 
   use GenServer, restart: :temporary
   require Logger
 
-  alias Elixos.{Ask, Decimal}
+  alias Elixos.{Approvals, Decimal}
   alias Elixos.GUI.{Dialog, Keyboard}
   alias VideoInterop.{Binary, Format, Frame, Rect}
   alias VideoInterop.Binary.Plane
@@ -25,12 +34,17 @@ defmodule Elixos.GUI do
   @call_timeout 15_000
   @dialog_size {640, 480}
 
-  @doc "Starts the GUI under the system's supervisor, unless it is running."
+  @doc """
+  Opens the GUI under the system's supervisor, unless it is running. With no
+  pending approval or question it returns `{:error, :nothing_pending}` and
+  leaves the console alone.
+  """
   @spec start() :: {:ok, pid()} | {:error, term()}
   def start do
     case Process.whereis(__MODULE__) do
       nil ->
-        with :ok <- live_available() do
+        with :ok <- live_available(),
+             :ok <- something_pending() do
           case DynamicSupervisor.start_child(Elixos.Package.Services, {__MODULE__, []}) do
             {:ok, _pid} -> status()
             {:error, {:already_started, _pid}} -> status()
@@ -58,14 +72,14 @@ defmodule Elixos.GUI do
   @spec input(term()) :: :ok | {:error, term()}
   def input(event), do: call({:input, event})
 
-  @doc "Renders an Ask dialog without a display, returning tightly packed RGBA."
-  @spec render_dialog(Ask.Question.t()) ::
+  @doc "Renders an approval dialog without a display, returning tightly packed RGBA."
+  @spec render_dialog(Approvals.Request.t()) ::
           {:ok, %{width: pos_integer(), height: pos_integer(), pixels: binary()}}
           | {:error, term()}
-  def render_dialog(%Ask.Question{} = question) do
+  def render_dialog(%Approvals.Request{} = request) do
     with :ok <- renderer_available() do
       {width, height} = @dialog_size
-      tree = Dialog.tree(Dialog.new(question), @dialog_size)
+      tree = Dialog.tree(Dialog.new(request), @dialog_size)
 
       pixels =
         EmergeSkia.TreeRenderer.render_to_pixels(
@@ -89,6 +103,14 @@ defmodule Elixos.GUI do
     end
   end
 
+  defp something_pending do
+    case Approvals.pending() do
+      [] -> {:error, :nothing_pending}
+      requests when is_list(requests) -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp call(message) do
     GenServer.call(__MODULE__, message, @call_timeout)
   catch
@@ -107,7 +129,7 @@ defmodule Elixos.GUI do
        size: @dialog_size,
        keyboard: Keyboard.new(),
        dialog: Dialog.new(nil),
-       ask_monitor: nil,
+       approvals_monitor: nil,
        ready: false,
        status_waiters: [],
        startup_timer: nil,
@@ -118,13 +140,26 @@ defmodule Elixos.GUI do
 
   @impl true
   def handle_continue(:initialize, state) do
-    with :ok <- live_available(),
-         {:ok, _broker} <- Elixos.Privileges.request("console-handover"),
-         :ok <- await_socket(System.monotonic_time(:millisecond) + @startup_timeout),
-         {:ok, io, size} <- open_io() do
-      initialize_renderer(%{state | io: io, size: size})
-    else
-      {:error, reason} -> halt(state, reason)
+    # Subscribe before touching the console: if the last request vanished
+    # since start/0 looked, the screen and keyboard are never taken.
+    case Approvals.subscribe() do
+      {:ok, []} ->
+        hand_back(state)
+
+      {:ok, _requests} ->
+        state = %{state | approvals_monitor: Process.monitor(Approvals)}
+
+        with :ok <- live_available(),
+             {:ok, _broker} <- Elixos.Privileges.request("console-handover"),
+             :ok <- await_socket(System.monotonic_time(:millisecond) + @startup_timeout),
+             {:ok, io, size} <- open_io() do
+          initialize_renderer(%{state | io: io, size: size})
+        else
+          {:error, reason} -> halt(state, reason)
+        end
+
+      {:error, reason} ->
+        halt(state, reason)
     end
   rescue
     error -> halt(state, Exception.message(error))
@@ -146,16 +181,11 @@ defmodule Elixos.GUI do
              headless: [mode: :binary, target: self(), pixel_format: :rgba8888]
            ) do
       state = %{state | renderer: renderer}
+      timer = Process.send_after(self(), :startup_timeout, @startup_timeout)
 
-      case Ask.subscribe() do
-        {:ok, questions} ->
-          monitor = Process.monitor(Process.whereis(Ask))
-          timer = Process.send_after(self(), :startup_timeout, @startup_timeout)
-          state = %{state | ask_monitor: monitor, startup_timer: timer}
-          {:noreply, draw(select_question(state, questions))}
-
-        {:error, reason} ->
-          halt(state, reason)
+      case refresh(%{state | startup_timer: timer}) do
+        {:ok, state} -> {:noreply, state}
+        {:stop, state} -> hand_back(state)
       end
     else
       {:error, reason} -> halt(state, {:renderer, reason})
@@ -192,10 +222,13 @@ defmodule Elixos.GUI do
   end
 
   @impl true
-  def handle_info({:elixos_ask, _snapshot}, state) do
-    # Input can resolve a question while older notifications are queued. Read
-    # the authoritative queue rather than resurrecting one from a stale view.
-    {:noreply, refresh(state)}
+  def handle_info({:elixos_approvals, _snapshot}, state) do
+    # Input can resolve a request while older notifications are queued. Read
+    # the authoritative index rather than resurrecting one from a stale view.
+    case refresh(state) do
+      {:ok, state} -> {:noreply, state}
+      {:stop, state} -> hand_back(state)
+    end
   rescue
     error -> halt(state, Exception.message(error))
   end
@@ -237,13 +270,8 @@ defmodule Elixos.GUI do
                  {:stop, state} -> {:halt, {:stop, state}}
                end
              end) do
-          {:ok, state} ->
-            {:noreply, state}
-
-          {:stop, state} ->
-            {result, state} = shutdown(state)
-            if result != :ok, do: Logger.warning("elixos-gui: shutdown #{inspect(result)}")
-            {:stop, :normal, state}
+          {:ok, state} -> {:noreply, state}
+          {:stop, state} -> hand_back(state)
         end
 
       {:error, reason} ->
@@ -259,8 +287,11 @@ defmodule Elixos.GUI do
   def handle_info({:EXIT, io, reason}, %{io: io} = state),
     do: halt(%{state | io: nil}, {:io_exit, reason})
 
-  def handle_info({:DOWN, monitor, :process, _pid, reason}, %{ask_monitor: monitor} = state),
-    do: halt(state, {:question_queue_exit, reason})
+  def handle_info(
+        {:DOWN, monitor, :process, _pid, reason},
+        %{approvals_monitor: monitor} = state
+      ),
+      do: halt(state, {:approvals_exit, reason})
 
   def handle_info(:startup_timeout, %{ready: false} = state), do: halt(state, :frame_timeout)
 
@@ -280,32 +311,34 @@ defmodule Elixos.GUI do
         {:ok, if(dialog == state.dialog, do: next, else: draw(next))}
 
       {:answer, value, dialog} ->
-        resolve(%{state | dialog: dialog}, Ask.answer(dialog.question.id, value))
-
-      {:dismiss, dialog} ->
-        resolve(state, Ask.dismiss(dialog.question.id))
+        resolve(%{state | dialog: dialog}, Approvals.answer(dialog.question.id, value))
 
       {:stop, _dialog} ->
         {:stop, state}
     end
   end
 
-  defp resolve(state, :ok), do: {:ok, refresh(state)}
-  defp resolve(state, {:error, reason}), do: {:error, reason, refresh(state)}
-
-  defp refresh(state) do
-    case Ask.pending() do
-      questions when is_list(questions) ->
-        next = select_question(state, questions)
-        if next.dialog == state.dialog, do: next, else: draw(next)
-
-      {:error, reason} ->
-        raise "question queue unavailable: #{inspect(reason)}"
+  defp resolve(state, result) do
+    case {refresh(state), result} do
+      {{:stop, state}, _result} -> {:stop, state}
+      {{:ok, state}, :ok} -> {:ok, state}
+      {{:ok, state}, {:error, reason}} -> {:error, reason, state}
     end
   end
 
-  defp select_question(state, questions) do
-    %{state | dialog: Dialog.show(state.dialog, List.first(questions))}
+  # Shows the oldest pending request; with none left the GUI hands back.
+  defp refresh(state) do
+    case Approvals.pending() do
+      [] ->
+        {:stop, state}
+
+      [request | _] ->
+        next = %{state | dialog: Dialog.show(state.dialog, request)}
+        {:ok, if(next.dialog == state.dialog, do: next, else: draw(next))}
+
+      {:error, reason} ->
+        raise "approvals unavailable: #{inspect(reason)}"
+    end
   end
 
   defp draw(state) do
@@ -459,6 +492,14 @@ defmodule Elixos.GUI do
     end
   rescue
     error -> {:error, Exception.message(error)}
+  end
+
+  # The orderly exit: release the renderer and the console, then stop.
+  defp hand_back(state) do
+    {result, state} = shutdown(state)
+    if result != :ok, do: Logger.warning("elixos-gui: shutdown #{inspect(result)}")
+    Enum.each(state.status_waiters, &GenServer.reply(&1, {:error, :nothing_pending}))
+    {:stop, :normal, %{state | status_waiters: []}}
   end
 
   defp halt(state, reason) do

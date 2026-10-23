@@ -1,0 +1,295 @@
+# Emerge's raster NIF for arm64, cross-compiled on the build host (ADR-060,
+# ADR-069). Nothing in this recipe executes an aarch64 binary.
+#
+# The arm64 renderer used to be compiled inside an emulated aarch64 melange
+# environment: rustc, clang and Skia's whole C++ build under qemu-user. This
+# recipe runs in the host's own x86_64 environment and emits the same
+# `embedded-cpu` profile for aarch64-unknown-linux-musl, which the aarch64
+# `elixos-gui-renderer` package installs from /home/build/prebuilt.
+#
+# The Rust toolchain is upstream's, pinned by checksum: Alpine's rust ships no
+# aarch64 standard library, and a std must come from the exact rustc build
+# that uses it. The C/C++ compiler and linker are Alpine's clang and lld, the
+# same pattern as otp-cross.yaml: the target's libc, GCC runtime, C++ standard
+# library and FreeType/Fontconfig come from Alpine's own aarch64 packages,
+# installed into a sysroot by apk. The closure shipped beside the NIF is
+# copied from that sysroot, never from this x86_64 build environment.
+package:
+  name: elixos-gui-renderer-cross
+  version: "0.4.2"
+  epoch: 0
+  description: "Emerge raster renderer for arm64, cross-compiled on the build host (build tool)"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime: []
+
+vars:
+  # Same Hex source as gui-renderer.yaml: its Cargo.lock pins every crate and
+  # the immutable rust-skia revision.
+  source-sha256: b3c3aa07f91c419f2fb38d966187abe3c67dfe3aa7dc63c0ac3f0e437646d315
+  # Upstream Rust 1.96.1 (2026-06-30), the version Alpine 3.24 ships; Emerge
+  # 0.4.2 declares rust-version 1.91.
+  rust-version: "1.96.1"
+  rustc-sha256: d7692d8b8c565f2fd5c2219dc51ffee73dd70da2c4ec0d238efb36e8df31257a
+  cargo-sha256: 0af8d142ddf791d218206c86f2bead00d262965e81f03d540068fc1ca0ab6e3c
+  rust-std-host-sha256: 94192fe7e10f11e8595f2a29ebda182da0f786797fe908f44fbf80213cd845ac
+  rust-std-aarch64-sha256: 47de864655e5c7b0843787828b52d24fa0aedf253cfa7ce9b02e7c812b53bf83
+  # The aarch64 packages the NIF compiles and links against: libc and the
+  # kernel's UAPI headers (Skia's zlib reads <asm/hwcap.h>), the GCC runtime
+  # and C++ standard library (the clang driver finds the GCC installation by
+  # Alpine's triplet), and FreeType/Fontconfig, which skia-bindings always
+  # puts on the link line. `apk fetch --recursive` adds their closure.
+  target-packages: musl musl-dev linux-headers gcc g++ libgcc libstdc++ libstdc++-dev freetype freetype-dev fontconfig fontconfig-dev
+
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+    packages:
+      - alpine-release=3.24.3-r0
+      - alpine-keys
+      - apk-tools
+      - bash
+      - ca-certificates
+      - curl
+      - tar
+      - xz
+      - binutils
+      - patchelf
+      # Host C toolchain: the upstream x86_64 rustc links build scripts and
+      # proc macros with `cc`.
+      - build-base
+      # The cross compiler, linker and archiver, and libclang for bindgen.
+      - clang21
+      - clang21-libclang
+      - lld21
+      - llvm21
+      # Skia's build: Alpine's native GN (Skia's bundled one is glibc), ninja
+      # (samurai), git for Skia's DEPS sync, python3 for its scripts.
+      - gn=0_git20260904-r0
+      - samurai
+      - git
+      - python3
+      - pkgconf
+
+pipeline:
+  - runs: |
+      set -eu
+      triple=aarch64-unknown-linux-musl
+      alpine_triple=aarch64-alpine-linux-musl
+      dest="${{targets.destdir}}/gui/$triple"
+      cache=/var/cache/melange
+      mkdir -p "$dest/lib" "$dest/licenses" /tmp/renderer
+
+      # --- the Rust toolchain (upstream, checksum-pinned) ------------------
+      # Host rustc/cargo/std for x86_64 musl, and the aarch64 musl std that
+      # the same rustc build links against. The tarballs are cached between
+      # runs and re-verified every time.
+      rv="${{vars.rust-version}}"
+      mkdir -p "$cache/rust-dist" /tmp/rust-dist
+      fetch_rust() { # fetch_rust <component-triple> <sha256>
+        f="$cache/rust-dist/$1.tar.xz"
+        if [ ! -f "$f" ] || ! echo "$2  $f" | sha256sum -c - >/dev/null 2>&1; then
+          curl -fsSL -o "$f.tmp" "https://static.rust-lang.org/dist/$1.tar.xz"
+          echo "$2  $f.tmp" | sha256sum -c -
+          mv "$f.tmp" "$f"
+        fi
+        tar -xJf "$f" -C /tmp/rust-dist
+        bash "/tmp/rust-dist/$1/install.sh" --prefix=/tmp/rust --disable-ldconfig >/dev/null
+      }
+      fetch_rust "rustc-$rv-x86_64-unknown-linux-musl" "${{vars.rustc-sha256}}"
+      fetch_rust "cargo-$rv-x86_64-unknown-linux-musl" "${{vars.cargo-sha256}}"
+      fetch_rust "rust-std-$rv-x86_64-unknown-linux-musl" "${{vars.rust-std-host-sha256}}"
+      fetch_rust "rust-std-$rv-$triple" "${{vars.rust-std-aarch64-sha256}}"
+      export PATH="/tmp/rust/bin:$PATH"
+      rustc -vV
+      cargo -V
+      [ -d "/tmp/rust/lib/rustlib/$triple/lib" ] || {
+        echo "gui-renderer-cross: no $triple standard library" >&2; exit 1; }
+
+      # --- the cross compiler ----------------------------------------------
+      llvm_bin="$(dirname "$(readlink -f "$(command -v clang-21)")")"
+      export PATH="$llvm_bin:$PATH"
+      [ -x "$llvm_bin/clang" ] && [ -x "$llvm_bin/clang++" ] && [ -x "$llvm_bin/llvm-ar" ] || {
+        echo "gui-renderer-cross: $llvm_bin lacks clang, clang++ or llvm-ar" >&2; exit 1; }
+      command -v ld.lld >/dev/null || { echo "gui-renderer-cross: no ld.lld" >&2; exit 1; }
+      echo "gui-renderer-cross: compiler $llvm_bin - $(clang --version | head -n1)"
+
+      # --- the target's own packages (the sysroot) -------------------------
+      # Exactly otp-cross.yaml: Alpine signs each architecture's index with
+      # its own key, so install the published aarch64 key and verify, then
+      # let apk extract (no scripts: nothing aarch64 runs).
+      sysroot=/tmp/sysroot
+      mkdir -p "$sysroot" /tmp/sysroot-apks /etc/apk/keys
+      curl -fsSL -o /etc/apk/keys/alpine-devel@lists.alpinelinux.org-616ae350.rsa.pub \
+        https://alpinelinux.org/keys/alpine-devel@lists.alpinelinux.org-616ae350.rsa.pub
+      ( cd /tmp/sysroot-apks && apk fetch --arch aarch64 --no-cache --recursive ${{vars.target-packages}} >/dev/null )
+      apk add --root "$sysroot" --initdb --no-scripts --usermode --arch aarch64 \
+        --keys-dir /etc/apk/keys /tmp/sysroot-apks/*.apk >/dev/null || {
+        echo "gui-renderer-cross: apk add into the sysroot failed" >&2; exit 1; }
+      for f in usr/lib/libstdc++.so usr/lib/libgcc_s.so usr/lib/libfreetype.so \
+               usr/lib/libfontconfig.so usr/include/freetype2/ft2build.h; do
+        [ -e "$sysroot/$f" ] || { echo "gui-renderer-cross: the sysroot has no $f" >&2; exit 1; }
+      done
+
+      # Wrappers for cc-rs and rustc: they append the target last, so it wins
+      # over any --target=aarch64-unknown-linux-musl a tool adds (clang would
+      # not find Alpine's GCC installation under the vendorless triple).
+      mkdir -p /tmp/cross-bin
+      for tool in clang clang++; do
+        printf '#!/bin/sh\nexec %s "$@" --target=%s --sysroot=%s\n' \
+          "$llvm_bin/$tool" "$alpine_triple" "$sysroot" > "/tmp/cross-bin/$alpine_triple-$tool"
+      done
+      # The linker driver: rustc infers the flavor from the name, and a name
+      # ending in -ld would be handed raw ld arguments; -clang gets cc ones.
+      printf '#!/bin/sh\nexec %s "$@" --target=%s --sysroot=%s -fuse-ld=lld\n' \
+        "$llvm_bin/clang" "$alpine_triple" "$sysroot" > "/tmp/cross-bin/$alpine_triple-lld-clang"
+      chmod 0755 /tmp/cross-bin/*
+      xcc="/tmp/cross-bin/$alpine_triple-clang"
+      xcxx="/tmp/cross-bin/$alpine_triple-clang++"
+      xld="/tmp/cross-bin/$alpine_triple-lld-clang"
+
+      # Prove the toolchain before trusting it: C++ against the target's
+      # libstdc++ and FreeType, linked as a shared object like the NIF.
+      printf '#include <string>\n#include <arm_neon.h>\n#include <ft2build.h>\n#include FT_FREETYPE_H\nextern "C" int probe(){std::string s;uint8x16_t v;FT_Library l;return (int)(s.size()+sizeof(v))+FT_Init_FreeType(&l);}\n' > /tmp/probe.cpp
+      "$xcxx" -fPIC -shared -I"$sysroot/usr/include/freetype2" /tmp/probe.cpp -o /tmp/probe.so \
+        -fuse-ld=lld -lfreetype || {
+        echo "gui-renderer-cross: the C++ cross compiler does not build against the sysroot" >&2; exit 1; }
+      readelf -h /tmp/probe.so | grep -q AArch64 || {
+        echo "gui-renderer-cross: the probe is not AArch64" >&2; exit 1; }
+
+      # --- the Emerge source -----------------------------------------------
+      cd /tmp/renderer
+      curl -fsSL -o emerge.tar "https://repo.hex.pm/tarballs/emerge-${{package.version}}.tar"
+      echo "${{vars.source-sha256}}  emerge.tar" | sha256sum -c -
+      tar -xf emerge.tar contents.tar.gz
+      mkdir source
+      tar -xzf contents.tar.gz -C source
+      cp source/LICENSE source/NOTICE source/THIRD_PARTY_ASSETS.md "$dest/licenses/"
+      cd source/native/emerge_skia
+
+      # --- the cross build -------------------------------------------------
+      # Crate sources and the rust-skia checkout (with Skia's synced DEPS)
+      # are cached; --locked still verifies every checksum and the revision.
+      export CARGO_HOME="$cache/gui-renderer-cargo"
+      export CARGO_BUILD_TARGET="$triple"
+      export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$xld"
+      # Dynamic musl on both sides. The NIF: a cdylib, as the BEAM loads it.
+      export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-Ctarget-feature=-crt-static"
+      # The host: upstream's musl rustc links build scripts statically by
+      # default, and a static skia-bindings build script cannot dlopen the
+      # libclang bindgen needs ("Dynamic loading not supported"). Stable cargo
+      # applies no rustflags to host units in a --target build, so a wrapper
+      # adds the flag to every rustc call without a --target (the host's).
+      printf '#!/bin/sh\nrustc="$1"; shift\ncase " $* " in *" --target "*) exec "$rustc" "$@" ;; esac\nexec "$rustc" "$@" -Ctarget-feature=-crt-static\n' \
+        > /tmp/cross-bin/rustc-host-dynamic
+      chmod 0755 /tmp/cross-bin/rustc-host-dynamic
+      export RUSTC_WRAPPER=/tmp/cross-bin/rustc-host-dynamic
+      export CARGO_PROFILE_RELEASE_STRIP=symbols
+      export CC_aarch64_unknown_linux_musl="$xcc"
+      export CXX_aarch64_unknown_linux_musl="$xcxx"
+      export AR_aarch64_unknown_linux_musl="$llvm_bin/llvm-ar"
+      # Skia: compile from source, never the binary cache. rust-skia reads the
+      # target from the --target in CLANGCC/CLANGCXX (Alpine's triplet, so it
+      # selects its generic Linux path rather than the Alpine-host one that
+      # injects the host's own C++ headers) and turns SDKTARGETSYSROOT into
+      # --sysroot for Skia, bindgen and the bindings shim; with it set, it
+      # keeps that triplet in Skia's extra_cflags/asmflags.
+      export FORCE_SKIA_BUILD=1
+      export SDKTARGETSYSROOT="$sysroot"
+      export CLANGCC="$llvm_bin/clang --target=$alpine_triple --sysroot=$sysroot"
+      export CLANGCXX="$llvm_bin/clang++ --target=$alpine_triple --sysroot=$sysroot"
+      export SKIA_GN_COMMAND=/usr/bin/gn
+      export SKIA_NINJA_COMMAND=/usr/bin/ninja
+      # extra_cflags is rust-skia's (target, sysroot, -O); GN refuses to
+      # replace a non-empty list, so the sysroot reaches the compiler there.
+      export SKIA_GN_ARGS="target_os=\"linux\" target_cpu=\"arm64\" ar=\"$llvm_bin/llvm-ar\" skia_use_fontconfig=false skia_use_system_freetype2=false extra_ldflags=[\"--target=$alpine_triple\",\"--sysroot=$sysroot\",\"-fuse-ld=lld\"]"
+      export BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_musl="--target=$alpine_triple --sysroot=$sysroot"
+      export LIBCLANG_PATH="$(dirname "$(find /usr/lib -name 'libclang.so*' -type f | head -n1)")"
+      # skia-bindings asks pkg-config for FreeType/Fontconfig: the target's.
+      export PKG_CONFIG_ALLOW_CROSS=1
+      export PKG_CONFIG_SYSROOT_DIR="$sysroot"
+      export PKG_CONFIG_LIBDIR="$sysroot/usr/lib/pkgconfig:$sysroot/usr/share/pkgconfig"
+      env | grep -E '^(CARGO_|RUSTC_WRAPPER|CC_|CXX_|AR_|FORCE_SKIA|SDKTARGET|CLANGC|SKIA_|BINDGEN_|LIBCLANG|PKG_CONFIG)' | sort
+      cargo build --locked --release --lib --target "$triple" \
+        --no-default-features --features embedded-cpu
+      # Nothing aarch64 may have run. A host with qemu-user registered in
+      # binfmt_misc would run one silently, so prove it instead: the build
+      # produced no aarch64 program at all (only objects, archives and the
+      # NIF), every build script is an x86_64 program, and the sysroot's own
+      # programs are not on PATH and had their install scripts skipped.
+      find target -type f -perm -u+x | while IFS= read -r f; do
+        readelf -h "$f" >/dev/null 2>&1 || continue
+        if readelf -h "$f" | grep -q 'Machine:.*AArch64' &&
+           readelf -l "$f" 2>/dev/null | grep -q 'program interpreter'; then
+          echo "gui-renderer-cross: the build produced an aarch64 program: $f" >&2; exit 1
+        fi
+      done
+      for f in target/release/build/*/build-script-build; do
+        readelf -h "$f" | grep -q 'Machine:.*X86-64' || {
+          echo "gui-renderer-cross: $f is not an x86_64 program" >&2; exit 1; }
+      done
+      echo "gui-renderer-cross: no aarch64 program was built; $(ls target/release/build/*/build-script-build | wc -l) build scripts are x86_64"
+      install -m 0755 "target/$triple/release/libemerge_skia.so" "$dest/libemerge_skia.so"
+
+      # --- the closure, from the sysroot -----------------------------------
+      # Walk DT_NEEDED with readelf, resolving each name in the sysroot's
+      # library directories. Symlinks are followed inside the sysroot (musl's
+      # are absolute), then the file is copied under its DT_NEEDED name.
+      in_sysroot() { # in_sysroot <path> -> real file inside the sysroot
+        p="$1"
+        while [ -L "$p" ]; do
+          t="$(readlink "$p")"
+          case "$t" in
+            /*) p="$sysroot$t" ;;
+            *) p="$(dirname "$p")/$t" ;;
+          esac
+        done
+        [ -f "$p" ] && echo "$p"
+      }
+      needed() { readelf -d "$1" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'; }
+      queue="$dest/libemerge_skia.so"
+      while [ -n "$queue" ]; do
+        elf="${queue%% *}"
+        [ "$elf" = "$queue" ] && queue="" || queue="${queue#* }"
+        for name in $(needed "$elf"); do
+          [ -e "$dest/lib/$name" ] && continue
+          src=""
+          for d in /lib /usr/lib; do
+            if [ -e "$sysroot$d/$name" ] || [ -L "$sysroot$d/$name" ]; then
+              src="$(in_sysroot "$sysroot$d/$name")" && break
+            fi
+          done
+          [ -n "$src" ] || { echo "gui-renderer-cross: $name (needed by $elf) is not in the sysroot" >&2; exit 1; }
+          cp "$src" "$dest/lib/$name"
+          echo "gui-renderer-cross: $name <- ${src#$sysroot}"
+          queue="${queue:+$queue }$dest/lib/$name"
+        done
+      done
+      patchelf --set-rpath '$ORIGIN/lib' "$dest/libemerge_skia.so"
+      for lib in "$dest"/lib/*; do
+        case "$(basename "$lib")" in
+          libc.musl-*|ld-musl-*) ;;
+          *) patchelf --set-rpath '$ORIGIN' "$lib" ;;
+        esac
+      done
+
+      # --- what the image needs to be true ---------------------------------
+      for elf in "$dest/libemerge_skia.so" "$dest"/lib/*; do
+        readelf -h "$elf" | grep -q 'Machine:.*AArch64' || {
+          echo "gui-renderer-cross: $elf is not AArch64" >&2; exit 1; }
+        for name in $(needed "$elf"); do
+          [ -f "$dest/lib/$name" ] || {
+            echo "gui-renderer-cross: $elf needs $name, which is not shipped" >&2; exit 1; }
+        done
+      done
+      readelf -d "$dest/libemerge_skia.so" | grep -q "RUNPATH.*\[\$ORIGIN/lib\]" || {
+        echo "gui-renderer-cross: the NIF has no \$ORIGIN/lib RUNPATH" >&2; exit 1; }
+      readelf --dyn-syms -W "$dest/libemerge_skia.so" | grep -Eq ' FUNC +GLOBAL +DEFAULT +[0-9]+ nif_init$' || {
+        echo "gui-renderer-cross: the NIF does not export nif_init" >&2; exit 1; }
+      readelf -h "$dest/libemerge_skia.so"
+      readelf -d "$dest/libemerge_skia.so"
+      (cd "$dest" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum) > "$dest/SHA256SUMS"
+      cat "$dest/SHA256SUMS"

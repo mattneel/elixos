@@ -11,14 +11,15 @@ defmodule Elixos.Image.Generation do
   Writes are atomic (temporary file, fsync, rename, fsync of the directory).
   """
 
-  defstruct number: nil, parent: 0, modules: %{}, boot: [], created_at: nil
+  defstruct number: nil, parent: 0, modules: %{}, boot: [], created_at: nil, provenance: nil
 
   @type t :: %__MODULE__{
           number: pos_integer(),
           parent: non_neg_integer(),
           modules: %{module() => Elixos.Image.Store.hash()},
           boot: [{module(), atom(), list()}],
-          created_at: DateTime.t() | nil
+          created_at: DateTime.t() | nil,
+          provenance: map() | nil
         }
 
   @spec write(Path.t(), t()) :: :ok | {:error, :reserved | :exists | term()}

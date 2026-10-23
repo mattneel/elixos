@@ -1,0 +1,22 @@
+# Deploy a prebuilt native application image with --app and --image.
+# Create the named Volume explicitly in this region before deployment.
+# The application owns any HTTP listener, ingress and readiness checks.
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = 45
+
+[env]
+  ELIXOS_CONSOLE = "0"
+
+[mounts]
+  source = "elixos_data"
+  destination = "/priv"
+
+[[vm]]
+  memory = "2gb"
+  cpus = 2
+  cpu_kind = "shared"
+
+[[restart]]
+  policy = "on-failure"
+  retries = 10

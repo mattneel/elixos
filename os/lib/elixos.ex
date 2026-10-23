@@ -16,6 +16,9 @@ defmodule Elixos do
   @doc "Boot facts: arch, generation, mode (:normal | :rescue), attempt, OS version. (M4; arch M16)"
   def info, do: Elixos.Boot.info()
 
+  @doc "Execution boundary: :machine (own kernel), :container (shared kernel), or :host."
+  def runtime, do: Elixos.Boot.runtime()
+
   @doc "Ask the shim to reboot once the VM has stopped. (M4)"
   def reboot, do: request_shutdown(&Elixos.Shim.Control.reboot/0)
 

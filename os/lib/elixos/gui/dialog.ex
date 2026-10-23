@@ -1,10 +1,12 @@
 defmodule Elixos.GUI.Dialog do
   @moduledoc """
-  The framebuffer view of one Ask question (M27).
+  The framebuffer view of one Oh-My-Jido approval or question (M27, ADR-093).
 
-  Selection and editing are pure Elixir. The queue remains the authority for
-  accepting an answer; a default only pre-fills this view and never resolves it.
-  Emerge draws the same tree for off-screen capture and the live framebuffer.
+  Selection and editing are pure Elixir. `Elixos.Approvals` remains the
+  authority for accepting an answer; a default only pre-fills this view and
+  never resolves it. Escape and F12 hand the screen back and decide nothing;
+  denying an effect is an explicit No. Emerge draws the same tree for
+  off-screen capture and the live framebuffer.
   """
 
   import Emerge.UI, only: [el: 2, row: 2, column: 2, paragraph: 2, text: 1]
@@ -13,7 +15,7 @@ defmodule Elixos.GUI.Dialog do
   import Emerge.UI.Align, only: [center_x: 0]
 
   alias Emerge.UI.{Align, Background, Border, Font, Nearby, Transform}
-  alias Elixos.Ask.Question
+  alias Elixos.Approvals.Request
 
   @outer 24
   @padding 20
@@ -43,10 +45,10 @@ defmodule Elixos.GUI.Dialog do
 
   @type t :: %__MODULE__{}
 
-  @spec new(Question.t() | nil) :: t()
+  @spec new(Request.t() | nil) :: t()
   def new(nil), do: %__MODULE__{}
 
-  def new(%Question{} = question) do
+  def new(%Request{} = question) do
     cursor =
       case question.kind do
         :confirm -> if question.default == true, do: 0, else: 1
@@ -83,8 +85,8 @@ defmodule Elixos.GUI.Dialog do
     %__MODULE__{question: question, cursor: cursor, selected: selected, text: initial_text}
   end
 
-  @doc "Changes the displayed question without losing edits or the physical pointer."
-  @spec show(t(), Question.t() | nil) :: t()
+  @doc "Changes the displayed request without losing edits or the physical pointer."
+  @spec show(t(), Request.t() | nil) :: t()
   def show(dialog, question) do
     case {dialog.question, question} do
       {%{id: id}, %{id: id}} -> dialog
@@ -94,7 +96,7 @@ defmodule Elixos.GUI.Dialog do
   end
 
   @spec input(t(), term(), {pos_integer(), pos_integer()}) ::
-          {:continue, t()} | {:answer, term(), t()} | {:dismiss, t()} | {:stop, t()}
+          {:continue, t()} | {:answer, term(), t()} | {:stop, t()}
   def input(dialog, event, size \\ {640, 480})
 
   def input(dialog, {:pointer, x, y}, _size) when is_number(x) and is_number(y),
@@ -116,10 +118,11 @@ defmodule Elixos.GUI.Dialog do
     do: input(dialog, {:key, key, :press}, size)
 
   def input(dialog, {:key, _key, :release}, _size), do: {:continue, dialog}
-  def input(dialog, {:key, "F12", :press}, _size), do: {:stop, dialog}
-  def input(%{question: nil} = dialog, {:key, "Escape", :press}, _size), do: {:stop, dialog}
+
+  def input(dialog, {:key, key, :press}, _size) when key in ["F12", "Escape"],
+    do: {:stop, dialog}
+
   def input(%{question: nil} = dialog, _event, _size), do: {:continue, dialog}
-  def input(dialog, {:key, "Escape", :press}, _size), do: {:dismiss, dialog}
   def input(dialog, {:key, "Enter", :press}, _size), do: submit(dialog)
 
   def input(%{question: %{kind: :confirm}} = dialog, {:key, key, :press}, _size)
@@ -226,7 +229,7 @@ defmodule Elixos.GUI.Dialog do
         [
           el(
             [height(px(16)), Font.size(12), Font.family("monospace"), Font.color(@accent)],
-            text("ELIXOS / ASK")
+            text("ELIXOS / APPROVALS")
           ),
           paragraph([width(fill()), height(px(56)), Font.size(24), Font.weight(600)], [
             text(prompt)
@@ -276,32 +279,32 @@ defmodule Elixos.GUI.Dialog do
   end
 
   defp labels(%{question: nil}) do
-    {"Ready for the next question", "Agents ask; you decide.",
+    {"Ready for the next approval", "Agents ask; you decide.",
      "Escape or F12 returns to the console."}
   end
 
   defp labels(%{question: question}) do
     case question.kind do
       :text ->
-        {question.prompt, "TEXT ANSWER", "Type an answer. Enter sends; Escape dismisses."}
+        {question.prompt, "TEXT ANSWER", "Type an answer. Enter sends; Escape returns to IEx."}
 
       :confirm ->
-        {question.prompt, "CONFIRM",
-         "Y / N answer. Arrows select; Enter accepts; Escape dismisses."}
+        {question.prompt, "APPROVE",
+         "Y approves; N denies. Enter accepts; Escape returns to IEx."}
 
       :choice ->
-        {question.prompt, "SELECT ONE", "Up / Down select. Enter accepts; Escape dismisses."}
+        {question.prompt, "SELECT ONE", "Up / Down select. Enter accepts; Escape returns to IEx."}
 
       :multi ->
         {question.prompt, "SELECT ONE OR MORE",
-         "Up / Down select; Space toggles; Enter sends; Escape dismisses."}
+         "Up / Down select; Space toggles; Enter sends; Escape returns to IEx."}
     end
   end
 
   defp body(%{question: nil}, _size) do
     el(
       [height(px(@row_height)), Font.size(16)],
-      text("Waiting for a question from the Ask queue.")
+      text("Waiting for an Oh-My-Jido approval or question.")
     )
   end
 
