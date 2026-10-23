@@ -472,3 +472,80 @@ longer open is `{:error, :unknown_request}`. `subscribe/0` returns the open
 requests and then sends `{:elixos_approvals, requests}` on every change.
 Login IEx sessions import `approvals/0`, `approve/1`, `deny/1` and
 `answer/2`. Nothing in the OS answers a request on its own.
+
+## §11 The inter-core ring (M31)
+
+The two K230 cores share a reserved region (docs/notes/k230.md; on the host
+and in tests, a file of the same size). It holds two single-producer,
+single-consumer rings, one per direction, carrying IP packets: the link
+between Elixos and the coprocessor is plain IP, and distribution is plain TCP
+over it (ADR-098).
+
+**Region.** Size `S`, a multiple of 4096. Ring **A** (big core writes, little
+core reads) occupies `[0, S/2)`, ring **B** (little writes, big reads)
+`[S/2, S)`. All integers are little-endian `u32`.
+
+**Ring header** (64 bytes at the start of each half):
+
+| Offset | Field | Written by |
+|--------|-------|------------|
+| 0 | magic `0x52584C45` ("ELXR") | initialiser |
+| 4 | version `1` | initialiser |
+| 8 | capacity: data bytes, `S/2 - 64`, a multiple of 8 | initialiser |
+| 12 | writer epoch | writer |
+| 16 | head: bytes ever written, wrapping at 2^32 | writer |
+| 20 | reader epoch | reader |
+| 24 | tail: bytes ever consumed, wrapping at 2^32 | reader |
+| 28 | dropped: frames the reader discarded as corrupt | reader |
+| 32-63 | zero | - |
+
+The data area follows the header; byte `p` of the stream lives at
+`64 + (p mod capacity)`, so frames wrap around the end. `head - tail` (mod
+2^32) is the bytes in flight and never exceeds the capacity.
+
+**Frame:** a 16-byte header `len, seq, crc, 0` followed by `len` payload
+bytes, padded with zeros to a multiple of 8. `len` is 1-65535 and at most a
+quarter of the capacity; `seq` counts the writer's frames from 0 per epoch;
+`crc` is CRC-32 (IEEE, as zlib's `crc32`) over `len`, `seq` (8 little-endian
+bytes) and the payload. A frame occupies `16 + align8(len)` bytes.
+
+**Publishing.** The writer copies the whole frame, then (after a write fence)
+advances `head`; the reader reads `head`, then (after a read fence) the frame,
+and advances `tail` only when done with it. A writer with too little free
+space does not write: the frame waits, or the caller is told the ring is full
+(backpressure); nothing unread is ever overwritten.
+
+**Corruption.** A frame whose `crc` does not match is dropped and counted in
+`dropped`; the reader skips it by its `len`. A `len` outside 1-65535, or
+larger than the bytes in flight, means the stream cannot be parsed: the reader
+counts one drop and resynchronises by setting `tail = head`.
+
+**Initialisation and restarts.** The big core initialises a ring whose magic,
+version or capacity is wrong: zero header and data, then write capacity,
+version and, last, magic. A side that (re)starts finds a valid ring and keeps
+it: as a writer it bumps its epoch and continues at `head`; as a reader it
+bumps its epoch and sets `tail = head`, discarding frames meant for its
+previous incarnation. Frames written after a restart are therefore never
+lost. The little core waits for a valid magic before using either ring.
+
+**Signalling.** Polling: each side checks its incoming ring at least every
+millisecond while idle. The K230 mailbox may replace polling later; the
+layout does not change.
+
+**The big-core helper.** `elixos-link` (static Zig, `shim/src/link.zig`)
+bridges the region to a TUN device:
+
+```
+elixos-link --region <path> --size <S> [--offset <bytes>] --tun <ifname>
+            [--side big|little] [--address <ip>/<len>]
+```
+
+It maps the region (a file, or a UIO device on the board), initialises the
+rings if needed (`--side big`, the default), creates the TUN interface
+(`IFF_TUN | IFF_NO_PI`), optionally assigns the address and brings it up, then
+moves every packet read from TUN into its outgoing ring and every frame from
+its incoming ring onto TUN. A full outgoing ring drops the packet (IP's own
+retransmission handles it) and counts it. `--side little` swaps the rings, so
+two helpers on one file form a complete link for tests. Its stderr lines:
+`elixos-link: up <ifname> region <S> bytes` once ready, and
+`elixos-link: stats tx <n> rx <n> full <n> dropped <n>` on SIGUSR1 and exit.
