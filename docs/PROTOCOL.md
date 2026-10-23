@@ -491,7 +491,7 @@ core reads) occupies `[0, S/2)`, ring **B** (little writes, big reads)
 |--------|-------|------------|
 | 0 | magic `0x52584C45` ("ELXR") | initialiser |
 | 4 | version `1` | initialiser |
-| 8 | capacity: data bytes, `S/2 - 64`, a multiple of 8 | initialiser |
+| 8 | capacity: data bytes, the largest power of two not above `S/2 - 64` (at most 2^31) | initialiser |
 | 12 | writer epoch | writer |
 | 16 | head: bytes ever written, wrapping at 2^32 | writer |
 | 20 | reader epoch | reader |
@@ -501,7 +501,12 @@ core reads) occupies `[0, S/2)`, ring **B** (little writes, big reads)
 
 The data area follows the header; byte `p` of the stream lives at
 `64 + (p mod capacity)`, so frames wrap around the end. `head - tail` (mod
-2^32) is the bytes in flight and never exceeds the capacity.
+2^32) is the bytes in flight and never exceeds the capacity. The capacity is a
+power of two so that `p mod capacity` stays continuous when the counters wrap
+at 2^32 (with any other capacity, unread bytes just before the wrap and new
+bytes just after it would share slots). Bytes of a half beyond the data area
+are unused; `S = 2 × capacity + 4096` leaves under 2 KiB per half. `spec/ring.vectors` holds
+golden capacities, headers, frames and a wrap.
 
 **Frame:** a 16-byte header `len, seq, crc, 0` followed by `len` payload
 bytes, padded with zeros to a multiple of 8. `len` is 1-65535 and at most a
@@ -517,8 +522,9 @@ space does not write: the frame waits, or the caller is told the ring is full
 
 **Corruption.** A frame whose `crc` does not match is dropped and counted in
 `dropped`; the reader skips it by its `len`. A `len` outside 1-65535, or
-larger than the bytes in flight, means the stream cannot be parsed: the reader
-counts one drop and resynchronises by setting `tail = head`.
+larger than the bytes in flight, or fewer bytes in flight than a frame header,
+or `head - tail` beyond the capacity, means the stream cannot be parsed: the
+reader counts one drop and resynchronises by setting `tail = head`.
 
 **Initialisation and restarts.** The big core initialises a ring whose magic,
 version or capacity is wrong: zero header and data, then write capacity,
@@ -545,7 +551,14 @@ rings if needed (`--side big`, the default), creates the TUN interface
 (`IFF_TUN | IFF_NO_PI`), optionally assigns the address and brings it up, then
 moves every packet read from TUN into its outgoing ring and every frame from
 its incoming ring onto TUN. A full outgoing ring drops the packet (IP's own
-retransmission handles it) and counts it. `--side little` swaps the rings, so
-two helpers on one file form a complete link for tests. Its stderr lines:
+retransmission handles it) and counts it, as it counts a packet longer than
+the ring carries (`len` above a quarter of the capacity). `--side little`
+swaps the rings and waits for the big side's initialisation, so two helpers
+on one file form a complete link for tests. Its stderr lines:
 `elixos-link: up <ifname> region <S> bytes` once ready, and
-`elixos-link: stats tx <n> rx <n> full <n> dropped <n>` on SIGUSR1 and exit.
+`elixos-link: stats tx <n> rx <n> full <n> dropped <n>` on SIGUSR1 and on exit
+(SIGTERM or SIGINT, status 0): packets moved TUN → ring, frames moved
+ring → TUN, packets dropped as above, and frames this incarnation discarded
+as corrupt. `--offset` is page-aligned; a regular file must hold
+`offset + S` bytes. Without `--address` the interface is created but left
+down.

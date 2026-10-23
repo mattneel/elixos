@@ -60,6 +60,8 @@ pub fn build(b: *std.Build) void {
     for ([_]struct { name: []const u8, source: []const u8 }{
         .{ .name = "elixos-gui-io", .source = "shim/src/gui_io.zig" },
         .{ .name = "elixos-console-handover", .source = "shim/src/console_handover.zig" },
+        // M31: the inter-core ring's TUN bridge (docs/PROTOCOL.md §11).
+        .{ .name = "elixos-link", .source = "shim/src/link.zig" },
     }) |helper| {
         const executable = b.addExecutable(.{
             .name = helper.name,
@@ -100,6 +102,9 @@ fn shimModule(
     // Golden vectors shared with the Elixir suite (docs/TESTING.md §Shared vectors).
     mod.addAnonymousImport("protocol_vectors", .{
         .root_source_file = b.path("spec/protocol.vectors"),
+    });
+    mod.addAnonymousImport("ring_vectors", .{
+        .root_source_file = b.path("spec/ring.vectors"),
     });
     return mod;
 }

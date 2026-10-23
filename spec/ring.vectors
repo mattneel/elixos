@@ -1,0 +1,84 @@
+# Elixos inter-core ring: golden vectors (docs/PROTOCOL.md §11).
+#
+# Consumed verbatim by BOTH test suites, so the Zig helper and the Elixir
+# test peer can never drift apart:
+#   shim/src/ring.zig                     (zig build test)
+#   os/test/elixos/ring_vectors_test.exs  (mix test, via Elixos.Test.Ring)
+#
+# One vector per line, fields separated by a TAB. Byte strings are lowercase
+# hex (an empty field is zero bytes); numbers are decimal.
+#
+#   crc       <bytes>  <crc32 as 8 hex digits>
+#             CRC-32 (IEEE, as zlib's crc32) of the bytes.
+#   capacity  <S>  <capacity | invalid>
+#             The ring capacity for a region of S bytes.
+#   header    <S>  <64 header bytes>
+#             Both ring headers right after the big core initialises a region
+#             of S bytes.
+#   frame     <seq>  <payload>  <frame bytes>
+#             The encoded frame, header, payload and zero padding.
+#   decode    <in-flight bytes>  <result>
+#             The reader's next step on a ring whose in-flight bytes (head -
+#             tail) are exactly these, starting at tail. Results:
+#               frame <seq> <payload> <consumed>   delivered; tail += consumed
+#               crc <consumed>                     dropped += 1; tail += consumed
+#               resync                             dropped += 1; tail = head
+#   wrap      <S>  <start>  <seq>  <payload>  <head after>  <offset>=<bytes> ...
+#             A writer with head = tail = start writes one frame. Afterwards
+#             head is <head after> and each listed offset in the ring's half
+#             of the region (header included) holds the listed bytes.
+# Lines starting with '#' and blank lines are ignored.
+
+# --- CRC-32 ---
+crc	313233343536373839	cbf43926
+crc		00000000
+crc	010000000000000001	8675307b
+
+# --- capacity: the largest power of two not above S/2 - 64, at most 2^31 ---
+capacity	4096	1024
+capacity	8192	2048
+capacity	12288	4096
+capacity	20480	8192
+capacity	65536	16384
+capacity	1048576	262144
+capacity	8589934592	2147483648
+capacity	17179869184	2147483648
+capacity	0	invalid
+capacity	2048	invalid
+capacity	4095	invalid
+capacity	6144	invalid
+
+# --- initialised headers: magic "ELXR", version 1, capacity, the rest zero ---
+header	4096	454c5852010000000004000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+header	1048576	454c5852010000000000040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+
+# --- frames ---
+frame	0	01	01000000000000007b307586000000000100000000000000
+frame	1	68656c6c6f	050000000100000049b012f50000000068656c6c6f000000
+frame	7	0001020304050607	0800000007000000638ab806000000000001020304050607
+frame	4294967295	454c49584f532d4b21	09000000ffffffff30dbc1ef00000000454c49584f532d4b2100000000000000
+frame	42	4500001c00000000400100000a0900010a0900020800f7ff00000000	1c0000002a000000da320fd4000000004500001c00000000400100000a0900010a0900020800f7ff0000000000000000
+
+# --- decode: the reader takes one frame at a time ---
+decode	01000000000000007b307586000000000100000000000000	frame 0 01 24
+decode	01000000000000007b307586000000000100000000000000050000000100000049b012f50000000068656c6c6f000000	frame 0 01 24
+decode	050000000100000049b012f50000000068656c6c6f000000	frame 1 68656c6c6f 24
+# a flipped payload bit fails the CRC: the frame is skipped by its len
+decode	050000000100000049b012f50000000069656c6c6f000000	crc 24
+# a flipped seq bit fails the CRC too
+decode	050000000000000049b012f50000000068656c6c6f000000	crc 24
+# a wrong CRC field fails it
+decode	050000000100000049b012f40000000068656c6c6f000000	crc 24
+# len 0 and len 65536 are outside 1-65535: resynchronise
+decode	000000000000000000000000000000000000000000000000	resync
+decode	000001000000000000000000000000000000000000000000	resync
+# len larger than the bytes in flight: resynchronise
+decode	050000000100000049b012f50000000068656c6c6f	resync
+decode	0900000001000000000000000000000068656c6c6f000000	resync
+# fewer bytes in flight than a frame header: resynchronise
+decode	0500000001000000	resync
+
+# --- wraparound: the frame wraps the data area and head wraps at 2^32 ---
+# S 4096: capacity 1024, data area at 64..1087. Stream position 2^32 - 8 is
+# 64 + 1016 = 1080; the frame's last 24 bytes continue at 64.
+wrap	4096	4294967288	3	7772617061726f756e642121	24	1080=0c00000003000000 64=2068c636000000007772617061726f756e64212100000000 16=18000000

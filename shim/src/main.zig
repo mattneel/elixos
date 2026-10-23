@@ -43,6 +43,7 @@ pub const system_image = @import("system_image.zig");
 pub const postgres_init = @import("postgres_init.zig");
 pub const container = @import("container.zig");
 pub const seed = @import("seed.zig");
+pub const netif = @import("netif.zig");
 
 /// OCI environment pointer storage is allocated only before supervision. The
 /// original startup block remains untouched and is carried through panic exec.
@@ -1536,19 +1537,6 @@ fn errnoName(buffer: []u8, err: linux.E) []const u8 {
     return std.fmt.bufPrint(buffer, "E{s}", .{name}) catch "E?";
 }
 
-/// Reads the flags of a network interface, or an error.
-fn interfaceFlags(fd: i32, name: []const u8) !linux.IFF {
-    var request: linux.ifreq = std.mem.zeroes(linux.ifreq);
-    if (name.len + 1 > request.ifrn.name.len) return error.NameTooLong;
-    @memcpy(request.ifrn.name[0..name.len], name);
-
-    if (linux.errno(linux.ioctl(fd, linux.SIOCGIFFLAGS, @intFromPtr(&request))) != .SUCCESS) {
-        return error.IoctlFailed;
-    }
-
-    return request.ifru.flags;
-}
-
 /// Loopback up. A socket to ask with, the flags to keep, one more ioctl to
 /// set them; nothing here speaks the network. Not fatal on failure: a boot
 /// with no loopback only costs what would have listened on it.
@@ -1557,7 +1545,7 @@ fn bringLoopbackUp() void {
     if (linux.errno(fd) != .SUCCESS) return;
     defer _ = linux.close(@intCast(fd));
 
-    var flags = interfaceFlags(@intCast(fd), "lo") catch return;
+    var flags = netif.interfaceFlags(@intCast(fd), "lo") catch return;
     flags.UP = true;
     flags.RUNNING = true;
 
@@ -1571,39 +1559,11 @@ fn bringLoopbackUp() void {
 /// Logs the result either way; a failure leaves the boot alone.
 fn configureLink(link: cmdline.Link) void {
     const a = link.address;
-    if (setLink(link)) |_| {
+    if (netif.setLink(link)) |_| {
         log("coproc link {s} {d}.{d}.{d}.{d}/{d}", .{ link.interface, a[0], a[1], a[2], a[3], link.prefix });
     } else |err| {
         log("coproc link {s} failed ({t})", .{ link.interface, err });
     }
-}
-
-fn setLink(link: cmdline.Link) !void {
-    const fd = linux.socket(linux.AF.INET, linux.SOCK.DGRAM, 0);
-    if (linux.errno(fd) != .SUCCESS) return error.SocketFailed;
-    defer _ = linux.close(@intCast(fd));
-
-    var request: linux.ifreq = std.mem.zeroes(linux.ifreq);
-    if (link.interface.len + 1 > request.ifrn.name.len) return error.NameTooLong;
-    @memcpy(request.ifrn.name[0..link.interface.len], link.interface);
-
-    const mask: u32 = if (link.prefix == 32) 0xffff_ffff else ~(@as(u32, 0xffff_ffff) >> @intCast(link.prefix));
-    const address: linux.sockaddr.in = .{ .port = 0, .addr = @bitCast(link.address) };
-    const netmask: linux.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, mask) };
-
-    request.ifru.addr = @as(*const linux.sockaddr, @ptrCast(&address)).*;
-    if (linux.errno(linux.ioctl(@intCast(fd), linux.SIOCSIFADDR, @intFromPtr(&request))) != .SUCCESS)
-        return error.AddressFailed;
-    request.ifru.netmask = @as(*const linux.sockaddr, @ptrCast(&netmask)).*;
-    if (linux.errno(linux.ioctl(@intCast(fd), linux.SIOCSIFNETMASK, @intFromPtr(&request))) != .SUCCESS)
-        return error.NetmaskFailed;
-
-    var flags = try interfaceFlags(@intCast(fd), link.interface);
-    flags.UP = true;
-    flags.RUNNING = true;
-    request.ifru.flags = flags;
-    if (linux.errno(linux.ioctl(@intCast(fd), linux.SIOCSIFFLAGS, @intFromPtr(&request))) != .SUCCESS)
-        return error.FlagsFailed;
 }
 
 /// A bounded sleep. Used only while waiting for a device that may still be
@@ -1809,8 +1769,8 @@ test "interface flags: a real interface parses, a missing one is an error" {
 
     // Whatever the flags are, a real interface parses; a name the kernel does
     // not know is the ioctl's error, which is what the caller tolerates.
-    _ = try interfaceFlags(@intCast(fd), "lo");
-    try std.testing.expectError(error.IoctlFailed, interfaceFlags(@intCast(fd), "no_such_if0"));
+    _ = try netif.interfaceFlags(@intCast(fd), "lo");
+    try std.testing.expectError(error.IoctlFailed, netif.interfaceFlags(@intCast(fd), "no_such_if0"));
 }
 
 test {
@@ -1831,6 +1791,9 @@ test {
     std.testing.refAllDecls(seed);
     std.testing.refAllDecls(@import("gui_io.zig"));
     std.testing.refAllDecls(@import("console_handover.zig"));
+    std.testing.refAllDecls(netif);
+    std.testing.refAllDecls(@import("ring.zig"));
+    std.testing.refAllDecls(@import("link.zig"));
 }
 
 test "panic adoption preserves the original OCI environment for later relaunch" {

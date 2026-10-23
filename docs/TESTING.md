@@ -63,6 +63,12 @@ carries on with the rest), Elixir stubs raise `Elixos.NotImplemented`.
 `os/test/elixos/shim/protocol_test.exs` (one ExUnit test per line). Add a case
 there and both sides must handle it. The format is documented in the file.
 
+`spec/ring.vectors` is the inter-core ring's contract (docs/PROTOCOL.md §11):
+capacities, headers, frames, decoding and a counter wrap, read by
+`shim/src/ring.zig` the same way and by `os/test/elixos/ring_vectors_test.exs`
+against the Elixir implementation (`os/test/support/ring.ex`) that plays the
+coprocessor's side in `coproc_ring_test.exs`.
+
 ## QEMU tests
 
 **Helpers** (`os/test/support/`):

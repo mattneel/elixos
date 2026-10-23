@@ -144,13 +144,13 @@ fn setNumber(field: anytype, value: ?[]const u8, min: u32) ?void {
 fn parseLink(value: ?[]const u8) ?Link {
     const text = value orelse return null;
     const comma = std.mem.indexOfScalar(u8, text, ',') orelse return null;
-    const interface = text[0..comma];
-    if (interface.len == 0 or interface.len > 15) return null;
-    if (std.mem.eql(u8, interface, ".") or std.mem.eql(u8, interface, "..")) return null;
-    for (interface) |c| {
-        if (!std.ascii.isAlphanumeric(c) and c != '_' and c != '.' and c != '-') return null;
-    }
-    const cidr = text[comma + 1 ..];
+    return parseInterfaceAddress(text[0..comma], text[comma + 1 ..]);
+}
+
+/// An interface name and `<a.b.c.d>/<prefix>`, validated as for
+/// elixos.coproc_link (also elixos-link's `--tun` and `--address`, M31).
+pub fn parseInterfaceAddress(interface: []const u8, cidr: []const u8) ?Link {
+    if (!validInterface(interface)) return null;
     const slash = std.mem.indexOfScalar(u8, cidr, '/') orelse return null;
     var address: [4]u8 = undefined;
     var octets = std.mem.splitScalar(u8, cidr[0..slash], '.');
@@ -164,6 +164,16 @@ fn parseLink(value: ?[]const u8) ?Link {
     const prefix = decimal.parseU32(cidr[slash + 1 ..]) orelse return null;
     if (prefix < 1 or prefix > 32) return null;
     return .{ .interface = interface, .address = address, .prefix = @intCast(prefix) };
+}
+
+/// A kernel interface name: 1-15 of [A-Za-z0-9_.-], not "." or "..".
+pub fn validInterface(interface: []const u8) bool {
+    if (interface.len == 0 or interface.len > 15) return false;
+    if (std.mem.eql(u8, interface, ".") or std.mem.eql(u8, interface, "..")) return false;
+    for (interface) |c| {
+        if (!std.ascii.isAlphanumeric(c) and c != '_' and c != '.' and c != '-') return false;
+    }
+    return true;
 }
 
 test "cmdline: defaults when nothing elixos-specific is present" {
