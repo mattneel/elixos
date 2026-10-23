@@ -150,9 +150,17 @@ defmodule Elixos.Image do
     GenServer.call(image, :generations)
   end
 
+  @doc """
+  Stops the image. The image, its store and its journal are linked to the
+  process that opened it, so an image that is already gone, or is going down
+  with that process (`:shutdown`), is closed too: `:ok`. Any other exit, such
+  as a crash, is raised.
+  """
   @spec close(t()) :: :ok
   def close(image) do
     GenServer.stop(image)
+  catch
+    :exit, {reason, {GenServer, :stop, _}} when reason in [:noproc, :shutdown] -> :ok
   end
 
   ## GenServer
