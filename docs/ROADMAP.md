@@ -9,10 +9,10 @@ Full QEMU suite: `make test-qemu` (M3 onward); milestone gate: `make ci`.
 The ARM64 and riscv64 smoke tests are separate: `make test-qemu-aarch64` and
 `make test-qemu-riscv64`.
 
-**Current state:** M1–M19 and M25–M28 are delivered. M20 (the Ask question queue) is
+**Current state:** M1–M19 and M25–M29 are delivered. M20 (the Ask question queue) is
 retired by ADR-093: Oh-My-Jido approvals are the only human-in-the-loop
 mechanism. M21–M24 are withdrawn by ADR-083, not deferred for another port
-attempt. The K230 cyberdeck track continues with M29–M33.
+attempt. The K230 cyberdeck track continues with M30–M33.
 
 ---
 
@@ -1010,6 +1010,8 @@ and the ADRs are written.
 - *Bundles:* stored, journaled and sealed like modules; a save deploys and
   restarts the coprocessor, a fallback redeploys the old generation's bundle.
 
+- [x] `make ci` green with `MILESTONE=29` (Zig 93, host 388, QEMU 61; x86_64,
+  riscv64 and aarch64 images reproducible).
 - [x] ADR-098: the coprocessor architecture and its internal-only
   distribution.
 - [x] ADR-099: coprocessor bundles as generation content.

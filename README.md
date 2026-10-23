@@ -26,7 +26,7 @@ section says otherwise.
 
 ## Status
 
-- **Delivered (M1–M19, M25–M28):** live generations and recovery, on-box Mix
+- **Delivered (M1–M19, M25–M29):** live generations and recovery, on-box Mix
   builds, SSH, UEFI boot, trusted Hex packages, Jido agents, package-built
   images, an unprivileged BEAM with sealed commits, PostgreSQL, persistent Oban
   jobs, a headless browser, Rust tooling, installed packages resolved as Mix
@@ -34,9 +34,10 @@ section says otherwise.
   opened from IEx on x86_64 and ARM64. The [M27 recording](demos/m27-gui.mp4)
   shows approvals answered on the framebuffer with a real keyboard, then
   console handback. M28 boots riscv64 to `iex(1)>` on QEMU virt
-  ([recording](demos/m28-riscv64.mp4)).
-- **Next (M29–M33):** the rest of the [K230 cyberdeck track](docs/ROADMAP.md#m29-atomvm-as-an-elixos-peer):
-  AtomVM as a peer, and the LilyGO T-Display K230.
+  ([recording](demos/m28-riscv64.mp4)), and M29 joins an AtomVM peer to the
+  cluster over a private link ([recording](demos/m29-atomvm-peer.mp4)).
+- **Next (M30–M33):** the rest of the [K230 cyberdeck track](docs/ROADMAP.md#m30-k230-bring-up-gate-needs-the-board):
+  the LilyGO T-Display K230.
 - **Retired:** the M20 Ask question queue, by
   [ADR-093](docs/DECISIONS.md#adr-093-oh-my-jido-approvals-replace-the-ask-queue).
   Oh-My-Jido approvals are the only human-in-the-loop mechanism.

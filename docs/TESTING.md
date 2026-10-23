@@ -32,8 +32,8 @@ not after every edit.
 
 `MILESTONE` selects the active gate, including a milestone whose implementation
 is still in progress. It is not a count of completed milestones. M1–M19 and
-M25–M28 are delivered; M20 is retired under ADR-093; M21–M24 are withdrawn
-under ADR-083. The K230 track continues with M29–M33.
+M25–M29 are delivered; M20 is retired under ADR-093; M21–M24 are withdrawn
+under ADR-083. The K230 track continues with M30–M33.
 
 - **Zig:** every test begins `try milestone.require(N);`, which returns
   `error.SkipZigTest` until `MILESTONE >= N`. The Makefile passes
