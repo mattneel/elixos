@@ -164,6 +164,9 @@ defmodule Elixos.Container.Image do
          true <-
            (Image.agents(image) == %{} and saved_agents(saved_entries) == %{}) ||
              {:error, :agent_state_not_exportable},
+         # A container has no coprocessor, and the exported generation must be
+         # the same manifest (ADR-099).
+         true <- generation.coproc == nil || {:error, :coproc_bundle_not_exportable},
          :ok <- validate_apps(apps),
          :ok <- validate_boot(generation.boot, apps),
          {:ok, repositories} <- repositories(root) do

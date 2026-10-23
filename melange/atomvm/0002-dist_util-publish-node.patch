@@ -1,0 +1,36 @@
+--- a/libs/estdlib/src/dist_util.erl	2026-10-23 10:15:49.449549219 -0400
++++ b/libs/estdlib/src/dist_util.erl	2026-10-23 10:15:49.457759992 -0400
+@@ -349,6 +349,12 @@
+             io:format("Unexpected message in conn_loop : ~p\n", [Other])
+     end.
+ 
++%% An AtomVM node is a full member of the cluster: advertise it as published,
++%% so OTP peers list it in nodes() instead of treating it as hidden. Only the
++%% advertised flags change; PUBLISHED is not required from the other side.
++published(Flags) ->
++    Flags bor ?DFLAG_PUBLISHED.
++
+ -spec check_flags(non_neg_integer(), #hs_data{}) -> ok.
+ check_flags(Flags0, HSData) ->
+     Flags1 =
+@@ -385,7 +391,7 @@
+     Creation = atomvm:get_creation(),
+     NodeName = atom_to_binary(ThisNode, latin1),
+     NameLen = byte_size(NodeName),
+-    case Send(Socket, <<$N, ThisFlags:64, Creation:32, NameLen:16, NodeName/binary>>) of
++    case Send(Socket, <<$N, (published(ThisFlags)):64, Creation:32, NameLen:16, NodeName/binary>>) of
+         {error, _} = Error ->
+             ?shutdown2({HSData#hs_data.other_node, Socket}, {send_name_failed, Error});
+         ok ->
+@@ -459,7 +465,10 @@
+     NodeName = atom_to_binary(ThisNode, latin1),
+     NameLen = byte_size(NodeName),
+     case
+-        Send(Socket, <<$N, ThisFlags:64, Challenge:32, Creation:32, NameLen:16, NodeName/binary>>)
++        Send(
++            Socket,
++            <<$N, (published(ThisFlags)):64, Challenge:32, Creation:32, NameLen:16, NodeName/binary>>
++        )
+     of
+         {error, _} = Error ->
+             ?shutdown2({HSData#hs_data.other_node, Socket}, {send_challenge_failed, Error});

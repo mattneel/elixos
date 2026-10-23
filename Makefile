@@ -12,7 +12,7 @@ BUILD ?= build
 export ELIXOS_BUILD := $(abspath $(BUILD))
 
 .PHONY: help check-tools test test-shim deps test-os test-qemu test-qemu-aarch64 test-qemu-riscv64 image-riscv64 check ci audit demo demos \
-        image images reproducible uefi-image disk qemu format clean distclean
+        image images reproducible uefi-image disk qemu format clean distclean atomvm
 
 help: ## List targets
 	@awk -F':.*## ' '/^[a-z0-9-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -29,10 +29,10 @@ test-shim: ## Zig unit tests for the PID 1 shim
 deps: ## Fetch the locked Elixir dependency set for the OS
 	cd os && mix deps.get
 
-test-os: deps ## ExUnit tests for the Elixir userland (no QEMU)
+test-os: deps atomvm ## ExUnit tests for the Elixir userland (no QEMU)
 	cd os && ELIXOS_MILESTONE=$(MILESTONE) mix test
 
-test-qemu: deps image uefi-image ## Boot real images in QEMU (slow): os/test/integration
+test-qemu: deps image uefi-image atomvm ## Boot real images in QEMU (slow): os/test/integration
 	cd os && ELIXOS_QEMU=1 ELIXOS_MILESTONE=$(MILESTONE) mix test test/integration
 
 test-qemu-aarch64: images ## The aarch64 smoke set, on qemu-system-aarch64 (TCG: slow)
@@ -45,7 +45,7 @@ test-qemu-riscv64: image-riscv64 ## The riscv64 smoke set, on qemu-system-riscv6
 
 ci: test test-qemu images ## Everything for the current milestone, both architectures
 
-check: image ## While working on one milestone: host tests + its own integration tests, not the suite (M=26)
+check: image atomvm ## While working on one milestone: host tests + its own integration tests, not the suite (M=26)
 	@[ -n "$(M)" ] || { echo "usage: make check M=<milestone>" >&2; exit 1; }
 	zig build test -Dmilestone=$(M) --summary all
 	cd os && ELIXOS_MILESTONE=$(M) mix test
@@ -72,6 +72,9 @@ images: image image-riscv64 ## Every architecture; foreign ones are cross-built 
 image-riscv64: ## The riscv64 image (M28, ADR-097), cross-built on the build host
 	scripts/build-image.sh riscv64
 	scripts/mkdisk.sh riscv64
+
+atomvm: ## AtomVM for the build host, the coprocessor stand-in the M29 tests run (cached)
+	scripts/build-atomvm.sh
 
 reproducible: ## Assemble the x86_64 rootfs twice from the lockfile; print the one digest
 	scripts/build-image.sh x86_64

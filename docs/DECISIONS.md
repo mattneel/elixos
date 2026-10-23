@@ -2704,3 +2704,116 @@ recipes pin resolves there at the same versions as on aarch64 and x86_64.
 `iex(1)>` with the interpreter (ROADMAP M28). The deck console (M33) still
 must not depend on Emerge: the renderer is built, but its framebuffer path is
 exercised only on x86_64 and the K230 panel is unknown until M30.
+
+## ADR-098: The coprocessor is a distribution peer on an internal-only link
+
+**Status:** accepted (2026-10-23), M29.
+
+**Context.** The K230 deck runs AtomVM on its little core next to Elixos on
+the big one (track M28–M33). The two must be one BEAM cluster, but Elixos has
+never been a distributed node, AtomVM has no TLS distribution, and AtomVM's
+distribution always registers with an epmd on 127.0.0.1:4369 and binds
+0.0.0.0. M29 proves the design with AtomVM's Unix build on the host and
+Elixos in QEMU.
+
+**Decision.**
+- `Elixos.Coproc` owns distribution: it starts it when it starts and stops it
+  when it stops. It is a boot child (`{Elixos.Coproc, :boot}`), present only
+  in normal mode on a machine with `/priv/coproc/config.exs`; any problem
+  steps it aside (`:ignore`) and never fails the boot.
+- The listener is bound to the coprocessor link's address only
+  (`inet_dist_use_interface`) on a fixed port, 4370 by default. The link is
+  configured by PID 1 from `elixos.coproc_link=<if>,<ip>/<len>` (PROTOCOL.md
+  §5), since the BEAM has no `CAP_NET_ADMIN`; the shim logs `coproc link …`.
+- No epmd runs on the Elixos side. The kernel parameter `epmd_module` (read
+  by OTP 29 at runtime) is `Elixos.Coproc.Epmd`: a fixed listen port, the one
+  peer's fixed address, and `nxdomain` for every other node, so Elixos cannot
+  dial anything but the coprocessor.
+- Elixos always initiates. AtomVM-initiated connections would need an epmd on
+  the Elixos side; nothing needs them, because every message and signal rides
+  the connection Elixos opened. `Elixos.Coproc` monitors the peer and redials
+  every second while it is down.
+- The cookie is `/priv/coproc/cookie` (mode 0600), created by
+  `Elixos.Coproc.configure/1`; it is both the node's cookie and the peer's.
+  OTP still creates `/priv/home/.erlang.cookie` when distribution starts.
+- On the coprocessor, `:elixos_coproc` (compiled with the OS, packed by
+  `Elixos.Coproc.runtime/0`) is the start module: it starts AtomVM's own
+  epmd, distribution on the fixed port with the cookie, and serves
+  `digest/0` and `deploy/1` (ADR-099). On the host stand-in its configuration
+  comes from the environment; the cookie from a file.
+- In QEMU the link is a second user-mode NIC with `restrict=on` whose only
+  exit is a `guestfwd` relay (socat) to the host AtomVM; the test proves the
+  listener refuses connections on every other address.
+
+**Consequences.** Elixos has a node name (`elixos@<link ip>`) whenever a
+coprocessor is configured. Remote spawn, send, monitor and `Process.link/1`
+work across the link; AtomVM does not honour the link option of a spawn
+request (`Node.spawn_link/4`), so links are made with `Process.link/1`.
+AtomVM's distribution and epmd bind every interface of whatever runs it: on
+the deck that is only the link; on a development host it is every interface.
+
+## ADR-099: Coprocessor bundles are generation content
+
+**Status:** accepted (2026-10-23), M29.
+
+**Context.** Code the coprocessor runs must roll back with the rest of the
+system: a generation that fails must not leave the coprocessor running code
+from the future. A generation held only modules and a boot list.
+
+**Decision.**
+- A coprocessor bundle is an AtomVM `.avm` archive, packed by
+  `Elixos.Coproc.Bundle` (AtomVM's format, chunks filtered and literals
+  uncompressed like packbeam) from modules the image recorded.
+  `Elixos.Coproc.put_bundle/1` stores it like a module blob and journals
+  `{:coproc, hash}` (`nil` for none).
+- `Elixos.Image.Generation` gains `coproc: hash | nil`; older manifests read
+  as `nil`. `save/2` takes the working set's; a candidate overlay inherits its
+  parent's and may not set one. `seal.zig` seals the bundle blob with the
+  modules at COMMIT. Native OCI export refuses a generation with a bundle: a
+  container has no coprocessor and the exported manifest must be the same.
+- The coprocessor must run the bundle of the running generation, or of the
+  generation just saved. Whenever the peer comes up, `Elixos.Coproc` compares
+  the sha256 it reports with the wanted one and deploys on a difference:
+  the runtime stores the archive and ends its VM (AtomVM has no `halt`: its
+  start function returns), and whatever loads the coprocessor restarts it on
+  the new code. `Elixos.save/1` deploys and waits.
+  A fallback boots the old generation, whose bundle is then deployed the
+  same way; a coprocessor still on the old bundle is left alone.
+
+**Consequences.** A deploy restarts the coprocessor VM, so its state does not
+survive a deploy. A deploy is attempted once per wanted bundle: a
+coprocessor that cannot take it is reported, not restarted forever.
+
+## ADR-100: AtomVM main, patched, with Alpine's OTP 28 for its own libraries
+
+**Status:** accepted (2026-10-23), M29.
+
+**Context.** AtomVM's last release, 0.6.6, supports neither OTP 28 nor 29.
+Its main branch does (CHANGELOG 0.7.0-alpha.0), with OTP 29's native-record
+opcodes 186-191 still missing, and is tested upstream with Elixir up to 1.19.
+Elixos runs OTP 29.1.1 and Elixir 1.20.4. Contributing upstream is the
+preferred fix for any gap, but this repository cannot depend on it landing.
+
+**Decision.**
+- `melange/atomvm.yaml` pins AtomVM main at `3a9ea46b` and builds the generic
+  Unix VM statically (musl, Mbed TLS 3.6 via `mbedtls3-static`, zlib), JIT off,
+  crash dumps off, plus `atomvmlib.avm`. AtomVM's own libraries are compiled
+  with Alpine's `erlang28` and Elixir 1.19, the pairing AtomVM tests; rebar3
+  3.27.0 and atomvm_packbeam 0.8.2 are pinned by sha256 and the build is
+  offline. `make atomvm` extracts the binary for the host tests.
+- Coprocessor bundles are compiled by Elixos's own OTP 29 and Elixir 1.20:
+  no second compiler. Native records are the one OTP 29 feature AtomVM lacks,
+  and Elixir does not emit them; the M29 tests run Elixir 1.20 bundles.
+- Two local patches, each meant for upstream (`melange/atomvm/*.patch`):
+  `socket_dist` sets `reuseaddr`, so a VM restarted after a deploy can listen
+  again at once instead of failing for a minute on TIME_WAIT; and
+  `dist_util` advertises `DFLAG_PUBLISHED`, so OTP peers list an AtomVM node
+  in `nodes()` instead of treating it as hidden.
+- Also found and worked around in `:elixos_coproc` rather than patched:
+  AtomVM's `string:trim/1` strips only spaces, and `epmd:start_link/1` takes
+  its caller down when 4369 is taken (started unlinked instead).
+
+**Consequences.** Moving the pin means re-running the M29 suites. The patches
+are dropped as upstream merges equivalents. AtomVM's own PACKBEAM_PATH option
+does not keep rebar3 offline (its checkout is named `packbeam`, not
+`atomvm_packbeam`), which the recipe works around and upstream should fix.

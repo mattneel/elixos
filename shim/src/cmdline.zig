@@ -34,8 +34,18 @@ pub const Settings = struct {
     /// elixos.test.shim_panic_after=S (S >= 1): panic the shim S seconds after launch.
     /// Honored only in -Dtest-hooks builds.
     test_shim_panic_after_s: ?u32 = null,
+    /// elixos.coproc_link=<interface>,<a.b.c.d>/<prefix>: the coprocessor link
+    /// (M29, ADR-098). The shim gives the interface this address and brings it
+    /// up before the BEAM starts; Elixos.Coproc binds its listener to it.
+    coproc_link: ?Link = null,
     /// Count of elixos.* tokens that were unknown or malformed. The shim logs it.
     invalid: u32 = 0,
+};
+
+pub const Link = struct {
+    interface: []const u8,
+    address: [4]u8,
+    prefix: u6,
 };
 
 /// Never fails: bad elixos.* tokens are counted in `invalid` and otherwise ignored.
@@ -84,6 +94,12 @@ pub fn parse(text: []const u8) Settings {
             if (setFlag(&settings.test_stop_before_launch, value) == null) settings.invalid += 1;
         } else if (std.mem.eql(u8, name, "test.shim_panic_after")) {
             if (setNumber(&settings.test_shim_panic_after_s, value, 1) == null) settings.invalid += 1;
+        } else if (std.mem.eql(u8, name, "coproc_link")) {
+            if (parseLink(value)) |link| {
+                settings.coproc_link = link;
+            } else {
+                settings.invalid += 1;
+            }
         } else {
             settings.invalid += 1;
         }
@@ -120,6 +136,34 @@ fn setNumber(field: anytype, value: ?[]const u8, min: u32) ?void {
     if (parsed < min) return null;
     field.* = parsed;
     return {};
+}
+
+/// `<interface>,<a.b.c.d>/<prefix>`: a kernel interface name (1-15 of
+/// [A-Za-z0-9_.-]), a canonical dotted-quad IPv4 address and a prefix length
+/// 1-32. Null for anything else.
+fn parseLink(value: ?[]const u8) ?Link {
+    const text = value orelse return null;
+    const comma = std.mem.indexOfScalar(u8, text, ',') orelse return null;
+    const interface = text[0..comma];
+    if (interface.len == 0 or interface.len > 15) return null;
+    if (std.mem.eql(u8, interface, ".") or std.mem.eql(u8, interface, "..")) return null;
+    for (interface) |c| {
+        if (!std.ascii.isAlphanumeric(c) and c != '_' and c != '.' and c != '-') return null;
+    }
+    const cidr = text[comma + 1 ..];
+    const slash = std.mem.indexOfScalar(u8, cidr, '/') orelse return null;
+    var address: [4]u8 = undefined;
+    var octets = std.mem.splitScalar(u8, cidr[0..slash], '.');
+    for (&address) |*octet| {
+        const part = octets.next() orelse return null;
+        const number = decimal.parseU32(part) orelse return null;
+        if (number > 255) return null;
+        octet.* = @intCast(number);
+    }
+    if (octets.next() != null) return null;
+    const prefix = decimal.parseU32(cidr[slash + 1 ..]) orelse return null;
+    if (prefix < 1 or prefix > 32) return null;
+    return .{ .interface = interface, .address = address, .prefix = @intCast(prefix) };
 }
 
 test "cmdline: defaults when nothing elixos-specific is present" {
@@ -230,5 +274,39 @@ test "cmdline: the last valid live flag wins and malformed flags do not reset it
         const settings = parse(case.text);
         try testing.expectEqual(case.live, settings.live);
         try testing.expectEqual(case.invalid, settings.invalid);
+    }
+}
+
+test "cmdline: the coprocessor link names an interface, an address and a prefix" {
+    try milestone.require(29);
+    const settings = parse("console=ttyS0 elixos.coproc_link=eth1,10.0.3.15/24");
+    const link = settings.coproc_link orelse return error.TestExpectedLink;
+    try testing.expectEqualSlices(u8, "eth1", link.interface);
+    try testing.expectEqual([4]u8{ 10, 0, 3, 15 }, link.address);
+    try testing.expectEqual(@as(u6, 24), link.prefix);
+    try testing.expectEqual(@as(u32, 0), settings.invalid);
+    // The last valid one wins; a malformed one is counted and changes nothing.
+    const later = parse("elixos.coproc_link=eth1,10.0.3.15/24 elixos.coproc_link=coproc0,192.168.7.1/32 " ++
+        "elixos.coproc_link=bad");
+    try testing.expectEqualSlices(u8, "coproc0", later.coproc_link.?.interface);
+    try testing.expectEqual([4]u8{ 192, 168, 7, 1 }, later.coproc_link.?.address);
+    try testing.expectEqual(@as(u32, 1), later.invalid);
+}
+
+test "cmdline: a malformed coprocessor link is refused, never half-applied" {
+    try milestone.require(29);
+    const bad = [_][]const u8{
+        "elixos.coproc_link",                      "elixos.coproc_link=",
+        "elixos.coproc_link=eth1",                 "elixos.coproc_link=,10.0.3.15/24",
+        "elixos.coproc_link=eth1,10.0.3.15",       "elixos.coproc_link=eth1,10.0.3/24",
+        "elixos.coproc_link=eth1,10.0.3.15.1/24",  "elixos.coproc_link=eth1,10.0.3.256/24",
+        "elixos.coproc_link=eth1,10.0.03.15/24",   "elixos.coproc_link=eth1,10.0.3.15/0",
+        "elixos.coproc_link=eth1,10.0.3.15/33",    "elixos.coproc_link=eth/1,10.0.3.15/24",
+        "elixos.coproc_link=..,10.0.3.15/24",      "elixos.coproc_link=abcdefghijklmnop,10.0.3.15/24",
+    };
+    for (bad) |text| {
+        const settings = parse(text);
+        try testing.expect(settings.coproc_link == null);
+        try testing.expectEqual(@as(u32, 1), settings.invalid);
     }
 }

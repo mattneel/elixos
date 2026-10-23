@@ -1,0 +1,112 @@
+# AtomVM's generic Unix build (M29, ADR-100): the coprocessor VM that
+# runs as an Elixos peer. It is pinned to a main commit because no tagged
+# release supports OTP 28 or 29 (stable 0.6.6 predates both).
+#
+# The VM is linked statically (musl, Mbed TLS 3, zlib), so the same binary
+# runs inside Alpine and directly on the build host, where the M29 tests start
+# it as the coprocessor stand-in. AtomVM's own libraries (estdlib, eavmlib,
+# avm_network, exavmlib) are compiled with Alpine's erlang28 and Elixir 1.19,
+# the pairing AtomVM tests upstream; Elixos bundles stay OTP 29 / Elixir 1.20.
+#
+# Every download is pinned by sha256: the source tarball, rebar3, and the
+# atomvm_packbeam Hex package AtomVM's build would otherwise fetch unpinned.
+package:
+  name: elixos-atomvm
+  version: 0.8.0_git20260928
+  epoch: 0
+  description: "AtomVM (generic Unix, static): the Elixos coprocessor VM"
+  copyright:
+    - license: Apache-2.0 OR LGPL-2.1-or-later
+  dependencies:
+    runtime: []
+
+vars:
+  commit: 3a9ea46b8cf28066caf126c46119dc58f950de5f
+  sha256: 9e70f0f7ff3a112ebc45f48d0eacad6b94844cec105b9c3ca845d1eb1009d76a
+  rebar3-version: 3.27.0
+  rebar3-sha256: af85aab41f9fd74bdd6341ebdf6fe9c88077aab9f8eac82371583fa02f2b0bdf
+  packbeam-version: 0.8.2
+  packbeam-sha256: e60a55e2184698ec485fb1d02166b4cd173bbce5c99c7bced49a6e9be5f948ad
+
+environment:
+  contents:
+    repositories:
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+      - https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+    packages:
+      - alpine-release=3.24.3-r0
+      - build-base
+      - busybox
+      - bash
+      - cmake
+      - curl
+      - gperf
+      - mbedtls3-dev
+      - mbedtls3-static
+      - zlib-dev
+      - zlib-static
+      - erlang28
+      - erlang28-dev
+      - elixir
+
+pipeline:
+  - runs: |
+      work=/tmp/atomvm
+      mkdir -p "$work/tools"
+
+      curl -fsSL -o "$work/atomvm.tar.gz" \
+        "https://github.com/atomvm/AtomVM/archive/${{vars.commit}}.tar.gz"
+      echo "${{vars.sha256}}  $work/atomvm.tar.gz" | sha256sum -c -
+      mkdir "$work/src"
+      tar -xzf "$work/atomvm.tar.gz" -C "$work/src" --strip-components=1
+      # Local fixes, each meant for upstream (melange/atomvm/*.patch).
+      for patch in /home/build/patches/*.patch; do
+        patch -d "$work/src" -p1 --forward < "$patch"
+      done
+
+      # rebar3 escriptizes packbeam. AtomVM's PACKBEAM_PATH links the checkout
+      # as _checkouts/packbeam, which rebar3 does not match to the
+      # atomvm_packbeam dependency (it then fetches from Hex), so the checkout
+      # is linked under the app's own name below and rebar3 runs offline.
+      curl -fsSL -o "$work/tools/rebar3" \
+        "https://github.com/erlang/rebar3/releases/download/${{vars.rebar3-version}}/rebar3"
+      echo "${{vars.rebar3-sha256}}  $work/tools/rebar3" | sha256sum -c -
+      chmod 0755 "$work/tools/rebar3"
+      export PATH="$work/tools:$PATH"
+
+      curl -fsSL -o "$work/packbeam.tar" \
+        "https://repo.hex.pm/tarballs/atomvm_packbeam-${{vars.packbeam-version}}.tar"
+      echo "${{vars.packbeam-sha256}}  $work/packbeam.tar" | sha256sum -c -
+      mkdir -p "$work/packbeam"
+      tar -xOf "$work/packbeam.tar" contents.tar.gz | tar -xzf - -C "$work/packbeam"
+
+      # Static musl binary: prefer the .a archives Alpine ships next to the
+      # shared objects, and link the executable with -static.
+      cmake -S "$work/src" -B "$work/build" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DAVM_DISABLE_JIT=ON \
+        -DAVM_PRINT_PROCESS_CRASH_DUMPS=OFF \
+        -DCMAKE_FIND_LIBRARY_SUFFIXES=.a \
+        -DZLIB_USE_STATIC_LIBS=ON \
+        -DAVM_STATIC_MBEDTLS=ON \
+        -DCMAKE_DISABLE_FIND_PACKAGE_MbedTLS=ON \
+        -DCMAKE_EXE_LINKER_FLAGS=-static
+      mkdir -p "$work/build/tools/packbeam/_checkouts"
+      ln -s "$work/packbeam" "$work/build/tools/packbeam/_checkouts/atomvm_packbeam"
+      REBAR_OFFLINE=1 HEX_OFFLINE=1 \
+        cmake --build "$work/build" -j"$(nproc)" --target AtomVM atomvmlib
+
+      install -Dm0755 "$work/build/src/AtomVM" "${{targets.destdir}}/usr/lib/atomvm/AtomVM"
+      strip "${{targets.destdir}}/usr/lib/atomvm/AtomVM"
+      install -Dm0644 "$work/build/libs/atomvmlib.avm" "${{targets.destdir}}/usr/lib/atomvm/atomvmlib.avm"
+      for license in LICENSE LICENSES/Apache-2.0.txt LICENSES/LGPL-2.1-or-later.txt; do
+        install -Dm0644 "$work/src/$license" \
+          "${{targets.destdir}}/usr/share/licenses/elixos-atomvm/$(basename "$license")"
+      done
+
+      # The binary must be self-contained: no interpreter, no shared libraries.
+      if readelf -l "${{targets.destdir}}/usr/lib/atomvm/AtomVM" | grep -q 'INTERP'; then
+        echo "elixos-atomvm: AtomVM is not statically linked" >&2
+        exit 1
+      fi

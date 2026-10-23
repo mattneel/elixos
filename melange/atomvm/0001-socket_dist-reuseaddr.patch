@@ -1,0 +1,13 @@
+--- a/libs/estdlib/src/socket_dist.erl	2026-10-23 10:12:09.719034503 -0400
++++ b/libs/estdlib/src/socket_dist.erl	2026-10-23 10:12:09.734774716 -0400
+@@ -63,6 +63,10 @@
+ 
+ do_listen(Name, SocketPort) ->
+     {ok, LSock} = socket:open(inet, stream, tcp),
++    % A restarted node must be able to listen again at once: without
++    % reuseaddr, connections the previous instance closed keep the port in
++    % TIME_WAIT for a minute (OTP's inet_tcp_dist sets it too).
++    ok = socket:setopt(LSock, {socket, reuseaddr}, true),
+     case socket:bind(LSock, #{family => inet, port => SocketPort, addr => {0, 0, 0, 0}}) of
+         ok ->
+             case socket:listen(LSock) of

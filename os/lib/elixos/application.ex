@@ -136,6 +136,11 @@ defmodule Elixos.Application do
             # runs none of it, so a broken adapter costs the browser and not
             # the prompt.
             {Elixos.Browser, mode: env.mode},
+            # The coprocessor link (M29): an AtomVM peer, when /priv/coproc
+            # configures one. Distribution starts here, bound to the link,
+            # and the peer is made to run this generation's bundle. Never
+            # boot-critical; rescue and an unconfigured machine run none of it.
+            {Elixos.Coproc, :boot},
             # Key-only SSH into the user's REPL (M12). Not boot-critical: with
             # no network, or in rescue, it logs and steps aside (the prompt
             # still comes up).

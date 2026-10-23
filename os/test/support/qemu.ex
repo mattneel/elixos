@@ -47,6 +47,12 @@ defmodule Elixos.Test.QEMU do
     * `:memory_mb` - default 1024
     * `:initramfs` - explicit initramfs file for a distinct boot profile
     * `:ssh_port` - forward host 127.0.0.1:<port> to guest port 22 (virtio-net, ip=dhcp)
+    * `:hostfwd` - more `{host_port, guest_port}` forwards on that user-mode NIC
+    * `:coproc` - `{guest_port, host_port}`: a second, restricted user-mode NIC
+      (M29), the coprocessor link. The guest is 10.0.3.15 on 10.0.3.0/24 and
+      reaches nothing but 10.0.3.9:<guest_port>, relayed per connection (socat)
+      to the host's 127.0.0.1:<host_port>. The external NIC is then always
+      present too, so the link is the guest's eth1.
     * `:arch` - `:x86_64` (default), `:aarch64` or `:riscv64`: which QEMU binary, machine,
       console and artifacts the guest gets
     * `:uefi` - `{esp_image, ovmf_code, ovmf_vars_copy}`: boot through firmware
@@ -171,18 +177,40 @@ defmodule Elixos.Test.QEMU do
     do: {"ELIXOS_RISCV64_INITRAMFS", "riscv64/initramfs.cpio.gz"}
 
   defp net_args(opts) do
-    case Keyword.get(opts, :ssh_port) do
-      nil ->
-        ["-nic", "none"]
+    forwards =
+      Enum.map(
+        List.wrap(if port = Keyword.get(opts, :ssh_port), do: {port, 22}) ++
+          Keyword.get(opts, :hostfwd, []),
+        fn {host, guest} -> ",hostfwd=tcp:127.0.0.1:#{host}-:#{guest}" end
+      )
 
-      port ->
-        [
-          "-netdev",
-          "user,id=n0,hostfwd=tcp:127.0.0.1:#{port}-:22",
-          "-device",
-          "virtio-net-pci,netdev=n0"
-        ]
-    end
+    coproc = Keyword.get(opts, :coproc)
+
+    external =
+      if forwards == [] and coproc == nil do
+        ["-nic", "none"]
+      else
+        ["-netdev", "user,id=n0" <> Enum.join(forwards), "-device", "virtio-net-pci,netdev=n0"]
+      end
+
+    external ++ coproc_args(coproc)
+  end
+
+  # restrict=on isolates the guest from the host and the outside; the
+  # guestfwd rule is its only way out. cmd: starts one relay per connection,
+  # so the link survives the coprocessor restarting.
+  defp coproc_args(nil), do: []
+
+  defp coproc_args({guest_port, host_port}) do
+    socat = System.find_executable("socat") || flunk("socat not found (make check-tools)")
+
+    [
+      "-netdev",
+      "user,id=n1,net=10.0.3.0/24,restrict=on," <>
+        "guestfwd=tcp:10.0.3.9:#{guest_port}-cmd:#{socat} - TCP:127.0.0.1:#{host_port}",
+      "-device",
+      "virtio-net-pci,netdev=n1"
+    ]
   end
 
   defp graphics_args(nil), do: []

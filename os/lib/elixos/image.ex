@@ -10,8 +10,9 @@ defmodule Elixos.Image do
       root/generations/    Elixos.Image.Generation manifests (<n>.gen)
 
   The *working set* is the latest recorded hash of every module that has not
-  been forgotten, rebuilt by replaying the journal on `open/1`. `save/2` turns
-  the working set into a new generation.
+  been forgotten, rebuilt by replaying the journal on `open/1`, plus the
+  coprocessor bundle last recorded (`{:coproc, hash | nil}`, M29). `save/2`
+  turns the working set into a new generation.
   """
 
   use GenServer
@@ -33,6 +34,7 @@ defmodule Elixos.Image do
             store: store,
             journal: journal,
             modules: working_set(entries),
+            coproc: coproc_of(entries),
             apps: apps_of(entries),
             agents: agents_of(entries)
           }
@@ -64,6 +66,31 @@ defmodule Elixos.Image do
   @spec modules(t()) :: %{module() => Elixos.Image.Store.hash()}
   def modules(image) do
     GenServer.call(image, :modules)
+  end
+
+  @doc "The working-set bytecode of `module`, as recorded."
+  @spec bytecode(t(), module()) :: {:ok, binary()} | {:error, term()}
+  def bytecode(image, module) do
+    GenServer.call(image, {:bytecode, module})
+  end
+
+  @doc """
+  Stores a coprocessor bundle (M29, ADR-099), journals `{:coproc, hash}` and
+  makes it the working set's; `nil` journals `{:coproc, nil}`: no bundle.
+  """
+  @spec record_coproc(t(), binary() | nil) :: {:ok, Elixos.Image.Store.hash() | nil} | {:error, term()}
+  def record_coproc(image, bundle) when is_binary(bundle) or is_nil(bundle) do
+    GenServer.call(image, {:record_coproc, bundle}, :infinity)
+  end
+
+  @doc "The working set's coprocessor bundle hash, or `nil`."
+  @spec coproc(t()) :: Elixos.Image.Store.hash() | nil
+  def coproc(image), do: GenServer.call(image, :coproc)
+
+  @doc "The coprocessor bundle generation `n` carries, verified, or `nil`."
+  @spec coproc_bundle(t(), non_neg_integer()) :: {:ok, binary() | nil} | {:error, term()}
+  def coproc_bundle(image, n) do
+    GenServer.call(image, {:coproc_bundle, n})
   end
 
   @doc """
@@ -205,6 +232,37 @@ defmodule Elixos.Image do
 
   def handle_call(:modules, _from, state), do: {:reply, state.modules, state}
 
+  def handle_call({:bytecode, module}, _from, state) do
+    case Map.fetch(state.modules, module) do
+      {:ok, hash} -> {:reply, Store.get(state.store, hash), state}
+      :error -> {:reply, {:error, :not_recorded}, state}
+    end
+  end
+
+  def handle_call({:record_coproc, bundle}, _from, state) do
+    with {:ok, hash} <- put_bundle(state.store, bundle),
+         {:ok, _seq} <- Journal.append(state.journal, {:coproc, hash}) do
+      {:reply, {:ok, hash}, %{state | coproc: hash}}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call(:coproc, _from, state), do: {:reply, state.coproc, state}
+
+  def handle_call({:coproc_bundle, 0}, _from, state), do: {:reply, {:ok, nil}, state}
+
+  def handle_call({:coproc_bundle, number}, _from, state) do
+    reply =
+      case Generation.read(generations_dir(state.root), number) do
+        {:ok, %Generation{coproc: nil}} -> {:ok, nil}
+        {:ok, %Generation{coproc: hash}} -> Store.get(state.store, hash)
+        {:error, reason} -> {:error, reason}
+      end
+
+    {:reply, reply, state}
+  end
+
   def handle_call({:generation, number}, _from, state) do
     {:reply, Generation.read(generations_dir(state.root), number), state}
   end
@@ -230,7 +288,8 @@ defmodule Elixos.Image do
             oban_boot(state.apps) ++ service_boot(state.apps)
         ),
       created_at: DateTime.utc_now(),
-      provenance: Keyword.get(opts, :provenance)
+      provenance: Keyword.get(opts, :provenance),
+      coproc: state.coproc
     }
 
     with :ok <- Generation.write(dir, generation),
@@ -246,6 +305,9 @@ defmodule Elixos.Image do
 
     result =
       with :ok <- verify_candidate_modules(state.store, manifest.modules),
+           # A candidate changes modules; the coprocessor's bundle stays the
+           # parent's (ADR-099).
+           true <- is_nil(manifest.coproc) || {:error, :candidate_coproc_bundle},
            {:ok, parent} <- candidate_parent(dir, manifest.parent),
            number when number <= 4_294_967_295 <- Generation.next_number(dir) do
         generation = %Generation{
@@ -253,7 +315,8 @@ defmodule Elixos.Image do
           | number: number,
             modules: Map.merge(parent.modules, manifest.modules),
             boot: Enum.uniq(parent.boot ++ manifest.boot),
-            created_at: DateTime.utc_now()
+            created_at: DateTime.utc_now(),
+            coproc: parent.coproc
         }
 
         with :ok <- Generation.write(dir, generation),
@@ -452,6 +515,17 @@ defmodule Elixos.Image do
       end
     end)
   end
+
+  # The coprocessor bundle last recorded; nil is a recorded "none".
+  defp coproc_of(entries) do
+    Enum.reduce(entries, nil, fn
+      {_seq, {:coproc, hash}}, _coproc -> hash
+      {_seq, _entry}, coproc -> coproc
+    end)
+  end
+
+  defp put_bundle(_store, nil), do: {:ok, nil}
+  defp put_bundle(store, bundle), do: Store.put(store, bundle)
 
   defp candidate_parent(_dir, 0), do: {:ok, %Generation{number: 0}}
   defp candidate_parent(dir, number), do: Generation.read(dir, number)

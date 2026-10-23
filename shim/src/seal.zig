@@ -33,7 +33,8 @@ const max_modules = 4096;
 const max_depth = 64;
 const hex = "0123456789abcdef";
 var manifest_buffer: [max_manifest]u8 = undefined;
-var module_offsets: [max_modules]u32 = undefined;
+// One reference per module, plus the coprocessor bundle (M29, ADR-099).
+var module_offsets: [max_modules + 1]u32 = undefined;
 var copy_buffer: [64 * 1024]u8 = undefined;
 
 const Frame = struct {
@@ -628,6 +629,9 @@ const Parser = struct {
     }
 };
 
+/// The offsets of every blob hash the manifest references: each module's, then
+/// the coprocessor bundle's when `coproc` names one (M29, ADR-099). Returns
+/// how many offsets were written.
 fn parseManifest(bytes: []const u8, generation: u32, offsets: []u32) Error!usize {
     if (bytes.len > max_manifest) return error.TooLarge;
     var parser: Parser = .{ .bytes = bytes };
@@ -638,6 +642,8 @@ fn parseManifest(bytes: []const u8, generation: u32, offsets: []u32) Error!usize
     if (fields > (bytes.len - parser.cursor) / 2) return error.InvalidManifest;
     var found_number = false;
     var found_modules = false;
+    var found_coproc = false;
+    var coproc: ?u32 = null;
     var count: usize = 0;
     for (0..fields) |_| {
         const key = try parser.atom();
@@ -652,20 +658,41 @@ fn parseManifest(bytes: []const u8, generation: u32, offsets: []u32) Error!usize
             if (count > max_modules or count > offsets.len) return error.TooManyModules;
             for (offsets[0..count]) |*offset| {
                 _ = try parser.atom(); // module name; never a pathname
-                if (try parser.byte() != 109 or try parser.long() != 64) return error.InvalidManifest;
-                offset.* = @intCast(parser.cursor);
-                const hash = try parser.take(64);
-                for (hash) |digit| {
-                    if (!(digit >= '0' and digit <= '9') and !(digit >= 'a' and digit <= 'f'))
-                        return error.InvalidManifest;
-                }
+                offset.* = try hashReference(&parser);
+            }
+        } else if (std.mem.eql(u8, key, "coproc")) {
+            // A bundle hash or nil; the key's position in the map is arbitrary,
+            // so the offset joins the modules' after the loop.
+            if (found_coproc) return error.InvalidManifest;
+            found_coproc = true;
+            if (parser.cursor < bytes.len and bytes[parser.cursor] == 109) {
+                coproc = try hashReference(&parser);
+            } else if (!std.mem.eql(u8, try parser.atom(), "nil")) {
+                return error.InvalidManifest;
             }
         } else {
             try parser.skip(2);
         }
     }
     if (!found_number or !found_modules or parser.cursor != bytes.len) return error.InvalidManifest;
+    if (coproc) |offset| {
+        if (count >= offsets.len) return error.TooManyModules;
+        offsets[count] = offset;
+        count += 1;
+    }
     return count;
+}
+
+/// A 64-byte lowercase hex binary: the offset of its first digit.
+fn hashReference(parser: *Parser) Error!u32 {
+    if (try parser.byte() != 109 or try parser.long() != 64) return error.InvalidManifest;
+    const offset: u32 = @intCast(parser.cursor);
+    const hash = try parser.take(64);
+    for (hash) |digit| {
+        if (!(digit >= '0' and digit <= '9') and !(digit >= 'a' and digit <= 'f'))
+            return error.InvalidManifest;
+    }
+    return offset;
 }
 
 // Real uncompressed :erlang.term_to_binary/1 bytes (OTP 29), with DateTime and
@@ -780,4 +807,45 @@ test "seal: nested ETF fields have a hard depth bound and sizes cannot overflow"
     try testing.expectError(error.InvalidManifest, huge_list.skip(0));
     var bad_utf8: Parser = .{ .bytes = "\x77\x01\xff" };
     try testing.expectError(error.InvalidManifest, bad_utf8.skip(0));
+}
+
+// Real :erlang.term_to_binary/1 bytes (OTP 29.1.1) of M29 manifests: a bundle
+// hash, and nil. The coproc key follows the modules here; the parser must not
+// depend on that order.
+const coproc_reference =
+    "\x83\x68\x03\x77\x11elixos_generation\x61\x01\x74\x00\x00\x00\x03" ++
+    "\x77\x07modules\x74\x00\x00\x00\x01\x77\x0aElixir.Foo\x6d\x00\x00\x00\x40" ++
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ++
+    "\x77\x06number\x61\x07\x77\x06coproc\x6d\x00\x00\x00\x40" ++
+    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+const no_coproc_reference =
+    "\x83\x68\x03\x77\x11elixos_generation\x61\x01\x74\x00\x00\x00\x03" ++
+    "\x77\x07modules\x74\x00\x00\x00\x00\x77\x06number\x61\x07\x77\x06coproc\x77\x03nil";
+
+test "seal: a generation's coprocessor bundle is sealed with its modules" {
+    try milestone.require(29);
+    var offsets: [4]u32 = undefined;
+    try testing.expectEqual(@as(usize, 2), try parseManifest(coproc_reference, 7, &offsets));
+    try testing.expectEqualSlices(u8, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", coproc_reference[offsets[0]..][0..64]);
+    try testing.expectEqualSlices(u8, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", coproc_reference[offsets[1]..][0..64]);
+    // nil carries no blob at all.
+    try testing.expectEqual(@as(usize, 0), try parseManifest(no_coproc_reference, 7, &offsets));
+}
+
+test "seal: a coprocessor reference is a hash or nil, once, with room to seal it" {
+    try milestone.require(29);
+    var offsets: [4]u32 = undefined;
+    _ = try parseManifest(coproc_reference, 7, &offsets);
+    var changed: [coproc_reference.len]u8 = coproc_reference.*;
+    changed[offsets[1]] = 'C';
+    try testing.expectError(error.InvalidManifest, parseManifest(&changed, 7, &offsets));
+    var other_atom: [no_coproc_reference.len]u8 = no_coproc_reference.*;
+    other_atom[other_atom.len - 1] = 'x';
+    try testing.expectError(error.InvalidManifest, parseManifest(&other_atom, 7, &offsets));
+    const twice = "\x83\x68\x03\x77\x11elixos_generation\x61\x01\x74\x00\x00\x00\x04" ++
+        "\x77\x07modules\x74\x00\x00\x00\x00\x77\x06number\x61\x07" ++
+        "\x77\x06coproc\x77\x03nil\x77\x06coproc\x77\x03nil";
+    try testing.expectError(error.InvalidManifest, parseManifest(twice, 7, &offsets));
+    var one: [1]u32 = undefined;
+    try testing.expectError(error.TooManyModules, parseManifest(coproc_reference, 7, &one));
 }

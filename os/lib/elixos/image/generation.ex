@@ -9,9 +9,20 @@ defmodule Elixos.Image.Generation do
   File format: `:erlang.term_to_binary({:elixos_generation, 1, map})`, where
   `map` holds the struct's fields. Anything else on read is `{:error, :corrupt}`.
   Writes are atomic (temporary file, fsync, rename, fsync of the directory).
+
+  `coproc` is the store hash of the coprocessor bundle the generation carries
+  (M29, ADR-099), or `nil`: an AtomVM archive, stored and sealed like a
+  module's bytes but never loaded into this VM. Manifests written before M29
+  have no such key and read as `nil`.
   """
 
-  defstruct number: nil, parent: 0, modules: %{}, boot: [], created_at: nil, provenance: nil
+  defstruct number: nil,
+            parent: 0,
+            modules: %{},
+            boot: [],
+            created_at: nil,
+            provenance: nil,
+            coproc: nil
 
   @type t :: %__MODULE__{
           number: pos_integer(),
@@ -19,7 +30,8 @@ defmodule Elixos.Image.Generation do
           modules: %{module() => Elixos.Image.Store.hash()},
           boot: [{module(), atom(), list()}],
           created_at: DateTime.t() | nil,
-          provenance: map() | nil
+          provenance: map() | nil,
+          coproc: Elixos.Image.Store.hash() | nil
         }
 
   @spec write(Path.t(), t()) :: :ok | {:error, :reserved | :exists | term()}

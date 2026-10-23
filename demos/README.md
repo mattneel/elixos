@@ -31,6 +31,7 @@ still in progress.
 | `m25-browser.mp4` | M25 | the headless browser ships in the read-only image and returns page text, JavaScript results and a PNG over `cdp_ex` through the adapter-compatible `Elixos.Browser.CDP` interface |
 | `m26-system-deps.mp4` | M26 | installing a package installs its closure first, and the build that follows resolves the dependency where it is installed - the dependency's code is the installed copy, on a box with no network |
 | `m28-riscv64.mp4` | M28 | **RISC-V:** the riscv64 image boots on qemu-system-riscv64 virt, shows its target and the interpreter (no JIT), and keeps a module across a power cycle |
+| `m29-atomvm-peer.mp4` | M29 | **AtomVM peer:** the shim brings up the coprocessor link, AtomVM on the host joins with the cookie from `/priv`, a module typed at the prompt is saved into a generation and deployed to it, and IEx calls and monitors code running on AtomVM |
 | [`m27-gui.mp4`](m27-gui.mp4) | M27 (in progress) | boot to IEx without the GUI; Oh-My-Jido approvals (confirm, text, choice, multi) are opened with `Elixos.GUI.start/0` and answered with the real keyboard; the GUI hands the console back once nothing is pending |
 
 ## Play, record, check

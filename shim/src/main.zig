@@ -354,6 +354,14 @@ pub fn main(init: std.process.Init.Minimal) noreturn {
     const settings = readSettings(&cmdline_buffer);
     if (settings.safe) overrides.safe = true;
 
+    // 2b. The coprocessor link (M29, ADR-098): the BEAM cannot configure an
+    //     interface (it has no CAP_NET_ADMIN), so the shim gives the named one
+    //     its address and brings it up, as it does for loopback. Not fatal:
+    //     without it only the coprocessor is unreachable.
+    if (!container.enabled) {
+        if (settings.coproc_link) |link| configureLink(link);
+    }
+
     // 3+4. /priv and boot.state. Live keeps the initramfs's RAM-backed /priv,
     //      including its embedded service image and toolchain; never mount over
     //      those assets or copy them. Otherwise mount the data device even when
@@ -1557,6 +1565,45 @@ fn bringLoopbackUp() void {
     @memcpy(request.ifrn.name[0..2], "lo");
     request.ifru.flags = flags;
     _ = linux.ioctl(@intCast(fd), linux.SIOCSIFFLAGS, @intFromPtr(&request));
+}
+
+/// Address, netmask, then up: the coprocessor link from elixos.coproc_link.
+/// Logs the result either way; a failure leaves the boot alone.
+fn configureLink(link: cmdline.Link) void {
+    const a = link.address;
+    if (setLink(link)) |_| {
+        log("coproc link {s} {d}.{d}.{d}.{d}/{d}", .{ link.interface, a[0], a[1], a[2], a[3], link.prefix });
+    } else |err| {
+        log("coproc link {s} failed ({t})", .{ link.interface, err });
+    }
+}
+
+fn setLink(link: cmdline.Link) !void {
+    const fd = linux.socket(linux.AF.INET, linux.SOCK.DGRAM, 0);
+    if (linux.errno(fd) != .SUCCESS) return error.SocketFailed;
+    defer _ = linux.close(@intCast(fd));
+
+    var request: linux.ifreq = std.mem.zeroes(linux.ifreq);
+    if (link.interface.len + 1 > request.ifrn.name.len) return error.NameTooLong;
+    @memcpy(request.ifrn.name[0..link.interface.len], link.interface);
+
+    const mask: u32 = if (link.prefix == 32) 0xffff_ffff else ~(@as(u32, 0xffff_ffff) >> @intCast(link.prefix));
+    const address: linux.sockaddr.in = .{ .port = 0, .addr = @bitCast(link.address) };
+    const netmask: linux.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, mask) };
+
+    request.ifru.addr = @as(*const linux.sockaddr, @ptrCast(&address)).*;
+    if (linux.errno(linux.ioctl(@intCast(fd), linux.SIOCSIFADDR, @intFromPtr(&request))) != .SUCCESS)
+        return error.AddressFailed;
+    request.ifru.netmask = @as(*const linux.sockaddr, @ptrCast(&netmask)).*;
+    if (linux.errno(linux.ioctl(@intCast(fd), linux.SIOCSIFNETMASK, @intFromPtr(&request))) != .SUCCESS)
+        return error.NetmaskFailed;
+
+    var flags = try interfaceFlags(@intCast(fd), link.interface);
+    flags.UP = true;
+    flags.RUNNING = true;
+    request.ifru.flags = flags;
+    if (linux.errno(linux.ioctl(@intCast(fd), linux.SIOCSIFFLAGS, @intFromPtr(&request))) != .SUCCESS)
+        return error.FlagsFailed;
 }
 
 /// A bounded sleep. Used only while waiting for a device that may still be

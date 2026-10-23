@@ -29,6 +29,11 @@ config :elixos, Elixos.Oban.Repo,
   pool_size: 5,
   log: false
 
+# The console prompt is `iex(<n>)> ` whether or not the VM is a distributed node
+# (M29: Elixos.Coproc makes it one, for the coprocessor link only). IEx would
+# otherwise switch to its alive prompt, `iex(<node>)<n>> `.
+config :iex, alive_prompt: "%prefix(%counter)>"
+
 if config_target() == :elixos do
   import_config "elixos.exs"
 end

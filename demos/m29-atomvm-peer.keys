@@ -1,0 +1,13 @@
+# What the M29 demo must show, in order: the shim brings up the coprocessor
+# link, the host AtomVM joins with the cookie from /priv, a module saved into a
+# generation is deployed to it, and IEx calls and monitors code on AtomVM.
+elixos-shim: coproc link eth1 10.0.3.15/24
+iex(1)> Elixos.Coproc.configure(node: :"coproc@10.0.3.9", port: 4370)
+elixos_coproc: coproc@10.0.3.9 up, bundle none
+[:"coproc@10.0.3.9"]
+iex(4)> Elixos.Coproc.put_bundle([Greeter])
+iex(5)> Elixos.save()
+elixos_coproc: coproc@10.0.3.9 up, bundle
+{:ok, "hello elixos, from coproc@10.0.3.9"}
+{:"coproc@10.0.3.9", :normal}
+elixos-shim: shutdown poweroff

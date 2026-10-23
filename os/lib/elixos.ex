@@ -13,6 +13,8 @@ defmodule Elixos do
   the milestone that builds it (docs/ROADMAP.md).
   """
 
+  require Logger
+
   @doc "Boot facts: arch, generation, mode (:normal | :rescue), attempt, OS version. (M4; arch M16)"
   def info, do: Elixos.Boot.info()
 
@@ -60,6 +62,9 @@ defmodule Elixos do
   Save the live image as a new generation and select it for the next boot. (M6)
 
   Options: `boot: [{module, function, args}]` to run at boot in that generation.
+  When a coprocessor is linked, its bundle in the new generation is deployed
+  to it before this returns (M29, ADR-099); a failed deploy is logged and does
+  not undo the save.
   """
   def save(opts \\ []) do
     # Everything traced so far is recorded before the working set is written,
@@ -71,9 +76,17 @@ defmodule Elixos do
          {:ok, image} <- image(),
          {:ok, number} <- Elixos.Image.save(image, opts),
          :ok <- Elixos.Shim.Control.next(number) do
+      deploy_coproc(image, number)
       # The shim boots this generation next time, provisionally, until it
       # commits (ADR-007).
       {:ok, number}
+    end
+  end
+
+  defp deploy_coproc(image, number) do
+    case Elixos.Coproc.generation_saved(image, number) do
+      :ok -> :ok
+      {:error, reason} -> Logger.warning("Elixos.save: coprocessor deploy failed: #{inspect(reason)}")
     end
   end
 

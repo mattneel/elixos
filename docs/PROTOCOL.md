@@ -207,6 +207,12 @@ and malformed or unknown `elixos.*` tokens are counted and logged, never applied
 | `elixos.boot_grace=<s≥1>`       | 120        | seconds allowed before the first `HB`           |
 | `elixos.data=/dev/<dev>`        | /dev/vda   | ext4 device mounted on `/priv`                  |
 | `elixos.data_wait=<s≥0>`        | 10         | seconds to wait for that device to appear        |
+| `elixos.coproc_link=<if>,<ip>/<len>` | none  | give interface `<if>` IPv4 `<ip>/<len>` (len 1-32) and bring it up: the coprocessor link (M29) |
+
+`elixos.coproc_link` is applied by the shim before the BEAM starts, because
+the BEAM has no `CAP_NET_ADMIN`. `<if>` is a kernel interface name of 1-15
+characters `[A-Za-z0-9_.-]`; `<ip>` is a canonical dotted quad. The BEAM only
+reads it: `Elixos.Coproc` binds Erlang distribution to `<ip>` (ADR-098).
 
 Live is a storage choice, not a third launch mode. Normal Live uses the
 embedded service image; `elixos.safe` still selects rescue. With Live enabled,
@@ -283,6 +289,8 @@ the runtime's stdout. Each has prefix `elixos-shim: `. Placeholders:
 | `postgres directories unavailable (<error>), services disabled`        | safe database ownership preparation failed | M18 |
 | `cannot unmount system image (<error>)`                                | a service mount could not be released | M18  |
 | `helper shutdown timeout name=postgres, killing`                       | PostgreSQL exceeded its fast-shutdown grace | M18 |
+| `coproc link <if> <ip>/<len>`                                          | `elixos.coproc_link` was applied      | M29  |
+| `coproc link <if> failed (<E>)`                                        | the interface could not be configured; the boot goes on | M29 |
 
 `attempt=<n>` is the plan's `next_state.attempts`. When planning from an
 unreadable or unmountable state, the shim uses the defaults (`0/0/0`).
@@ -320,6 +328,9 @@ In persistent mode: ext4, label `ELIXOS`, mounted on `/priv`:
 /priv/postgres/data/    PostgreSQL cluster, uid/gid 70, mode 0700 (M18)
 /priv/postgres/log/     uid/gid 70, mode 0755; logs are mode 0644 (M18)
 /priv/postgres/log/initdb.log  a fresh cluster's initialization output (M20)
+/priv/coproc/config.exs the coprocessor peer: `node:`, `port:`, `listen_port:` (M29)
+/priv/coproc/cookie     the distribution cookie shared with it, mode 0600 (M29)
+/priv/home/.erlang.cookie  OTP's own cookie, created when distribution starts (M29)
 ```
 
 Live uses the same layout in RAM, with the service image and toolchain seeded

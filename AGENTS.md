@@ -105,6 +105,7 @@ that every milestone up to it is complete.
 | `make test-qemu` | builds the host image and runs the non-aarch64 integration suite |
 | `make test-qemu-aarch64` | builds the images and runs the separate ARM64 smoke test |
 | `make test-qemu-riscv64` | builds the riscv64 image and runs its smoke test (M28) |
+| `make atomvm` | AtomVM's Unix build for the host, the coprocessor stand-in (M29) |
 | `make ci` | host tests, the QEMU suite and every image build; ARM64 and riscv64 smoke are separate |
 | `make image` | the host architecture's packaged kernel, shim, initramfs, service image and disk |
 | `make images` | x86_64, aarch64 and riscv64 images |

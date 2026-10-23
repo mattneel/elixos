@@ -994,11 +994,27 @@ reachable from any other interface.
 **Done when.** `make ci` is green with `MILESTONE=29`, both test files pass,
 and the ADRs are written.
 
-- [ ] ADR (to be written): the coprocessor architecture and its
-  internal-only distribution.
-- [ ] ADR (to be written): coprocessor bundles as generation content.
-- [ ] ADR (to be written): the AtomVM and OTP version choice.
-- [ ] Demo recorded: `demos/m29-atomvm-peer.mp4` (`make demo M=29`).
+**Results (2026-10-23).**
+- *AtomVM:* main `3a9ea46b`, generic Unix build, static (musl, Mbed TLS 3.6,
+  zlib), JIT off, with two local patches for upstream (`reuseaddr` on the
+  distribution listener; nodes advertised as published). Its libraries are
+  built with Alpine's OTP 28 / Elixir 1.19; bundles come from Elixos's OTP 29
+  / Elixir 1.20 and run unchanged (no native records involved).
+- *Link:* `elixos.coproc_link` (PID 1 configures the interface); Elixos is
+  `elixos@<link ip>`, listens only there on 4370, has no epmd, and dials only
+  the coprocessor (`Elixos.Coproc.Epmd`). In QEMU the link is a restricted
+  user-mode NIC whose one exit is a socat relay to the host AtomVM.
+- *Across the link:* `:erpc`, spawn, send/receive, monitors and
+  `Process.link/1` work; `Node.spawn_link/4` does not (AtomVM ignores the
+  link option of a spawn request).
+- *Bundles:* stored, journaled and sealed like modules; a save deploys and
+  restarts the coprocessor, a fallback redeploys the old generation's bundle.
+
+- [x] ADR-098: the coprocessor architecture and its internal-only
+  distribution.
+- [x] ADR-099: coprocessor bundles as generation content.
+- [x] ADR-100: the AtomVM and OTP version choice.
+- [x] Demo recorded: `demos/m29-atomvm-peer.mp4` (`make demo M=29`).
 
 ---
 

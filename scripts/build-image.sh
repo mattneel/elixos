@@ -87,7 +87,7 @@ stage() {
   cp -r "$ROOT/build.zig" "$ROOT/build.zig.zon" "$ROOT/.zig-version" "$ROOT/.tool-versions" "$ROOT/MILESTONE" \
         "$ROOT/shim" "$ROOT/spec" "$ROOT/kernel" "$ROOT/scripts" "$ROOT/hex" "$ROOT/toolchain" \
         "$SRC/"
-  cp -r "$ROOT/os/mix.exs" "$ROOT/os/mix.lock" "$ROOT/os/lib" "$ROOT/os/config" "$ROOT/os/priv" "$ROOT/os/test" "$SRC/os/"
+  cp -r "$ROOT/os/mix.exs" "$ROOT/os/mix.lock" "$ROOT/os/lib" "$ROOT/os/src" "$ROOT/os/config" "$ROOT/os/priv" "$ROOT/os/test" "$SRC/os/"
   # Canonical native coding packages are human-pinned source inputs, never
   # host BEAM or the example's reduced host-test OS application (ADR-084).
   local coding_source="${ELIXOS_OH_MY_JIDO_SOURCE:-$ROOT/../oh_my_jido}"
